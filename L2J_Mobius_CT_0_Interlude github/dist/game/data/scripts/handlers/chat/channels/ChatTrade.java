@@ -20,6 +20,7 @@ import org.l2jmobius.gameserver.config.GeneralConfig;
 import org.l2jmobius.gameserver.config.custom.FactionSystemConfig;
 import org.l2jmobius.gameserver.data.xml.MapRegionData;
 import org.l2jmobius.gameserver.handler.IChatHandler;
+import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.enums.player.ChatBroadcastType;
@@ -122,8 +123,11 @@ public class ChatTrade implements IChatHandler
 				}
 			}
 		}
+
+		// Let nearby fake players overhear and (maybe) react to trade chat.
+		FakePlayerChatManager.getInstance().overheardTradeChat(activeChar, text);
 	}
-	
+
 	@Override
 	public ChatType[] getChatTypeList()
 	{

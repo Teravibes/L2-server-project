@@ -23,6 +23,7 @@ import org.l2jmobius.gameserver.config.custom.FactionSystemConfig;
 import org.l2jmobius.gameserver.handler.IChatHandler;
 import org.l2jmobius.gameserver.handler.IVoicedCommandHandler;
 import org.l2jmobius.gameserver.handler.VoicedCommandHandler;
+import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.holders.player.BlockList;
@@ -119,6 +120,9 @@ public class ChatGeneral implements IChatHandler
 			});
 			
 			activeChar.sendPacket(cs);
+
+			// Let nearby fake players overhear and (maybe) react to say chat.
+			FakePlayerChatManager.getInstance().overheardSay(activeChar, text);
 		}
 	}
 	
