@@ -24,6 +24,7 @@ import org.l2jmobius.commons.network.WritableBuffer;
 import org.l2jmobius.gameserver.data.sql.ClanTable;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.enums.player.Sex;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerHolder;
 import org.l2jmobius.gameserver.model.clan.Clan;
 import org.l2jmobius.gameserver.network.GameClient;
@@ -51,11 +52,13 @@ public class FakePlayerInfo extends ServerPacket
 	private final double _moveMultiplier;
 	private final float _attackSpeedMultiplier;
 	private final FakePlayerHolder _fpcHolder;
+	private final FakePlayerAppearance _look; // per-instance override; null = use template
 	private final Clan _clan;
-	
+
 	public FakePlayerInfo(Npc npc)
 	{
 		_npc = npc;
+		_look = npc.getFakePlayerAppearance();
 		_objId = npc.getObjectId();
 		_x = npc.getX();
 		_y = npc.getY();
@@ -72,7 +75,7 @@ public class FakePlayerInfo extends ServerPacket
 		_flyRunSpd = npc.isFlying() ? _runSpd : 0;
 		_flyWalkSpd = npc.isFlying() ? _walkSpd : 0;
 		_fpcHolder = npc.getTemplate().getFakePlayerInfo();
-		_clan = ClanTable.getInstance().getClan(_fpcHolder.getClanId());
+		_clan = _look != null ? null : ClanTable.getInstance().getClan(_fpcHolder.getClanId());
 	}
 	
 	@Override
@@ -85,21 +88,21 @@ public class FakePlayerInfo extends ServerPacket
 		buffer.writeInt(0); // vehicleId
 		buffer.writeInt(_objId);
 		buffer.writeString(_npc.getName());
-		buffer.writeInt(_npc.getRace().ordinal());
-		buffer.writeInt(_npc.getTemplate().getSex() == Sex.FEMALE);
-		buffer.writeInt(_fpcHolder.getPlayerClass().getId());
+		buffer.writeInt(_look != null ? _look.getRace().ordinal() : _npc.getRace().ordinal());
+		buffer.writeInt(_look != null ? (_look.isFemale() ? 1 : 0) : (_npc.getTemplate().getSex() == Sex.FEMALE ? 1 : 0));
+		buffer.writeInt(_look != null ? _look.getPlayerClass().getId() : _fpcHolder.getPlayerClass().getId());
 		buffer.writeInt(0); // Inventory.PAPERDOLL_UNDER
-		buffer.writeInt(_fpcHolder.getEquipHead());
-		buffer.writeInt(_fpcHolder.getEquipRHand());
-		buffer.writeInt(_fpcHolder.getEquipLHand());
-		buffer.writeInt(_fpcHolder.getEquipGloves());
-		buffer.writeInt(_fpcHolder.getEquipChest());
-		buffer.writeInt(_fpcHolder.getEquipLegs());
-		buffer.writeInt(_fpcHolder.getEquipFeet());
-		buffer.writeInt(_fpcHolder.getEquipCloak());
-		buffer.writeInt(_fpcHolder.getEquipRHand()); // dual hand
-		buffer.writeInt(_fpcHolder.getEquipHair());
-		buffer.writeInt(_fpcHolder.getEquipHair2());
+		buffer.writeInt(_look != null ? _look.getEquipHead() : _fpcHolder.getEquipHead());
+		buffer.writeInt(_look != null ? _look.getEquipRHand() : _fpcHolder.getEquipRHand());
+		buffer.writeInt(_look != null ? _look.getEquipLHand() : _fpcHolder.getEquipLHand());
+		buffer.writeInt(_look != null ? _look.getEquipGloves() : _fpcHolder.getEquipGloves());
+		buffer.writeInt(_look != null ? _look.getEquipChest() : _fpcHolder.getEquipChest());
+		buffer.writeInt(_look != null ? _look.getEquipLegs() : _fpcHolder.getEquipLegs());
+		buffer.writeInt(_look != null ? _look.getEquipFeet() : _fpcHolder.getEquipFeet());
+		buffer.writeInt(_look != null ? _look.getEquipCloak() : _fpcHolder.getEquipCloak());
+		buffer.writeInt(_look != null ? _look.getEquipRHand() : _fpcHolder.getEquipRHand()); // dual hand
+		buffer.writeInt(_look != null ? _look.getEquipHair() : _fpcHolder.getEquipHair());
+		buffer.writeInt(_look != null ? _look.getEquipHair2() : _fpcHolder.getEquipHair2());
 		
 		// c6 new h's
 		buffer.writeShort(0);
@@ -143,10 +146,10 @@ public class FakePlayerInfo extends ServerPacket
 		buffer.writeDouble(_attackSpeedMultiplier);
 		buffer.writeDouble(_npc.getCollisionRadius());
 		buffer.writeDouble(_npc.getCollisionHeight());
-		buffer.writeInt(_fpcHolder.getHair());
-		buffer.writeInt(_fpcHolder.getHairColor());
-		buffer.writeInt(_fpcHolder.getFace());
-		buffer.writeString(_npc.getTemplate().getTitle());
+		buffer.writeInt(_look != null ? _look.getHairStyle() : _fpcHolder.getHair());
+		buffer.writeInt(_look != null ? _look.getHairColor() : _fpcHolder.getHairColor());
+		buffer.writeInt(_look != null ? _look.getFace() : _fpcHolder.getFace());
+		buffer.writeString(_look != null ? _look.getTitle() : _npc.getTemplate().getTitle());
 		if (_clan != null)
 		{
 			buffer.writeInt(_clan.getId());
@@ -182,7 +185,7 @@ public class FakePlayerInfo extends ServerPacket
 		buffer.writeInt(_fpcHolder.getPlayerClass().getId());
 		buffer.writeInt(0); // ?
 		buffer.writeInt(0); // _player.getCurrentCp()
-		buffer.writeByte(_fpcHolder.getWeaponEnchantLevel()); // isMounted() ? 0 : _enchantLevel
+		buffer.writeByte(_look != null ? _look.getWeaponEnchantLevel() : _fpcHolder.getWeaponEnchantLevel()); // isMounted() ? 0 : _enchantLevel
 		buffer.writeByte(_npc.getTeam().getId());
 		buffer.writeInt(_clan != null ? _clan.getCrestLargeId() : 0);
 		buffer.writeByte(_fpcHolder.getNobleLevel());
@@ -191,11 +194,11 @@ public class FakePlayerInfo extends ServerPacket
 		buffer.writeInt(_fpcHolder.getBaitLocationX());
 		buffer.writeInt(_fpcHolder.getBaitLocationY());
 		buffer.writeInt(_fpcHolder.getBaitLocationZ());
-		buffer.writeInt(_fpcHolder.getNameColor());
+		buffer.writeInt(_look != null ? _look.getNameColor() : _fpcHolder.getNameColor());
 		buffer.writeInt(_heading);
 		buffer.writeInt(_fpcHolder.getPledgeStatus());
 		buffer.writeInt(0); // getPledgeType()
-		buffer.writeInt(_fpcHolder.getTitleColor());
+		buffer.writeInt(_look != null ? _look.getTitleColor() : _fpcHolder.getTitleColor());
 		buffer.writeInt(0); // isCursedWeaponEquipped
 	}
 }

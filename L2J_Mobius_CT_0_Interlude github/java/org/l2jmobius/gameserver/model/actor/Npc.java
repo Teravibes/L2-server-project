@@ -64,6 +64,7 @@ import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Team;
 import org.l2jmobius.gameserver.model.actor.enums.npc.AISkillScope;
 import org.l2jmobius.gameserver.model.actor.enums.npc.AIType;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerHolder;
 import org.l2jmobius.gameserver.model.actor.instance.ClanHallManager;
 import org.l2jmobius.gameserver.model.actor.instance.Doorman;
@@ -156,7 +157,8 @@ public class Npc extends Creature
 	private boolean _isTalkable = getTemplate().isTalkable();
 	private final boolean _isQuestMonster = getTemplate().isQuestMonster();
 	private final boolean _isFakePlayer = getTemplate().isFakePlayer();
-	
+	private FakePlayerAppearance _fakePlayerAppearance; // optional per-instance look for procedurally generated fake players
+
 	private int _currentLHandId; // normally this shouldn't change from the template, but there exist exceptions
 	private int _currentRHandId; // normally this shouldn't change from the template, but there exist exceptions
 	private int _currentEnchant; // normally this shouldn't change from the template, but there exist exceptions
@@ -1867,7 +1869,25 @@ public class Npc extends Creature
 	@Override
 	public String getName()
 	{
-		return getTemplate().getName();
+		return _fakePlayerAppearance != null ? _fakePlayerAppearance.getName() : getTemplate().getName();
+	}
+
+	/**
+	 * @return the per-instance fake player appearance, or {@code null} if this NPC uses its template's look
+	 */
+	public FakePlayerAppearance getFakePlayerAppearance()
+	{
+		return _fakePlayerAppearance;
+	}
+
+	/**
+	 * Attaches a procedurally generated appearance to this fake player. The {@code FakePlayerInfo}
+	 * packet will then render the NPC using this appearance instead of its template.
+	 * @param appearance the appearance to use
+	 */
+	public void setFakePlayerAppearance(FakePlayerAppearance appearance)
+	{
+		_fakePlayerAppearance = appearance;
 	}
 	
 	@Override
