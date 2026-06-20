@@ -1,48 +1,55 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!--
-	Fake player behavior profiles.
+	Fake player behavior + procedural population.
 
-	A profile defines HOW a fake player moves around. Each fake player is matched to a profile by:
-	  1. <assign name="..."> (case-insensitive fake player name), else
-	  2. <assign npcId="..."> (the NPC template id), else
-	  3. <default profile="..."> (fallback for everyone else).
+	PROFILES define HOW a bot moves (WANDER random hops, or PATROL a waypoint loop) and its pacing.
+	  - The wander radius for procedurally deployed bots comes from their <population>, not the profile;
+	    the profile's "radius" is only a fallback for hand-placed fake players discovered in the world.
 
-	Profile types:
-	  WANDER - random short hops within "radius" units of where the bot spawned (town life, idle farm spot).
-	  PATROL - walks an ordered list of <point> waypoints, looping forever (guards, travellers).
+	POPULATIONS define WHERE and HOW MANY bots to procedurally spawn:
+	  count    - how many bots to deploy in this group.
+	  x/y/z    - the anchor center (a town square, or a specific NPC's location for a cluster).
+	  radius   - bots scatter within this distance and wander within it, anchored to the center,
+	             so a small radius = a tight cluster around the spot.
+	  minLevel / maxLevel - level range rolled per bot (drives gear tier: no-grade <20, D 20-39, C 40+).
+	  profile  - which movement profile the group uses.
 
-	Attributes:
-	  radius   - WANDER only: max distance from the spawn anchor for each hop.
-	  run      - true = run between points, false = walk.
-	  pauseMin / pauseMax - seconds to idle between moves (a random value in this range is used).
-
-	Notes:
-	  - Movement uses the normal AI + geodata, so bots path around obstacles.
-	  - Combat is left to the engine; if FakePlayerAggroMonsters is on, wandering bots will fight
-	    monsters they bump into, then resume.
-	  - Fake players that already have a Routes.xml route are NOT touched by this system.
+	All coordinates below were taken from the server's own datapack (town respawn points and
+	Giran NPC spawns), so they are valid ground.
 -->
 <list>
-	<!-- Stays near home, strolls slowly: good for townsfolk standing around a hub. -->
-	<profile name="townsfolk" type="WANDER" radius="500" run="false" pauseMin="10" pauseMax="30" />
-
-	<!-- Roams a wider area at a run and engages nearby monsters: a farming feel. -->
+	<!-- ===== Movement profiles ===== -->
+	<!-- Stands around a spot, only shuffles occasionally: for NPC clusters. -->
+	<profile name="loiter" type="WANDER" radius="250" run="false" pauseMin="15" pauseMax="45" />
+	<!-- General town life: strolls around at a walk. -->
+	<profile name="townsfolk" type="WANDER" radius="800" run="false" pauseMin="8" pauseMax="25" />
+	<!-- Moves more often, covers more ground (busy capital streets). -->
+	<profile name="stroller" type="WANDER" radius="1400" run="false" pauseMin="5" pauseMax="15" />
+	<!-- Roams wide at a run and engages monsters: for future field/farming zones. -->
 	<profile name="farmer" type="WANDER" radius="1400" run="true" pauseMin="3" pauseMax="9" />
 
-	<!-- Example patrol loop through Giran town square (reuse/extend with your own points). -->
-	<profile name="giran_patrol" type="PATROL" run="true" pauseMin="2" pauseMax="6">
-		<point x="83485" y="147998" z="-3407" />
-		<point x="82117" y="147642" z="-3469" />
-		<point x="82651" y="146714" z="-3466" />
-		<point x="83192" y="146680" z="-3464" />
-		<point x="81517" y="147231" z="-3533" />
-	</profile>
+	<!-- ===== GIRAN: the capital (~220), with clusters around key NPCs + a roaming crowd ===== -->
+	<!-- Clusters: a tight knot of people standing around a specific NPC. -->
+	<population name="giran_gatekeeper" count="18" x="83485" y="147998" z="-3407" radius="260" minLevel="1" maxLevel="76" profile="loiter" />
+	<population name="giran_warehouse" count="12" x="83192" y="146680" z="-3464" radius="220" minLevel="1" maxLevel="76" profile="loiter" />
+	<population name="giran_mammon" count="10" x="81360" y="150016" z="-3528" radius="220" minLevel="20" maxLevel="76" profile="loiter" />
+	<population name="giran_merchants" count="10" x="82651" y="146714" z="-3466" radius="220" minLevel="1" maxLevel="60" profile="loiter" />
+	<population name="giran_grocer" count="8" x="85505" y="146208" z="-3399" radius="220" minLevel="1" maxLevel="50" profile="loiter" />
+	<!-- The moving crowd that fills the square and streets. -->
+	<population name="giran_square" count="140" x="83400" y="147600" z="-3400" radius="1300" minLevel="15" maxLevel="60" profile="townsfolk" />
+	<population name="giran_streets" count="24" x="82480" y="149087" z="-3350" radius="1600" minLevel="20" maxLevel="76" profile="stroller" />
 
-	<!-- Per-bot assignments (override the default). Names are case-insensitive. -->
+	<!-- ===== Starting villages + Gludio (lower level, modest crowds) ===== -->
+	<population name="talking_island" count="28" x="-83990" y="243336" z="-3700" radius="900" minLevel="1" maxLevel="20" profile="townsfolk" />
+	<population name="gludin" count="28" x="-83520" y="150560" z="-3000" radius="900" minLevel="1" maxLevel="25" profile="townsfolk" />
+	<population name="gludio" count="28" x="-14288" y="122752" z="-3000" radius="900" minLevel="5" maxLevel="30" profile="townsfolk" />
+	<population name="dwarven_village" count="20" x="116176" y="-182448" z="-1400" radius="700" minLevel="1" maxLevel="20" profile="townsfolk" />
+	<population name="orc_village" count="20" x="-44316" y="-113136" z="-80" radius="700" minLevel="1" maxLevel="20" profile="townsfolk" />
+
+	<!-- ===== Per-bot assignments for hand-placed fake players (discovered in the world) ===== -->
 	<assign name="Theron" profile="farmer" />
 	<assign name="Lytheris" profile="townsfolk" />
-	<assign npcId="80000" profile="giran_patrol" /> <!-- Evi -->
 
-	<!-- Everyone else without an explicit assignment behaves like townsfolk. -->
+	<!-- Fallback profile for any discovered fake player without an explicit assignment. -->
 	<default profile="townsfolk" />
 </list>

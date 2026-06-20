@@ -108,20 +108,34 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	{
 		final Profile profile;
 		final Location home;
+		final int radius; // wander radius around the home anchor (from the population, else the profile)
 		Phase phase = Phase.IDLE;
 		long nextActionTime;
 		int patrolIndex;
 
-		BotState(Profile profile, Location home)
+		BotState(Profile profile, Location home, int radius)
 		{
 			this.profile = profile;
 			this.home = home;
+			this.radius = radius;
 		}
+	}
+
+	private static class Population
+	{
+		String name;
+		Location center;
+		int radius = 1000;
+		int count;
+		int minLevel = 1;
+		int maxLevel = 60;
+		String profileName;
 	}
 
 	private final Map<String, Profile> _profiles = new HashMap<>();
 	private final Map<String, String> _assignByName = new HashMap<>(); // lowercase fpc name -> profile
 	private final Map<Integer, String> _assignByNpcId = new HashMap<>(); // npc id -> profile
+	private final List<Population> _populations = new ArrayList<>(); // procedural deployment groups
 	private String _defaultProfile = null;
 
 	private final Map<Integer, BotState> _bots = new ConcurrentHashMap<>(); // objectId -> state
@@ -141,8 +155,9 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		_profiles.clear();
 		_assignByName.clear();
 		_assignByNpcId.clear();
+		_populations.clear();
 		parseDatapackFile("data/FakePlayerBehavior.xml");
-		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _profiles.size() + " behavior profiles.");
+		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _profiles.size() + " behavior profiles and " + _populations.size() + " populations.");
 		start();
 	}
 
@@ -187,6 +202,20 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			{
 				_defaultProfile = new StatSet(parseAttributes(defaultNode)).getString("profile");
 			});
+
+			forEach(listNode, "population", populationNode ->
+			{
+				final StatSet set = new StatSet(parseAttributes(populationNode));
+				final Population population = new Population();
+				population.name = set.getString("name", "unnamed");
+				population.center = new Location(set.getInt("x"), set.getInt("y"), set.getInt("z"));
+				population.radius = set.getInt("radius", 1000);
+				population.count = set.getInt("count", 0);
+				population.minLevel = set.getInt("minLevel", 1);
+				population.maxLevel = set.getInt("maxLevel", 60);
+				population.profileName = set.getString("profile", _defaultProfile);
+				_populations.add(population);
+			});
 		});
 	}
 
@@ -197,7 +226,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			return;
 		}
 		_started = true;
-		if (FakePlayersConfig.FAKE_PLAYER_DEPLOY_COUNT > 0)
+		if (!_populations.isEmpty() || (FakePlayersConfig.FAKE_PLAYER_DEPLOY_COUNT > 0))
 		{
 			ThreadPool.schedule(this::deploy, DEPLOY_DELAY);
 		}
@@ -207,13 +236,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	}
 
 	/**
-	 * Procedurally spawns a configured number of fake players scattered around {@link #DEPLOY_CENTER},
-	 * cycling through the available fake player templates, and registers each with the behavior FSM.
+	 * Procedurally deploys fake players. Each {@code <population>} defines a group (center, radius,
+	 * count, level range, behavior profile); bots are scattered within the group, anchored to the
+	 * group center so clusters stay tight, and registered with the behavior FSM. If no populations are
+	 * defined it falls back to a single group of {@code FakePlayerDeployCount} bots at {@link #DEPLOY_CENTER}.
 	 */
 	private void deploy()
 	{
-		final int count = FakePlayersConfig.FAKE_PLAYER_DEPLOY_COUNT;
-
 		// All generated bots share one base template; their look is overridden per-instance.
 		int baseId = FakePlayersConfig.FAKE_PLAYER_BASE_NPC_ID;
 		if (baseId <= 0)
@@ -228,13 +257,40 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		}
 
 		int deployed = 0;
-		for (int i = 0; i < count; i++)
+		if (_populations.isEmpty())
+		{
+			final Population fallback = new Population();
+			fallback.name = "default";
+			fallback.center = DEPLOY_CENTER;
+			fallback.radius = DEPLOY_RADIUS;
+			fallback.count = FakePlayersConfig.FAKE_PLAYER_DEPLOY_COUNT;
+			fallback.minLevel = DEPLOY_MIN_LEVEL;
+			fallback.maxLevel = DEPLOY_MAX_LEVEL;
+			fallback.profileName = _defaultProfile;
+			deployed += deployPopulation(fallback, baseId);
+		}
+		else
+		{
+			for (Population population : _populations)
+			{
+				deployed += deployPopulation(population, baseId);
+			}
+		}
+
+		LOGGER.info("===== " + deployed + " BOTS DEPLOYED =====");
+	}
+
+	private int deployPopulation(Population population, int baseId)
+	{
+		final Profile profile = population.profileName == null ? null : _profiles.get(population.profileName);
+		int deployed = 0;
+		for (int i = 0; i < population.count; i++)
 		{
 			final double angle = Rnd.nextDouble() * 2 * Math.PI;
-			final int distance = Rnd.get(0, DEPLOY_RADIUS);
-			final int x = DEPLOY_CENTER.getX() + (int) (Math.cos(angle) * distance);
-			final int y = DEPLOY_CENTER.getY() + (int) (Math.sin(angle) * distance);
-			final Location loc = GeoEngine.getInstance().getValidLocation(DEPLOY_CENTER, new Location(x, y, DEPLOY_CENTER.getZ()));
+			final int distance = Rnd.get(0, population.radius);
+			final int x = population.center.getX() + (int) (Math.cos(angle) * distance);
+			final int y = population.center.getY() + (int) (Math.sin(angle) * distance);
+			final Location loc = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
 			try
 			{
 				final Spawn spawn = new Spawn(baseId);
@@ -248,24 +304,23 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				if (npc != null)
 				{
 					// Give the bot its own procedurally generated identity and broadcast the new look.
-					npc.setFakePlayerAppearance(FakePlayerAppearanceFactory.generate(DEPLOY_MIN_LEVEL, DEPLOY_MAX_LEVEL));
+					npc.setFakePlayerAppearance(FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel));
 					npc.broadcastInfo();
 					deployed++;
 
-					final Profile profile = resolveProfile(npc);
 					if (profile != null)
 					{
-						_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ())));
+						// Anchor to the population center (not the scatter point) so clusters stay tight.
+						_bots.put(npc.getObjectId(), new BotState(profile, population.center, population.radius));
 					}
 				}
 			}
 			catch (Exception e)
 			{
-				LOGGER.warning(getClass().getSimpleName() + ": Failed to deploy bot (baseId=" + baseId + "): " + e.getMessage());
+				LOGGER.warning(getClass().getSimpleName() + ": Failed to deploy bot in '" + population.name + "' (baseId=" + baseId + "): " + e.getMessage());
 			}
 		}
-
-		LOGGER.info("===== " + deployed + " BOTS DEPLOYED =====");
+		return deployed;
 	}
 
 	/**
@@ -293,7 +348,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			final Profile profile = resolveProfile(npc);
 			if (profile != null)
 			{
-				_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ())));
+				_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ()), profile.radius));
 			}
 		}
 	}
@@ -403,15 +458,16 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			return GeoEngine.getInstance().getValidLocation(npc, point);
 		}
 
-		// WANDER: random reachable point within the profile radius of the home anchor.
+		// WANDER: random reachable point within the bot's radius of the home anchor.
+		final int radius = Math.max(100, state.radius);
 		for (int attempt = 0; attempt < 5; attempt++)
 		{
 			final double angle = Rnd.nextDouble() * 2 * Math.PI;
-			final int distance = Rnd.get(profile.radius / 4, profile.radius);
+			final int distance = Rnd.get(radius / 4, radius);
 			final int x = state.home.getX() + (int) (Math.cos(angle) * distance);
 			final int y = state.home.getY() + (int) (Math.sin(angle) * distance);
 			final Location candidate = GeoEngine.getInstance().getValidLocation(npc, new Location(x, y, state.home.getZ()));
-			if (npc.isInsideRadius2D(candidate, profile.radius + 100))
+			if (npc.isInsideRadius2D(candidate, radius + 100))
 			{
 				return candidate;
 			}
