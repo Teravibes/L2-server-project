@@ -329,10 +329,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		final int x = population.center.getX() + (int) (Math.cos(angle) * distance);
 		final int y = population.center.getY() + (int) (Math.sin(angle) * distance);
 		final Location loc = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
+		// Snap to the ground height. With geodata loaded this corrects open-field Z automatically;
+		// without geodata it is a no-op (so field bots need geodata to place reliably outdoors).
+		final int groundZ = GeoEngine.getInstance().getHeight(loc.getX(), loc.getY(), loc.getZ());
 		try
 		{
 			final Spawn spawn = new Spawn(_baseId);
-			spawn.setXYZ(loc.getX(), loc.getY(), loc.getZ());
+			spawn.setXYZ(loc.getX(), loc.getY(), groundZ);
 			spawn.setHeading(Rnd.get(65536));
 			spawn.setAmount(1);
 			// We own respawn ourselves (with a fresh identity) so the engine's template respawn is off.
