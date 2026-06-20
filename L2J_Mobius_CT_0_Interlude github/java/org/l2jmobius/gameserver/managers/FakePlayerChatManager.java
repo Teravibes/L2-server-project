@@ -270,6 +270,11 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return;
 		}
+		// SAY is local: don't waste an LLM call if no player is close enough to hear it.
+		if (channel.equals("SAY") && !hasPlayerInRange(bot, SAY_RANGE))
+		{
+			return;
+		}
 		final String line = askBrainPublic(bot.getName(), speakerName, overheard, channel);
 		if ((line == null) || line.isEmpty())
 		{
@@ -289,6 +294,16 @@ public class FakePlayerChatManager implements IXmlReader
 		reactToChat(bot, bot.getName(), line, true, channel.equals("SAY") ? "SAY" : "TRADE");
 	}
 	
+	private boolean hasPlayerInRange(Npc npc, int range)
+	{
+		final boolean[] found =
+		{
+			false
+		};
+		World.getInstance().forEachVisibleObjectInRange(npc, Player.class, range, player -> found[0] = true);
+		return found[0];
+	}
+
 	private void sendTradeChat(Npc npc, String text)
 	{
 		final CreatureSay cs = new CreatureSay(npc, ChatType.TRADE, npc.getName(), text);

@@ -28,9 +28,12 @@ def whisper_persona(fpc):
             "NEVER say you are an AI or bot. Stay in character. Remember the conversation so far.")
 
 def trade_persona(fpc):
-    return (f"You are {fpc}, a player in Lineage 2 (Interlude) in the PUBLIC trade channel. "
-            "Talk like real L2 trade chat: short, casual, lowercase, mix of WTS/WTB, questions, banter. "
-            "Under 12 words, ONE line. NEVER say you are an AI or bot. Stay in character.")
+    return (f"You are {fpc}, a real player in Lineage 2 (Interlude) reading the PUBLIC trade channel. "
+            "Talk like a real player: short, casual, lowercase, slang/typos ok, ONE line under 12 words. "
+            "Trade chat is mostly buying/selling, but players also answer each other, haggle and banter. "
+            "Only chime in when it actually makes sense for YOU to. "
+            "NEVER say you are an AI or bot. Stay in character. "
+            "If you have nothing natural to add, reply with exactly: pass")
 
 def say_persona(fpc):
     return (f"You are {fpc}, a player in Lineage 2 (Interlude) talking OUT LOUD to players right next to you. "
@@ -41,6 +44,13 @@ def call_llm(system, messages, max_tokens=70):
     resp = client.chat.completions.create(model=MODEL, max_tokens=max_tokens,
         messages=[{"role": "system", "content": system}] + messages)
     return resp.choices[0].message.content.strip()
+
+def clean_reply(text):
+    # The model can opt out of speaking; treat those as silence so the bot stays quiet.
+    t = (text or "").strip().strip('"').strip()
+    if t.lower().strip(".!:-") in ("", "pass", "skip", "none", "no reply"):
+        return ""
+    return t
 
 @app.route("/chat", methods=["POST"])
 def chat():
@@ -72,12 +82,20 @@ def chat():
             if message and overheard not in trade_log:
                 trade_log.append(overheard)
             context = "\n".join(trade_log) if trade_log else "(channel is quiet)"
-            task = ("Say ONE spontaneous trade-chat line (a WTS/WTB, a question, or banter)."
-                    if mode == "AMBIENT" else
-                    "React with ONE short trade-chat line to the recent messages.")
-            reply = call_llm(trade_persona(fpc),
-                [{"role": "user", "content": f"Recent trade chat:\n{context}\n\n{task}"}], 60)
-            trade_log.append(f"{fpc}: {reply}")
+            if mode == "AMBIENT":
+                prompt = (f"Recent trade chat:\n{context}\n\n"
+                          "Post ONE spontaneous trade line of your own (a WTS, a WTB, or a question). ONE line.")
+            else:
+                who = speaker or "someone"
+                prompt = (f"Recent trade chat:\n{context}\n\n"
+                          f"{who} just said: \"{message}\"\n"
+                          "If this is something you'd naturally react to, reply to THEM directly: "
+                          "answer their question, make/counter an offer, haggle, or banter. "
+                          "Do NOT just post your own unrelated WTS/WTB ad. "
+                          "If it has nothing to do with you, reply with exactly: pass")
+            reply = clean_reply(call_llm(trade_persona(fpc), [{"role": "user", "content": prompt}], 60))
+            if reply:
+                trade_log.append(f"{fpc}: {reply}")
         print(f"[{PROVIDER}:{mode}:{fpc}] '{message}' -> '{reply}'")
     except Exception as e:
         print("Brain error:", e)
