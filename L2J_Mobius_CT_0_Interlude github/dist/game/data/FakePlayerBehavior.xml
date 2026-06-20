@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	Fake player behavior profiles.
+
+	A profile defines HOW a fake player moves around. Each fake player is matched to a profile by:
+	  1. <assign name="..."> (case-insensitive fake player name), else
+	  2. <assign npcId="..."> (the NPC template id), else
+	  3. <default profile="..."> (fallback for everyone else).
+
+	Profile types:
+	  WANDER - random short hops within "radius" units of where the bot spawned (town life, idle farm spot).
+	  PATROL - walks an ordered list of <point> waypoints, looping forever (guards, travellers).
+
+	Attributes:
+	  radius   - WANDER only: max distance from the spawn anchor for each hop.
+	  run      - true = run between points, false = walk.
+	  pauseMin / pauseMax - seconds to idle between moves (a random value in this range is used).
+
+	Notes:
+	  - Movement uses the normal AI + geodata, so bots path around obstacles.
+	  - Combat is left to the engine; if FakePlayerAggroMonsters is on, wandering bots will fight
+	    monsters they bump into, then resume.
+	  - Fake players that already have a Routes.xml route are NOT touched by this system.
+-->
+<list>
+	<!-- Stays near home, strolls slowly: good for townsfolk standing around a hub. -->
+	<profile name="townsfolk" type="WANDER" radius="500" run="false" pauseMin="10" pauseMax="30" />
+
+	<!-- Roams a wider area at a run and engages nearby monsters: a farming feel. -->
+	<profile name="farmer" type="WANDER" radius="1400" run="true" pauseMin="3" pauseMax="9" />
+
+	<!-- Example patrol loop through Giran town square (reuse/extend with your own points). -->
+	<profile name="giran_patrol" type="PATROL" run="true" pauseMin="2" pauseMax="6">
+		<point x="83485" y="147998" z="-3407" />
+		<point x="82117" y="147642" z="-3469" />
+		<point x="82651" y="146714" z="-3466" />
+		<point x="83192" y="146680" z="-3464" />
+		<point x="81517" y="147231" z="-3533" />
+	</profile>
+
+	<!-- Per-bot assignments (override the default). Names are case-insensitive. -->
+	<assign name="Theron" profile="farmer" />
+	<assign name="Lytheris" profile="townsfolk" />
+	<assign npcId="80000" profile="giran_patrol" /> <!-- Evi -->
+
+	<!-- Everyone else without an explicit assignment behaves like townsfolk. -->
+	<default profile="townsfolk" />
+</list>

@@ -34,6 +34,7 @@ public class FakePlayersConfig
 	// Constants
 	public static boolean FAKE_PLAYERS_ENABLED;
 	public static boolean FAKE_PLAYER_CHAT;
+	public static boolean FAKE_PLAYER_BEHAVIOR;
 	public static boolean FAKE_PLAYER_USE_SHOTS;
 	public static boolean FAKE_PLAYER_KILL_PVP;
 	public static boolean FAKE_PLAYER_KILL_KARMA;
@@ -49,6 +50,7 @@ public class FakePlayersConfig
 		final ConfigReader config = new ConfigReader(FAKE_PLAYERS_CONFIG_FILE);
 		FAKE_PLAYERS_ENABLED = config.getBoolean("EnableFakePlayers", false);
 		FAKE_PLAYER_CHAT = config.getBoolean("FakePlayerChat", false);
+		FAKE_PLAYER_BEHAVIOR = config.getBoolean("FakePlayerBehavior", false);
 		FAKE_PLAYER_USE_SHOTS = config.getBoolean("FakePlayerUseShots", false);
 		FAKE_PLAYER_KILL_PVP = config.getBoolean("FakePlayerKillsRewardPvP", false);
 		FAKE_PLAYER_KILL_KARMA = config.getBoolean("FakePlayerUnflaggedKillsKarma", false);

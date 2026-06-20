@@ -117,6 +117,7 @@ import org.l2jmobius.gameserver.managers.DailyResetManager;
 import org.l2jmobius.gameserver.managers.DayNightSpawnManager;
 import org.l2jmobius.gameserver.managers.DimensionalRiftManager;
 import org.l2jmobius.gameserver.managers.EventDropManager;
+import org.l2jmobius.gameserver.managers.FakePlayerBehaviorManager;
 import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
 import org.l2jmobius.gameserver.managers.FishingChampionshipManager;
 import org.l2jmobius.gameserver.managers.GlobalVariablesManager;
@@ -287,6 +288,7 @@ public class GameServer
 		LevelUpCrystalData.getInstance();
 		FakePlayerChatManager.getInstance();
 		WalkingManager.getInstance();
+		FakePlayerBehaviorManager.getInstance();
 		StaticObjectData.getInstance();
 		CastleManager.getInstance().loadInstances();
 		SchemeBufferTable.getInstance();

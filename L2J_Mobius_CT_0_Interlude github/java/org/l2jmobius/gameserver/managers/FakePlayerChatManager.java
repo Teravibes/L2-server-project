@@ -12,7 +12,9 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 
@@ -233,9 +235,12 @@ public class FakePlayerChatManager implements IXmlReader
 		
 		final int range = channel.equals("SAY") ? SAY_RANGE : SOCIAL_RANGE;
 		final List<Npc> bots = new ArrayList<>();
+		final Set<String> seenNames = new HashSet<>();
 		World.getInstance().forEachVisibleObjectInRange(origin, Npc.class, range, npc ->
 		{
-			if (npc.isFakePlayer() && (npc != origin))
+			// Dedupe by name: several spawns can share one fake player name, but a given
+			// character should answer a message only once.
+			if (npc.isFakePlayer() && (npc != origin) && !npc.getName().equals(speakerName) && seenNames.add(npc.getName()))
 			{
 				bots.add(npc);
 			}
