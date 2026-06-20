@@ -42,6 +42,7 @@ import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Npc;
+import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 
 /**
@@ -84,7 +85,10 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		/** Random short hops around a home anchor (town life, idle farming spot). */
 		WANDER,
 		/** Cycles through an ordered list of points (guards, travellers). */
-		PATROL
+		PATROL,
+		/** Moves to a RANDOM point from the list each time (with long idles): "purposeful" town movement
+		 * between points of interest like the gatekeeper, warehouse and shops. */
+		VISIT
 	}
 
 	private enum Phase
@@ -130,6 +134,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		int minLevel = 1;
 		int maxLevel = 60;
 		String profileName;
+		Race race; // optional dominant race for this group (e.g. a Dwarven village)
 	}
 
 	private final Map<String, Profile> _profiles = new HashMap<>();
@@ -214,6 +219,17 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				population.minLevel = set.getInt("minLevel", 1);
 				population.maxLevel = set.getInt("maxLevel", 60);
 				population.profileName = set.getString("profile", _defaultProfile);
+				if (set.contains("race"))
+				{
+					try
+					{
+						population.race = Race.valueOf(set.getString("race").toUpperCase());
+					}
+					catch (Exception e)
+					{
+						LOGGER.warning(getClass().getSimpleName() + ": Unknown race '" + set.getString("race") + "' in population '" + population.name + "'.");
+					}
+				}
 				_populations.add(population);
 			});
 		});
@@ -304,7 +320,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				if (npc != null)
 				{
 					// Give the bot its own procedurally generated identity and broadcast the new look.
-					npc.setFakePlayerAppearance(FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel));
+					npc.setFakePlayerAppearance(FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, population.race));
 					npc.broadcastInfo();
 					deployed++;
 
@@ -456,6 +472,16 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			final Location point = profile.points.get(state.patrolIndex % profile.points.size());
 			state.patrolIndex++;
 			return GeoEngine.getInstance().getValidLocation(npc, point);
+		}
+
+		if (profile.type == ProfileType.VISIT)
+		{
+			if (profile.points.isEmpty())
+			{
+				return null;
+			}
+			// Head to a random point of interest, so movement looks purposeful (and idles long on arrival).
+			return GeoEngine.getInstance().getValidLocation(npc, profile.points.get(Rnd.get(profile.points.size())));
 		}
 
 		// WANDER: random reachable point within the bot's radius of the home anchor.

@@ -2,54 +2,81 @@
 <!--
 	Fake player behavior + procedural population.
 
-	PROFILES define HOW a bot moves (WANDER random hops, or PATROL a waypoint loop) and its pacing.
-	  - The wander radius for procedurally deployed bots comes from their <population>, not the profile;
-	    the profile's "radius" is only a fallback for hand-placed fake players discovered in the world.
+	PROFILES define HOW a bot moves:
+	  WANDER - random hops within its radius of the home anchor (idling / milling about).
+	  VISIT  - walks to a RANDOM point of interest from its <point> list, idles a long time on arrival,
+	           then moves to another: this is "purposeful" movement between gatekeeper / warehouse / shops.
+	  PATROL - walks the <point> list in order, looping.
+	  For procedurally deployed bots the wander radius comes from their <population> (so cluster
+	  tightness is set per group); the profile "radius" is only a fallback for discovered bots.
 
-	POPULATIONS define WHERE and HOW MANY bots to procedurally spawn:
-	  count    - how many bots to deploy in this group.
-	  x/y/z    - the anchor center (a town square, or a specific NPC's location for a cluster).
-	  radius   - bots scatter within this distance and wander within it, anchored to the center,
-	             so a small radius = a tight cluster around the spot.
-	  minLevel / maxLevel - level range rolled per bot (drives gear tier: no-grade <20, D 20-39, C 40+).
-	  profile  - which movement profile the group uses.
+	POPULATIONS define WHERE / HOW MANY / WHAT:
+	  count, x/y/z (anchor center), radius (scatter + wander; small = tight cluster),
+	  minLevel/maxLevel (drives gear tier: most bots are poor/average, only a few fully kitted),
+	  profile, and optional race (a dominant race for the group, e.g. a Dwarven village).
 
-	All coordinates below were taken from the server's own datapack (town respawn points and
-	Giran NPC spawns), so they are valid ground.
+	Coordinates are taken from the datapack (town respawn points and Giran NPC spawns).
+
+	Tuning intent: most bots IDLE in clusters (the majority around the gatekeeper), a minority MOVE
+	with purpose. Starting villages are kept small and race-appropriate.
 -->
 <list>
 	<!-- ===== Movement profiles ===== -->
-	<!-- Stands around a spot, only shuffles occasionally: for NPC clusters. -->
-	<profile name="loiter" type="WANDER" radius="250" run="false" pauseMin="15" pauseMax="45" />
-	<!-- General town life: strolls around at a walk. -->
-	<profile name="townsfolk" type="WANDER" radius="800" run="false" pauseMin="8" pauseMax="25" />
-	<!-- Moves more often, covers more ground (busy capital streets). -->
-	<profile name="stroller" type="WANDER" radius="1400" run="false" pauseMin="5" pauseMax="15" />
+	<!-- Idlers: stand around a spot, only shuffle occasionally. -->
+	<profile name="loiter" type="WANDER" radius="150" run="false" pauseMin="25" pauseMax="80" />
+	<!-- Light movers: amble around an area. -->
+	<profile name="mill" type="WANDER" radius="350" run="false" pauseMin="18" pauseMax="45" />
+	<!-- Purposeful movers in Giran: walk between the key NPCs, lingering at each. -->
+	<profile name="visit_giran" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="83485" y="147998" z="-3407" /> <!-- Gatekeeper -->
+		<point x="83192" y="146680" z="-3464" /> <!-- Warehouse -->
+		<point x="82651" y="146714" z="-3466" /> <!-- Dimensional Merchants -->
+		<point x="85055" y="146560" z="-3399" /> <!-- Blacksmith / weapon shops -->
+		<point x="85505" y="146208" z="-3399" /> <!-- Grocer -->
+		<point x="81360" y="150016" z="-3528" /> <!-- Mammon -->
+	</profile>
 	<!-- Roams wide at a run and engages monsters: for future field/farming zones. -->
 	<profile name="farmer" type="WANDER" radius="1400" run="true" pauseMin="3" pauseMax="9" />
 
-	<!-- ===== GIRAN: the capital (~220), with clusters around key NPCs + a roaming crowd ===== -->
-	<!-- Clusters: a tight knot of people standing around a specific NPC. -->
-	<population name="giran_gatekeeper" count="18" x="83485" y="147998" z="-3407" radius="260" minLevel="1" maxLevel="76" profile="loiter" />
-	<population name="giran_warehouse" count="12" x="83192" y="146680" z="-3464" radius="220" minLevel="1" maxLevel="76" profile="loiter" />
-	<population name="giran_mammon" count="10" x="81360" y="150016" z="-3528" radius="220" minLevel="20" maxLevel="76" profile="loiter" />
-	<population name="giran_merchants" count="10" x="82651" y="146714" z="-3466" radius="220" minLevel="1" maxLevel="60" profile="loiter" />
-	<population name="giran_grocer" count="8" x="85505" y="146208" z="-3399" radius="220" minLevel="1" maxLevel="50" profile="loiter" />
-	<!-- The moving crowd that fills the square and streets. -->
-	<population name="giran_square" count="140" x="83400" y="147600" z="-3400" radius="1300" minLevel="15" maxLevel="60" profile="townsfolk" />
-	<population name="giran_streets" count="24" x="82480" y="149087" z="-3350" radius="1600" minLevel="20" maxLevel="76" profile="stroller" />
+	<!-- ===== GIRAN (~145): mostly idlers clustered on NPCs, the majority at the gatekeeper ===== -->
+	<population name="giran_gatekeeper" count="38" x="83485" y="147998" z="-3407" radius="240" minLevel="1" maxLevel="76" profile="loiter" />
+	<population name="giran_warehouse" count="14" x="83192" y="146680" z="-3464" radius="200" minLevel="1" maxLevel="76" profile="loiter" />
+	<population name="giran_merchants" count="12" x="82651" y="146714" z="-3466" radius="200" minLevel="1" maxLevel="60" profile="loiter" />
+	<population name="giran_blacksmith" count="12" x="85055" y="146560" z="-3399" radius="200" minLevel="15" maxLevel="76" profile="loiter" />
+	<population name="giran_grocer" count="10" x="85505" y="146208" z="-3399" radius="180" minLevel="1" maxLevel="50" profile="loiter" />
+	<population name="giran_mammon" count="10" x="81360" y="150016" z="-3528" radius="180" minLevel="20" maxLevel="76" profile="loiter" />
+	<!-- The minority that move with purpose between the above. -->
+	<population name="giran_movers" count="26" x="83485" y="147998" z="-3407" radius="300" minLevel="15" maxLevel="76" profile="visit_giran" />
+	<!-- A little background milling in the square. -->
+	<population name="giran_crowd" count="22" x="83400" y="147600" z="-3400" radius="900" minLevel="15" maxLevel="50" profile="mill" />
 
-	<!-- ===== Starting villages + Gludio (lower level, modest crowds) ===== -->
-	<population name="talking_island" count="28" x="-83990" y="243336" z="-3700" radius="900" minLevel="1" maxLevel="20" profile="townsfolk" />
-	<population name="gludin" count="28" x="-83520" y="150560" z="-3000" radius="900" minLevel="1" maxLevel="25" profile="townsfolk" />
-	<population name="gludio" count="28" x="-14288" y="122752" z="-3000" radius="900" minLevel="5" maxLevel="30" profile="townsfolk" />
-	<population name="dwarven_village" count="20" x="116176" y="-182448" z="-1400" radius="700" minLevel="1" maxLevel="20" profile="townsfolk" />
-	<population name="orc_village" count="20" x="-44316" y="-113136" z="-80" radius="700" minLevel="1" maxLevel="20" profile="townsfolk" />
+	<!-- ===== Starting villages: small, race-appropriate, clustered at the gatekeeper ===== -->
+	<!-- Talking Island (Humans) -->
+	<population name="ti_gatekeeper" count="9" x="-83990" y="243336" z="-3700" radius="220" minLevel="1" maxLevel="18" profile="loiter" race="HUMAN" />
+	<population name="ti_movers" count="3" x="-83990" y="243336" z="-3700" radius="450" minLevel="1" maxLevel="18" profile="mill" race="HUMAN" />
+	<!-- Elven Village -->
+	<population name="elf_gatekeeper" count="8" x="46926" y="51511" z="-2976" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="ELF" />
+	<population name="elf_movers" count="2" x="46926" y="51511" z="-2976" radius="450" minLevel="1" maxLevel="20" profile="mill" race="ELF" />
+	<!-- Dark Elven Village -->
+	<population name="delf_gatekeeper" count="8" x="12501" y="16768" z="-4500" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="DARK_ELF" />
+	<population name="delf_movers" count="2" x="12501" y="16768" z="-4500" radius="450" minLevel="1" maxLevel="20" profile="mill" race="DARK_ELF" />
+	<!-- Dwarven Village -->
+	<population name="dwarf_gatekeeper" count="8" x="116176" y="-182448" z="-1400" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="DWARF" />
+	<population name="dwarf_movers" count="2" x="116176" y="-182448" z="-1400" radius="450" minLevel="1" maxLevel="20" profile="mill" race="DWARF" />
+	<!-- Orc Village -->
+	<population name="orc_gatekeeper" count="8" x="-44316" y="-113136" z="-80" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="ORC" />
+	<population name="orc_movers" count="2" x="-44316" y="-113136" z="-80" radius="450" minLevel="1" maxLevel="20" profile="mill" race="ORC" />
+
+	<!-- ===== Gludin & Gludio: mixed-race hubs, a bit larger ===== -->
+	<population name="gludin_gatekeeper" count="12" x="-83520" y="150560" z="-3000" radius="260" minLevel="1" maxLevel="30" profile="loiter" />
+	<population name="gludin_movers" count="5" x="-83520" y="150560" z="-3000" radius="600" minLevel="1" maxLevel="30" profile="mill" />
+	<population name="gludio_gatekeeper" count="14" x="-14288" y="122752" z="-3000" radius="260" minLevel="5" maxLevel="35" profile="loiter" />
+	<population name="gludio_movers" count="5" x="-14288" y="122752" z="-3000" radius="600" minLevel="5" maxLevel="35" profile="mill" />
 
 	<!-- ===== Per-bot assignments for hand-placed fake players (discovered in the world) ===== -->
 	<assign name="Theron" profile="farmer" />
-	<assign name="Lytheris" profile="townsfolk" />
+	<assign name="Lytheris" profile="loiter" />
 
 	<!-- Fallback profile for any discovered fake player without an explicit assignment. -->
-	<default profile="townsfolk" />
+	<default profile="loiter" />
 </list>

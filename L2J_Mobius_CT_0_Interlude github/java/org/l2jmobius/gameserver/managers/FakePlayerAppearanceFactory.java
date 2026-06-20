@@ -161,7 +161,19 @@ public class FakePlayerAppearanceFactory
 	 */
 	public static FakePlayerAppearance generate(int minLevel, int maxLevel)
 	{
-		final Race race = RACE_POOL[Rnd.get(RACE_POOL.length)];
+		return generate(minLevel, maxLevel, null);
+	}
+
+	/**
+	 * Generates a fresh appearance, optionally biased toward a dominant race (e.g. a Dwarven village).
+	 * @param minLevel lowest level to roll
+	 * @param maxLevel highest level to roll
+	 * @param dominantRace if not {@code null}, most bots will be this race
+	 * @return a populated {@link FakePlayerAppearance}
+	 */
+	public static FakePlayerAppearance generate(int minLevel, int maxLevel, Race dominantRace)
+	{
+		final Race race = (dominantRace != null) && (Rnd.get(100) < 82) ? dominantRace : RACE_POOL[Rnd.get(RACE_POOL.length)];
 		final boolean female = (race != Race.ORC) && (race != Race.DWARF) ? Rnd.nextBoolean() : Rnd.get(100) < 30; // orcs/dwarves skew male
 		final int classId = classForRace(race)[Rnd.get(classForRace(race).length)];
 		final PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
@@ -190,21 +202,42 @@ public class FakePlayerAppearanceFactory
 	 */
 	private static void equip(FakePlayerAppearance look, boolean mage)
 	{
+		// The tier a bot's level would allow.
 		final int level = look.getLevel();
-		final int tier = level >= 40 ? 2 : level >= 20 ? 1 : 0;
+		final int levelTier = level >= 40 ? 2 : level >= 20 ? 1 : 0;
 
-		// Weapon.
-		final int[] weapons = mage ? (tier == 2 ? C_MAGE_WEAPONS : tier == 1 ? D_MAGE_WEAPONS : NG_MAGE_WEAPONS) : (tier == 2 ? C_FIGHTER_WEAPONS : tier == 1 ? D_FIGHTER_WEAPONS : NG_FIGHTER_WEAPONS);
-		look.setWeapon(weapons[Rnd.get(weapons.length)], 0);
-		if (Rnd.get(100) < 15) // a few show a small enchant glow
+		// "Wealth" spreads gear grades within a same-level crowd so a cluster is not all in identical
+		// top gear: most people are poor/average and only a minority are fully kitted for their level.
+		final int wealth = Rnd.get(100);
+		final int tier;
+		if (wealth < 40)
 		{
-			look.setWeaponEnchantLevel(Rnd.get(1, 4));
+			tier = 0; // poor: plain no-grade regardless of level
+		}
+		else if (wealth < 85)
+		{
+			tier = Math.max(0, levelTier - Rnd.get(0, 1)); // average: their tier, often a grade lower
+		}
+		else
+		{
+			tier = levelTier; // well-off: full tier for their level
 		}
 
-		// Armor, by tier. Head and gloves are sometimes skipped for natural variety.
-		final int head;
+		// Weapon: most carry one, some go unarmed; a few show a small enchant.
+		if (Rnd.get(100) < 88)
+		{
+			final int[] weapons = mage ? (tier == 2 ? C_MAGE_WEAPONS : tier == 1 ? D_MAGE_WEAPONS : NG_MAGE_WEAPONS) : (tier == 2 ? C_FIGHTER_WEAPONS : tier == 1 ? D_FIGHTER_WEAPONS : NG_FIGHTER_WEAPONS);
+			look.setWeapon(weapons[Rnd.get(weapons.length)], 0);
+			if ((tier > 0) && (Rnd.get(100) < 12))
+			{
+				look.setWeaponEnchantLevel(Rnd.get(1, 4));
+			}
+		}
+
+		// Armor pieces for the rolled tier; chest is picked here, the rest are tier constants.
 		final int chest;
 		final int legs;
+		final int head;
 		final int gloves;
 		final int feet;
 		switch (tier)
@@ -237,7 +270,10 @@ public class FakePlayerAppearanceFactory
 				break;
 			}
 		}
-		look.setArmor(Rnd.get(100) < 75 ? head : 0, chest, legs, Rnd.get(100) < 65 ? gloves : 0, feet, 0);
+
+		// Completeness varies a lot: most wear a chest, fewer wear legs, helmets/gloves are uncommon
+		// (so we don't get a cluster of identical fully-armored clones).
+		look.setArmor(Rnd.get(100) < 40 ? head : 0, Rnd.get(100) < 88 ? chest : 0, Rnd.get(100) < 70 ? legs : 0, Rnd.get(100) < 38 ? gloves : 0, Rnd.get(100) < 75 ? feet : 0, 0);
 	}
 
 	private static int[] classForRace(Race race)
