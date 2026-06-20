@@ -81,6 +81,62 @@ public class FakePlayerAppearanceFactory
 		53 // Dwarven Fighter
 	};
 
+	// ===== Curated gear sets (verified item ids from the datapack), tiered by level. =====
+	// Weapons.
+	private static final int[] NG_FIGHTER_WEAPONS =
+	{
+		1, 2, 5, 12, 68, 159 // Short/Long Sword, Mace, Knife, Falchion, Bonebreaker
+	};
+	private static final int[] NG_MAGE_WEAPONS =
+	{
+		6, 8, 747 // Apprentice's Wand, Willow Staff, Wand of Adept
+	};
+	private static final int[] D_FIGHTER_WEAPONS =
+	{
+		129, 125, 127, 268, 72 // Sword of Revolution, Spinebone, Crimson, Bellion Cestus, Stormbringer
+	};
+	private static final int[] D_MAGE_WEAPONS =
+	{
+		189, 200, 195 // Staff of Life, Sage's Staff, Cursed Staff
+	};
+	private static final int[] C_FIGHTER_WEAPONS =
+	{
+		171, 75, 84 // Deadman's Glory, Caliburs, Homunkulus's Sword
+	};
+	private static final int[] C_MAGE_WEAPONS =
+	{
+		2373, 200 // Eldritch Staff, Sage's Staff
+	};
+
+	// Armor: {chest options} plus single legs/head/gloves/feet per tier.
+	private static final int[] NG_CHEST =
+	{
+		22, 1101, 352 // Leather Shirt, Tunic of Devotion, Brigandine Tunic
+	};
+	private static final int NG_LEGS = 29; // Leather Pants
+	private static final int NG_HEAD = 43; // Wooden Helmet
+	private static final int NG_GLOVES = 50; // Leather Gloves
+	private static final int NG_FEET = 37; // Leather Shoes
+
+	private static final int[] D_CHEST =
+	{
+		400, 356 // Theca Leather Armor, Full Plate Armor
+	};
+	private static final int[] D_LEGS =
+	{
+		417, 380 // Manticore Skin Gaiters, Plate Gaiters
+	};
+	private static final int D_HEAD = 2411; // Brigandine Helmet
+	private static final int D_FEET = 2425; // Brigandine Boots
+
+	private static final int[] C_CHEST =
+	{
+		437 // Mithril Tunic
+	};
+	private static final int C_LEGS = 59; // Mithril Gaiters
+	private static final int C_HEAD = 2412; // Plate Helmet
+	private static final int C_FEET = 2428; // Plate Boots
+
 	// Races eligible for generated bots, weighted by repetition (humans most common, dwarves least).
 	private static final Race[] RACE_POOL =
 	{
@@ -122,7 +178,66 @@ public class FakePlayerAppearanceFactory
 		look.setHairStyle(Rnd.get(0, 3));
 		look.setHairColor(Rnd.get(0, 3));
 		look.setFace(Rnd.get(0, 2));
+		equip(look, playerClass != null && playerClass.isMage());
 		return look;
+	}
+
+	/**
+	 * Dresses a generated bot in a coherent gear set for its level tier, branched by fighter/mage.
+	 * Some slots are intentionally left empty at random so the crowd is not uniformly fully geared.
+	 * @param look the appearance to equip
+	 * @param mage {@code true} for a caster loadout (staff/wand), {@code false} for melee
+	 */
+	private static void equip(FakePlayerAppearance look, boolean mage)
+	{
+		final int level = look.getLevel();
+		final int tier = level >= 40 ? 2 : level >= 20 ? 1 : 0;
+
+		// Weapon.
+		final int[] weapons = mage ? (tier == 2 ? C_MAGE_WEAPONS : tier == 1 ? D_MAGE_WEAPONS : NG_MAGE_WEAPONS) : (tier == 2 ? C_FIGHTER_WEAPONS : tier == 1 ? D_FIGHTER_WEAPONS : NG_FIGHTER_WEAPONS);
+		look.setWeapon(weapons[Rnd.get(weapons.length)], 0);
+		if (Rnd.get(100) < 15) // a few show a small enchant glow
+		{
+			look.setWeaponEnchantLevel(Rnd.get(1, 4));
+		}
+
+		// Armor, by tier. Head and gloves are sometimes skipped for natural variety.
+		final int head;
+		final int chest;
+		final int legs;
+		final int gloves;
+		final int feet;
+		switch (tier)
+		{
+			case 2:
+			{
+				chest = C_CHEST[Rnd.get(C_CHEST.length)];
+				legs = C_LEGS;
+				head = C_HEAD;
+				feet = C_FEET;
+				gloves = NG_GLOVES;
+				break;
+			}
+			case 1:
+			{
+				chest = D_CHEST[Rnd.get(D_CHEST.length)];
+				legs = D_LEGS[Rnd.get(D_LEGS.length)];
+				head = D_HEAD;
+				feet = D_FEET;
+				gloves = NG_GLOVES;
+				break;
+			}
+			default:
+			{
+				chest = NG_CHEST[Rnd.get(NG_CHEST.length)];
+				legs = NG_LEGS;
+				head = NG_HEAD;
+				feet = NG_FEET;
+				gloves = NG_GLOVES;
+				break;
+			}
+		}
+		look.setArmor(Rnd.get(100) < 75 ? head : 0, chest, legs, Rnd.get(100) < 65 ? gloves : 0, feet, 0);
 	}
 
 	private static int[] classForRace(Race race)
