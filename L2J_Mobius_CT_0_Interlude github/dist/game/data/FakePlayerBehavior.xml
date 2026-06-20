@@ -35,8 +35,10 @@
 		<point x="85505" y="146208" z="-3399" /> <!-- Grocer -->
 		<point x="81360" y="150016" z="-3528" /> <!-- Mammon -->
 	</profile>
-	<!-- Roams wide at a run and engages monsters: for future field/farming zones. -->
+	<!-- Roams wide at a run: fallback profile for discovered hand-placed fake players. -->
 	<profile name="farmer" type="WANDER" radius="1400" run="true" pauseMin="3" pauseMax="9" />
+	<!-- Hunters: seek the nearest monster in the zone, fight it, then roam to find more. -->
+	<profile name="hunter" type="FARM" run="true" pauseMin="2" pauseMax="6" />
 
 	<!-- ===== GIRAN (~145): mostly idlers clustered on NPCs, the majority at the gatekeeper ===== -->
 	<population name="giran_gatekeeper" count="38" x="83485" y="147998" z="-3407" radius="240" minLevel="1" maxLevel="76" profile="loiter" />
@@ -73,14 +75,41 @@
 	<population name="gludio_gatekeeper" count="14" x="-14288" y="122752" z="-3000" radius="260" minLevel="5" maxLevel="35" profile="loiter" />
 	<population name="gludio_movers" count="5" x="-14288" y="122752" z="-3000" radius="600" minLevel="5" maxLevel="35" profile="mill" />
 
-	<!-- ===== Field / farming zones (fighters roam and fight monsters; respawn keeps them populated) =====
-	     Centers are real vertices of each hunting zone; level ranges match the zone so gear fits. -->
-	<population name="field_talking_island" count="12" x="-75291" y="251836" z="-3226" radius="900" minLevel="2" maxLevel="14" profile="farmer" respawn="true" />
-	<population name="field_gludio_wasteland" count="14" x="-55720" y="179196" z="-2942" radius="1000" minLevel="15" maxLevel="21" profile="farmer" respawn="true" />
-	<population name="field_plains_of_dion" count="14" x="25435" y="135929" z="-2889" radius="1000" minLevel="20" maxLevel="28" profile="farmer" respawn="true" />
-	<population name="field_cruma_marshlands" count="12" x="9868" y="104802" z="-3531" radius="900" minLevel="30" maxLevel="40" profile="farmer" respawn="true" />
-	<population name="field_gorgon_garden" count="12" x="116016" y="126984" z="-2878" radius="900" minLevel="26" maxLevel="36" profile="farmer" respawn="true" />
-	<population name="field_breka_stronghold" count="12" x="78196" y="120284" z="-2220" radius="900" minLevel="30" maxLevel="40" profile="farmer" respawn="true" />
+	<!-- ===== Field / farming zones (hunters seek monsters and roam the zone; respawn keeps them populated)
+	     Coordinates are real zone vertices from the datapack; with geodata loaded the Z snaps to ground.
+	     The wide radius + FARM behavior spreads bots across the zone instead of clustering at one spot.
+	     Level ranges follow each zone so gear fits. -->
+	<!-- Starter areas (lvl 1-12) -->
+	<population name="field_talking_island" count="5" x="-75291" y="251836" z="-3200" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
+	<population name="field_elven" count="5" x="49544" y="40940" z="-3450" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
+	<population name="field_darkelf" count="5" x="28698" y="13261" z="-3150" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
+	<population name="field_orc" count="5" x="-51344" y="-113300" z="-2950" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
+	<population name="field_dwarven" count="5" x="113960" y="-173988" z="-1100" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
+	<!-- Gludio / Dion (lvl 12-40) -->
+	<population name="field_wasteland" count="8" x="-55720" y="179196" z="-2950" radius="2500" minLevel="12" maxLevel="18" profile="hunter" respawn="true" />
+	<population name="field_plains_of_dion" count="8" x="25435" y="135929" z="-2900" radius="2500" minLevel="20" maxLevel="28" profile="hunter" respawn="true" />
+	<population name="field_execution_grounds" count="7" x="40084" y="144588" z="-2900" radius="2200" minLevel="20" maxLevel="30" profile="hunter" respawn="true" />
+	<population name="field_bee_hive" count="7" x="16408" y="180568" z="-3050" radius="2200" minLevel="22" maxLevel="30" profile="hunter" respawn="true" />
+	<population name="field_tanor_canyon" count="8" x="34507" y="162123" z="-3100" radius="2200" minLevel="30" maxLevel="40" profile="hunter" respawn="true" />
+	<population name="field_cruma_marshlands" count="8" x="9868" y="104802" z="-3531" radius="2200" minLevel="30" maxLevel="40" profile="hunter" respawn="true" />
+	<!-- Giran (lvl 26-62) -->
+	<population name="field_gorgon_garden" count="7" x="116016" y="126984" z="-3331" radius="2200" minLevel="26" maxLevel="36" profile="hunter" respawn="true" />
+	<population name="field_breka_stronghold" count="7" x="78196" y="120284" z="-2300" radius="2200" minLevel="28" maxLevel="38" profile="hunter" respawn="true" />
+	<population name="field_death_pass" count="7" x="65732" y="104240" z="-3500" radius="2200" minLevel="36" maxLevel="44" profile="hunter" respawn="true" />
+	<population name="field_hardins" count="7" x="70780" y="125060" z="-3000" radius="2200" minLevel="38" maxLevel="46" profile="hunter" respawn="true" />
+	<population name="field_dragon_valley" count="8" x="76948" y="116416" z="-3000" radius="2500" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
+	<!-- Oren (lvl 30-55) -->
+	<population name="field_outlaw_forest" count="7" x="89692" y="-19820" z="-3400" radius="2200" minLevel="30" maxLevel="40" profile="hunter" respawn="true" />
+	<population name="field_lizardmen" count="8" x="76384" y="92276" z="-3300" radius="2200" minLevel="40" maxLevel="46" profile="hunter" respawn="true" />
+	<population name="field_skyshadow" count="7" x="77664" y="62308" z="-3100" radius="2200" minLevel="40" maxLevel="48" profile="hunter" respawn="true" />
+	<population name="field_timak" count="7" x="69452" y="36716" z="-3300" radius="2200" minLevel="48" maxLevel="55" profile="hunter" respawn="true" />
+	<!-- Aden (lvl 50-65) -->
+	<population name="field_plains_of_glory" count="8" x="134340" y="120" z="-3500" radius="2500" minLevel="50" maxLevel="58" profile="hunter" respawn="true" />
+	<population name="field_devils_isle" count="7" x="39370" y="196737" z="-3300" radius="2200" minLevel="50" maxLevel="58" profile="hunter" respawn="true" />
+	<population name="field_war_torn_plains" count="7" x="152528" y="152" z="-3300" radius="2500" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
+	<population name="field_cemetery" count="7" x="169328" y="5668" z="-3400" radius="2200" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
+	<population name="field_fields_of_massacre" count="8" x="176140" y="-24540" z="-3000" radius="2500" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
+	<population name="field_blazing_swamp" count="7" x="143434" y="-25858" z="-4200" radius="2200" minLevel="58" maxLevel="65" profile="hunter" respawn="true" />
 
 	<!-- ===== Per-bot assignments for hand-placed fake players (discovered in the world) ===== -->
 	<assign name="Theron" profile="farmer" />

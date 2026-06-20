@@ -43,6 +43,7 @@ import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
+import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 
 /**
@@ -90,7 +91,10 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		PATROL,
 		/** Moves to a RANDOM point from the list each time (with long idles): "purposeful" town movement
 		 * between points of interest like the gatekeeper, warehouse and shops. */
-		VISIT
+		VISIT,
+		/** Hunts: heads toward the nearest monster in the zone; if none is near, roams elsewhere within
+		 * the zone to find some. Spreads bots out across a hunting ground instead of clustering. */
+		FARM
 	}
 
 	private enum Phase
@@ -392,6 +396,37 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		}
 	}
 
+	/**
+	 * Finds the closest living monster within range that is still inside the bot's zone.
+	 * @param npc the hunting bot
+	 * @param state its behavior state (for the zone anchor/radius)
+	 * @param range how far to look
+	 * @return the nearest in-zone monster, or {@code null} if none
+	 */
+	private Monster nearestMonster(Npc npc, BotState state, int range)
+	{
+		final List<Monster> found = new ArrayList<>();
+		World.getInstance().forEachVisibleObjectInRange(npc, Monster.class, range, monster ->
+		{
+			if (!monster.isDead() && monster.isInsideRadius2D(state.home, state.radius + 400))
+			{
+				found.add(monster);
+			}
+		});
+		Monster nearest = null;
+		double best = Double.MAX_VALUE;
+		for (Monster monster : found)
+		{
+			final double distance = npc.calculateDistance2D(monster);
+			if (distance < best)
+			{
+				best = distance;
+				nearest = monster;
+			}
+		}
+		return nearest;
+	}
+
 	private Profile resolveProfile(Npc npc)
 	{
 		String name = _assignByName.get(npc.getName().toLowerCase());
@@ -510,6 +545,18 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			}
 			// Head to a random point of interest, so movement looks purposeful (and idles long on arrival).
 			return GeoEngine.getInstance().getValidLocation(npc, profile.points.get(Rnd.get(profile.points.size())));
+		}
+
+		if (profile.type == ProfileType.FARM)
+		{
+			// Head toward the nearest live monster inside the zone; if there is none, fall through to a
+			// roam so the bot relocates and looks for mobs elsewhere within the zone.
+			final int searchRange = Math.min(2200, Math.max(800, state.radius));
+			final Monster target = nearestMonster(npc, state, searchRange);
+			if (target != null)
+			{
+				return GeoEngine.getInstance().getValidLocation(npc, new Location(target.getX(), target.getY(), target.getZ()));
+			}
 		}
 
 		// WANDER: random reachable point within the bot's radius of the home anchor.
