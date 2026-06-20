@@ -73,6 +73,15 @@
 	<population name="gludio_gatekeeper" count="14" x="-14288" y="122752" z="-3000" radius="260" minLevel="5" maxLevel="35" profile="loiter" />
 	<population name="gludio_movers" count="5" x="-14288" y="122752" z="-3000" radius="600" minLevel="5" maxLevel="35" profile="mill" />
 
+	<!-- ===== Field / farming zones (fighters roam and fight monsters; respawn keeps them populated) =====
+	     Centers are real vertices of each hunting zone; level ranges match the zone so gear fits. -->
+	<population name="field_talking_island" count="12" x="-75291" y="251836" z="-3451" radius="1200" minLevel="2" maxLevel="14" profile="farmer" respawn="true" />
+	<population name="field_gludio_wasteland" count="14" x="-55720" y="179196" z="-3292" radius="1400" minLevel="15" maxLevel="21" profile="farmer" respawn="true" />
+	<population name="field_plains_of_dion" count="14" x="25435" y="135929" z="-3289" radius="1400" minLevel="20" maxLevel="28" profile="farmer" respawn="true" />
+	<population name="field_cruma_marshlands" count="12" x="9868" y="104802" z="-3831" radius="1200" minLevel="30" maxLevel="40" profile="farmer" respawn="true" />
+	<population name="field_gorgon_garden" count="12" x="116016" y="126984" z="-3628" radius="1200" minLevel="26" maxLevel="36" profile="farmer" respawn="true" />
+	<population name="field_breka_stronghold" count="12" x="78196" y="120284" z="-2320" radius="1200" minLevel="30" maxLevel="40" profile="farmer" respawn="true" />
+
 	<!-- ===== Per-bot assignments for hand-placed fake players (discovered in the world) ===== -->
 	<assign name="Theron" profile="farmer" />
 	<assign name="Lytheris" profile="loiter" />

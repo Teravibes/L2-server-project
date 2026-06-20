@@ -69,6 +69,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private static final long BEHAVIOR_INTERVAL = 3000;
 	// After a fight we wait this long before resuming wandering.
 	private static final long COMBAT_BACKOFF = 6000;
+	// A killed field bot is replaced (with a fresh identity) after roughly this long.
+	private static final long RESPAWN_DELAY = 45000;
 
 	// Procedural deployment: where auto-spawned bots are scattered and how wide.
 	// Default center is the Giran town square area; tune to taste.
@@ -113,15 +115,17 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		final Profile profile;
 		final Location home;
 		final int radius; // wander radius around the home anchor (from the population, else the profile)
+		final Population population; // owning group (null for discovered bots); used for respawn
 		Phase phase = Phase.IDLE;
 		long nextActionTime;
 		int patrolIndex;
 
-		BotState(Profile profile, Location home, int radius)
+		BotState(Profile profile, Location home, int radius, Population population)
 		{
 			this.profile = profile;
 			this.home = home;
 			this.radius = radius;
+			this.population = population;
 		}
 	}
 
@@ -135,6 +139,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		int maxLevel = 60;
 		String profileName;
 		Race race; // optional dominant race for this group (e.g. a Dwarven village)
+		boolean respawn; // field bots die; respawn a fresh replacement to keep the zone populated
 	}
 
 	private final Map<String, Profile> _profiles = new HashMap<>();
@@ -145,6 +150,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 
 	private final Map<Integer, BotState> _bots = new ConcurrentHashMap<>(); // objectId -> state
 	private boolean _started = false;
+	private int _baseId; // base template id used for all generated bots (resolved at deploy)
 
 	protected FakePlayerBehaviorManager()
 	{
@@ -218,6 +224,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				population.count = set.getInt("count", 0);
 				population.minLevel = set.getInt("minLevel", 1);
 				population.maxLevel = set.getInt("maxLevel", 60);
+				population.respawn = set.getBoolean("respawn", false);
 				population.profileName = set.getString("profile", _defaultProfile);
 				if (set.contains("race"))
 				{
@@ -260,8 +267,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private void deploy()
 	{
 		// All generated bots share one base template; their look is overridden per-instance.
-		int baseId = FakePlayersConfig.FAKE_PLAYER_BASE_NPC_ID;
-		if (baseId <= 0)
+		_baseId = FakePlayersConfig.FAKE_PLAYER_BASE_NPC_ID;
+		if (_baseId <= 0)
 		{
 			final List<Integer> templateIds = new ArrayList<>(FakePlayerData.getInstance().getFakePlayerIds());
 			if (templateIds.isEmpty())
@@ -269,7 +276,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				LOGGER.warning(getClass().getSimpleName() + ": No fake player templates found - cannot deploy bots.");
 				return;
 			}
-			baseId = templateIds.get(0);
+			_baseId = templateIds.get(0);
 		}
 
 		int deployed = 0;
@@ -283,60 +290,73 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			fallback.minLevel = DEPLOY_MIN_LEVEL;
 			fallback.maxLevel = DEPLOY_MAX_LEVEL;
 			fallback.profileName = _defaultProfile;
-			deployed += deployPopulation(fallback, baseId);
+			for (int i = 0; i < fallback.count; i++)
+			{
+				if (deployOne(fallback))
+				{
+					deployed++;
+				}
+			}
 		}
 		else
 		{
 			for (Population population : _populations)
 			{
-				deployed += deployPopulation(population, baseId);
+				for (int i = 0; i < population.count; i++)
+				{
+					if (deployOne(population))
+					{
+						deployed++;
+					}
+				}
 			}
 		}
 
 		LOGGER.info("===== " + deployed + " BOTS DEPLOYED =====");
 	}
 
-	private int deployPopulation(Population population, int baseId)
+	/**
+	 * Spawns a single bot in the given population: scatters it within the group, gives it a generated
+	 * identity, and registers it with the behavior FSM.
+	 * @param population the group to spawn into
+	 * @return {@code true} if a bot was spawned
+	 */
+	private boolean deployOne(Population population)
 	{
 		final Profile profile = population.profileName == null ? null : _profiles.get(population.profileName);
-		int deployed = 0;
-		for (int i = 0; i < population.count; i++)
+		final double angle = Rnd.nextDouble() * 2 * Math.PI;
+		final int distance = Rnd.get(0, population.radius);
+		final int x = population.center.getX() + (int) (Math.cos(angle) * distance);
+		final int y = population.center.getY() + (int) (Math.sin(angle) * distance);
+		final Location loc = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
+		try
 		{
-			final double angle = Rnd.nextDouble() * 2 * Math.PI;
-			final int distance = Rnd.get(0, population.radius);
-			final int x = population.center.getX() + (int) (Math.cos(angle) * distance);
-			final int y = population.center.getY() + (int) (Math.sin(angle) * distance);
-			final Location loc = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
-			try
+			final Spawn spawn = new Spawn(_baseId);
+			spawn.setXYZ(loc.getX(), loc.getY(), loc.getZ());
+			spawn.setHeading(Rnd.get(65536));
+			spawn.setAmount(1);
+			// We own respawn ourselves (with a fresh identity) so the engine's template respawn is off.
+			spawn.stopRespawn();
+			final Npc npc = spawn.doSpawn(false);
+			if (npc != null)
 			{
-				final Spawn spawn = new Spawn(baseId);
-				spawn.setXYZ(loc.getX(), loc.getY(), loc.getZ());
-				spawn.setHeading(Rnd.get(65536));
-				spawn.setAmount(1);
-				// One-shot spawn: respawning from the base template would lose the generated identity.
-				// Persistent-identity respawn is handled in a later phase.
-				spawn.stopRespawn();
-				final Npc npc = spawn.doSpawn(false);
-				if (npc != null)
-				{
-					// Give the bot its own procedurally generated identity and broadcast the new look.
-					npc.setFakePlayerAppearance(FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, population.race));
-					npc.broadcastInfo();
-					deployed++;
+				// Give the bot its own procedurally generated identity and broadcast the new look.
+				npc.setFakePlayerAppearance(FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, population.race));
+				npc.broadcastInfo();
 
-					if (profile != null)
-					{
-						// Anchor to the population center (not the scatter point) so clusters stay tight.
-						_bots.put(npc.getObjectId(), new BotState(profile, population.center, population.radius));
-					}
+				if (profile != null)
+				{
+					// Anchor to the population center (not the scatter point) so clusters stay tight.
+					_bots.put(npc.getObjectId(), new BotState(profile, population.center, population.radius, population));
 				}
-			}
-			catch (Exception e)
-			{
-				LOGGER.warning(getClass().getSimpleName() + ": Failed to deploy bot in '" + population.name + "' (baseId=" + baseId + "): " + e.getMessage());
+				return true;
 			}
 		}
-		return deployed;
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to deploy bot in '" + population.name + "' (baseId=" + _baseId + "): " + e.getMessage());
+		}
+		return false;
 	}
 
 	/**
@@ -364,7 +384,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			final Profile profile = resolveProfile(npc);
 			if (profile != null)
 			{
-				_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ()), profile.radius));
+				_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ()), profile.radius, null));
 			}
 		}
 	}
@@ -398,7 +418,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			final Npc npc = object.asNpc();
 			if (npc.isDead())
 			{
-				_bots.remove(entry.getKey());
+				final BotState dead = _bots.remove(entry.getKey());
+				// Replace fallen field bots with a fresh hunter so the zone stays populated.
+				if ((dead != null) && (dead.population != null) && dead.population.respawn)
+				{
+					ThreadPool.schedule(() -> deployOne(dead.population), RESPAWN_DELAY);
+				}
 				continue;
 			}
 
