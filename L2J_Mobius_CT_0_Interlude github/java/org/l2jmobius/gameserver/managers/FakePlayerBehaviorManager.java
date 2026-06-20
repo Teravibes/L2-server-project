@@ -493,7 +493,9 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			final int x = state.home.getX() + (int) (Math.cos(angle) * distance);
 			final int y = state.home.getY() + (int) (Math.sin(angle) * distance);
 			final Location candidate = GeoEngine.getInstance().getValidLocation(npc, new Location(x, y, state.home.getZ()));
-			if (npc.isInsideRadius2D(candidate, radius + 100))
+			// Only accept a spot the bot can walk to in a straight line (no wall between), so they stop
+			// picking points behind buildings and running into walls.
+			if (npc.isInsideRadius2D(candidate, radius + 100) && GeoEngine.getInstance().canMoveToTarget(npc, candidate))
 			{
 				return candidate;
 			}

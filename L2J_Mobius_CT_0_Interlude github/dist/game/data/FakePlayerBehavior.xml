@@ -60,9 +60,9 @@
 	<!-- Dark Elven Village -->
 	<population name="delf_gatekeeper" count="8" x="12501" y="16768" z="-4500" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="DARK_ELF" />
 	<population name="delf_movers" count="2" x="12501" y="16768" z="-4500" radius="450" minLevel="1" maxLevel="20" profile="mill" race="DARK_ELF" />
-	<!-- Dwarven Village -->
-	<population name="dwarf_gatekeeper" count="8" x="116176" y="-182448" z="-1400" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="DWARF" />
-	<population name="dwarf_movers" count="2" x="116176" y="-182448" z="-1400" radius="450" minLevel="1" maxLevel="20" profile="mill" race="DWARF" />
+	<!-- Dwarven Village (anchored on Gatekeeper Wirphy; crowd stays mostly at the gatekeeper) -->
+	<population name="dwarf_gatekeeper" count="11" x="115072" y="-178176" z="-880" radius="200" minLevel="1" maxLevel="20" profile="loiter" race="DWARF" />
+	<population name="dwarf_movers" count="2" x="115072" y="-178176" z="-880" radius="400" minLevel="1" maxLevel="20" profile="mill" race="DWARF" />
 	<!-- Orc Village -->
 	<population name="orc_gatekeeper" count="8" x="-44316" y="-113136" z="-80" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="ORC" />
 	<population name="orc_movers" count="2" x="-44316" y="-113136" z="-80" radius="450" minLevel="1" maxLevel="20" profile="mill" race="ORC" />
