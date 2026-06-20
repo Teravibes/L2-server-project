@@ -1,0 +1,89 @@
+import os
+from collections import defaultdict, deque
+from flask import Flask, request, Response
+from openai import OpenAI
+from dotenv import load_dotenv
+
+load_dotenv()
+PROVIDER = os.getenv("PROVIDER", "deepseek")
+
+if PROVIDER == "deepseek":
+    client = OpenAI(api_key=os.environ["DEEPSEEK_API_KEY"], base_url="https://api.deepseek.com")
+    MODEL = "deepseek-chat"
+elif PROVIDER == "ollama":
+    client = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
+    MODEL = "llama3.1"
+else:
+    raise ValueError("PROVIDER must be 'deepseek' or 'ollama'")
+
+app = Flask(__name__)
+
+conversations = defaultdict(lambda: deque(maxlen=20))  # private whisper memory per (player, bot)
+trade_log = deque(maxlen=12)                            # shared global TRADE memory
+say_log = deque(maxlen=12)                              # shared local SAY memory
+
+def whisper_persona(fpc):
+    return (f"You are {fpc}, a player in Lineage 2 (Interlude) chatting PRIVATELY with another player. "
+            "Reply like a real L2 player: short, casual, lowercase, slang/typos ok. Under 15 words. "
+            "NEVER say you are an AI or bot. Stay in character. Remember the conversation so far.")
+
+def trade_persona(fpc):
+    return (f"You are {fpc}, a player in Lineage 2 (Interlude) in the PUBLIC trade channel. "
+            "Talk like real L2 trade chat: short, casual, lowercase, mix of WTS/WTB, questions, banter. "
+            "Under 12 words, ONE line. NEVER say you are an AI or bot. Stay in character.")
+
+def say_persona(fpc):
+    return (f"You are {fpc}, a player in Lineage 2 (Interlude) talking OUT LOUD to players right next to you. "
+            "Casual local banter, short, lowercase, react to what was just said. Under 12 words, ONE line. "
+            "NEVER say you are an AI or bot. Stay in character.")
+
+def call_llm(system, messages, max_tokens=70):
+    resp = client.chat.completions.create(model=MODEL, max_tokens=max_tokens,
+        messages=[{"role": "system", "content": system}] + messages)
+    return resp.choices[0].message.content.strip()
+
+@app.route("/chat", methods=["POST"])
+def chat():
+    fpc = request.headers.get("X-FPC", "a player")
+    mode = request.headers.get("X-Mode", "WHISPER").upper()
+    message = request.get_data(as_text=True)
+    reply = ""
+    try:
+        if mode == "WHISPER":
+            player = request.headers.get("X-Player", "someone")
+            hist = conversations[(player, fpc)]
+            hist.append({"role": "user", "content": message})
+            recent = "\n".join(trade_log) if trade_log else "(nothing recent)"
+            system = whisper_persona(fpc) + f"\n\nRecent public trade chat you saw:\n{recent}"
+            reply = call_llm(system, list(hist), 80)
+            hist.append({"role": "assistant", "content": reply})
+        elif mode == "SAY":
+            speaker = request.headers.get("X-Speaker", "")
+            overheard = f"{speaker}: {message}" if speaker else message
+            if message and overheard not in say_log:
+                say_log.append(overheard)
+            context = "\n".join(say_log) if say_log else "(quiet)"
+            reply = call_llm(say_persona(fpc),
+                [{"role": "user", "content": f"People near you just said:\n{context}\n\nReact with ONE short line."}], 60)
+            say_log.append(f"{fpc}: {reply}")
+        else:  # TRADE or AMBIENT
+            speaker = request.headers.get("X-Speaker", "")
+            overheard = f"{speaker}: {message}" if speaker else message
+            if message and overheard not in trade_log:
+                trade_log.append(overheard)
+            context = "\n".join(trade_log) if trade_log else "(channel is quiet)"
+            task = ("Say ONE spontaneous trade-chat line (a WTS/WTB, a question, or banter)."
+                    if mode == "AMBIENT" else
+                    "React with ONE short trade-chat line to the recent messages.")
+            reply = call_llm(trade_persona(fpc),
+                [{"role": "user", "content": f"Recent trade chat:\n{context}\n\n{task}"}], 60)
+            trade_log.append(f"{fpc}: {reply}")
+        print(f"[{PROVIDER}:{mode}:{fpc}] '{message}' -> '{reply}'")
+    except Exception as e:
+        print("Brain error:", e)
+        reply = ""
+    return Response(reply, mimetype="text/plain")
+
+if __name__ == "__main__":
+    print(f"FPC brain running: {PROVIDER} ({MODEL})")
+    app.run(host="127.0.0.1", port=5000)
