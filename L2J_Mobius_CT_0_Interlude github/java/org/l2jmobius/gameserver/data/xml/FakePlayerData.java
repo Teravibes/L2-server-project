@@ -73,6 +73,15 @@ public class FakePlayerData
 	{
 		return _fakePlayerIds.get(name);
 	}
+
+	/**
+	 * Retrieves all known fake player NPC template ids.
+	 * @return a collection of every registered fake player npc id
+	 */
+	public java.util.Collection<Integer> getFakePlayerIds()
+	{
+		return _fakePlayerIds.values();
+	}
 	
 	/**
 	 * Adds a mapping between a lowercase version of a fake player name and its properly formatted name.

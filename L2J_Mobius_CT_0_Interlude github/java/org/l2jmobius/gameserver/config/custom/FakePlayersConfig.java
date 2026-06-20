@@ -35,6 +35,7 @@ public class FakePlayersConfig
 	public static boolean FAKE_PLAYERS_ENABLED;
 	public static boolean FAKE_PLAYER_CHAT;
 	public static boolean FAKE_PLAYER_BEHAVIOR;
+	public static int FAKE_PLAYER_DEPLOY_COUNT;
 	public static boolean FAKE_PLAYER_USE_SHOTS;
 	public static boolean FAKE_PLAYER_KILL_PVP;
 	public static boolean FAKE_PLAYER_KILL_KARMA;
@@ -51,6 +52,7 @@ public class FakePlayersConfig
 		FAKE_PLAYERS_ENABLED = config.getBoolean("EnableFakePlayers", false);
 		FAKE_PLAYER_CHAT = config.getBoolean("FakePlayerChat", false);
 		FAKE_PLAYER_BEHAVIOR = config.getBoolean("FakePlayerBehavior", false);
+		FAKE_PLAYER_DEPLOY_COUNT = config.getInt("FakePlayerDeployCount", 0);
 		FAKE_PLAYER_USE_SHOTS = config.getBoolean("FakePlayerUseShots", false);
 		FAKE_PLAYER_KILL_PVP = config.getBoolean("FakePlayerKillsRewardPvP", false);
 		FAKE_PLAYER_KILL_KARMA = config.getBoolean("FakePlayerUnflaggedKillsKarma", false);

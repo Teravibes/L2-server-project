@@ -35,12 +35,14 @@ import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
+import org.l2jmobius.gameserver.data.xml.FakePlayerData;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Npc;
+import org.l2jmobius.gameserver.model.spawns.Spawn;
 
 /**
  * Gives fake players a sense of purpose: instead of standing still (or following a single hand-drawn
@@ -66,6 +68,15 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private static final long BEHAVIOR_INTERVAL = 3000;
 	// After a fight we wait this long before resuming wandering.
 	private static final long COMBAT_BACKOFF = 6000;
+
+	// Procedural deployment: where auto-spawned bots are scattered and how wide.
+	// Default center is the Giran town square area; tune to taste.
+	private static final Location DEPLOY_CENTER = new Location(83400, 147600, -3400);
+	private static final int DEPLOY_RADIUS = 1500;
+	// Deployed bots respawn this many seconds after dying, so the population is stable.
+	private static final int DEPLOY_RESPAWN_DELAY = 120;
+	// Delay before deploying, to let the world and geodata finish loading.
+	private static final long DEPLOY_DELAY = 15000;
 
 	private enum ProfileType
 	{
@@ -185,9 +196,64 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			return;
 		}
 		_started = true;
+		if (FakePlayersConfig.FAKE_PLAYER_DEPLOY_COUNT > 0)
+		{
+			ThreadPool.schedule(this::deploy, DEPLOY_DELAY);
+		}
 		ThreadPool.scheduleAtFixedRate(this::discover, DISCOVERY_INTERVAL, DISCOVERY_INTERVAL);
 		ThreadPool.scheduleAtFixedRate(this::tick, BEHAVIOR_INTERVAL, BEHAVIOR_INTERVAL);
 		LOGGER.info(getClass().getSimpleName() + ": Fake player behavior enabled.");
+	}
+
+	/**
+	 * Procedurally spawns a configured number of fake players scattered around {@link #DEPLOY_CENTER},
+	 * cycling through the available fake player templates, and registers each with the behavior FSM.
+	 */
+	private void deploy()
+	{
+		final int count = FakePlayersConfig.FAKE_PLAYER_DEPLOY_COUNT;
+		final List<Integer> templateIds = new ArrayList<>(FakePlayerData.getInstance().getFakePlayerIds());
+		if (templateIds.isEmpty())
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": No fake player templates found - cannot deploy bots.");
+			return;
+		}
+
+		int deployed = 0;
+		for (int i = 0; i < count; i++)
+		{
+			final int npcId = templateIds.get(Rnd.get(templateIds.size()));
+			final double angle = Rnd.nextDouble() * 2 * Math.PI;
+			final int distance = Rnd.get(0, DEPLOY_RADIUS);
+			final int x = DEPLOY_CENTER.getX() + (int) (Math.cos(angle) * distance);
+			final int y = DEPLOY_CENTER.getY() + (int) (Math.sin(angle) * distance);
+			final Location loc = GeoEngine.getInstance().getValidLocation(DEPLOY_CENTER, new Location(x, y, DEPLOY_CENTER.getZ()));
+			try
+			{
+				final Spawn spawn = new Spawn(npcId);
+				spawn.setXYZ(loc.getX(), loc.getY(), loc.getZ());
+				spawn.setHeading(Rnd.get(65536));
+				spawn.setAmount(1);
+				spawn.setRespawnDelay(DEPLOY_RESPAWN_DELAY);
+				spawn.startRespawn();
+				final Npc npc = spawn.doSpawn(false);
+				if (npc != null)
+				{
+					deployed++;
+					final Profile profile = resolveProfile(npc);
+					if (profile != null)
+					{
+						_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ())));
+					}
+				}
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Failed to deploy bot (npcId=" + npcId + "): " + e.getMessage());
+			}
+		}
+
+		LOGGER.info("===== " + deployed + " BOTS DEPLOYED =====");
 	}
 
 	/**
