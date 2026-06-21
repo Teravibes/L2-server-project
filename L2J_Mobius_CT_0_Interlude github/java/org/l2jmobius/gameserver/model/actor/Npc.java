@@ -64,6 +64,7 @@ import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Team;
 import org.l2jmobius.gameserver.model.actor.enums.npc.AISkillScope;
 import org.l2jmobius.gameserver.model.actor.enums.npc.AIType;
+import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerHolder;
 import org.l2jmobius.gameserver.model.actor.instance.ClanHallManager;
@@ -412,6 +413,19 @@ public class Npc extends Creature
 			if (_isFakePlayer)
 			{
 				player.sendPacket(new FakePlayerInfo(this));
+				// Vendors also need their store title sign so the "Sell"/"Buy" tag shows above them.
+				final FakePlayerAppearance look = _fakePlayerAppearance;
+				if ((look != null) && (look.getPrivateStoreType() != 0))
+				{
+					if (look.getPrivateStoreType() == PrivateStoreType.BUY.getId())
+					{
+						player.sendPacket(new PrivateStoreMsgBuy(getObjectId(), look.getStoreMessage()));
+					}
+					else
+					{
+						player.sendPacket(new PrivateStoreMsgSell(getObjectId(), look.getStoreMessage()));
+					}
+				}
 			}
 			else if (getRunSpeed() == 0)
 			{

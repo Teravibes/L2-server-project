@@ -51,6 +51,10 @@
 	<population name="giran_movers" count="26" x="83485" y="147998" z="-3407" radius="300" minLevel="15" maxLevel="76" profile="visit_giran" />
 	<!-- A little background milling in the square. -->
 	<population name="giran_crowd" count="22" x="83400" y="147600" z="-3400" radius="900" minLevel="15" maxLevel="50" profile="mill" />
+	<!-- Private-shop market: seated vendors with WTS/WTB store signs (visual stores). -->
+	<population name="giran_market_sell" count="30" x="83400" y="147300" z="-3400" radius="500" minLevel="20" maxLevel="62" profile="loiter" store="SELL" />
+	<population name="giran_market_buy" count="12" x="83400" y="147300" z="-3400" radius="500" minLevel="20" maxLevel="62" profile="loiter" store="BUY" />
+	<population name="giran_gk_vendors" count="10" x="83485" y="147998" z="-3407" radius="260" minLevel="20" maxLevel="62" profile="loiter" store="SELL" />
 
 	<!-- ===== Starting villages: small, race-appropriate, clustered at the gatekeeper ===== -->
 	<!-- Talking Island (Humans) -->

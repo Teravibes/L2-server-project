@@ -61,6 +61,10 @@ public class FakePlayerAppearance
 	private int _equipHair2 = 0;
 	private int _weaponEnchantLevel = 0;
 
+	private int _privateStoreType = 0; // 0 = none; otherwise a PrivateStoreType id (1 sell, 3 buy...)
+	private String _storeMessage = "";
+	private boolean _sitting = false;
+
 	public String getName()
 	{
 		return _name;
@@ -258,6 +262,35 @@ public class FakePlayerAppearance
 	public FakePlayerAppearance setWeaponEnchantLevel(int level)
 	{
 		_weaponEnchantLevel = level;
+		return this;
+	}
+
+	public int getPrivateStoreType()
+	{
+		return _privateStoreType;
+	}
+
+	public String getStoreMessage()
+	{
+		return _storeMessage;
+	}
+
+	public boolean isSitting()
+	{
+		return _sitting;
+	}
+
+	/**
+	 * Turns this bot into a seated private-store vendor.
+	 * @param storeType a {@code PrivateStoreType} id (1 = sell, 3 = buy, ...)
+	 * @param message the store title shown above the vendor
+	 * @return this
+	 */
+	public FakePlayerAppearance setStore(int storeType, String message)
+	{
+		_privateStoreType = storeType;
+		_storeMessage = message == null ? "" : message;
+		_sitting = storeType != 0;
 		return this;
 	}
 }

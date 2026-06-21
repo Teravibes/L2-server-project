@@ -168,13 +168,13 @@ public class FakePlayerInfo extends ServerPacket
 		// In UserInfo leader rights and siege flags, but here found nothing??
 		// Therefore RelationChanged packet with that info is required
 		buffer.writeInt(0);
-		buffer.writeByte(!_fpcHolder.isSitting());
-		buffer.writeByte(_npc.isRunning());
+		buffer.writeByte(_look != null ? !_look.isSitting() : !_fpcHolder.isSitting());
+		buffer.writeByte(_look != null ? (!_look.isSitting() && _npc.isRunning()) : _npc.isRunning());
 		buffer.writeByte(_npc.isInCombat());
 		buffer.writeByte(_npc.isAlikeDead());
 		buffer.writeByte(_npc.isInvisible());
 		buffer.writeByte(0); // 1-on Strider, 2-on Wyvern, 3-on Great Wolf, 0-no mount
-		buffer.writeByte(_fpcHolder.getPrivateStoreType());
+		buffer.writeByte(_look != null ? _look.getPrivateStoreType() : _fpcHolder.getPrivateStoreType());
 		buffer.writeShort(0); // getCubics().size()
 		
 		// getCubics().keySet().forEach(packet::writeH);

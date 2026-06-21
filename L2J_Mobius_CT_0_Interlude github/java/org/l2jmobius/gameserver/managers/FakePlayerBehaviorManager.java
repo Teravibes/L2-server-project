@@ -43,6 +43,8 @@ import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
+import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 
@@ -144,6 +146,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		String profileName;
 		Race race; // optional dominant race for this group (e.g. a Dwarven village)
 		boolean respawn; // field bots die; respawn a fresh replacement to keep the zone populated
+		String storeType; // null, or SELL / BUY / PACKAGE -> seated private-store vendors
 	}
 
 	private final Map<String, Profile> _profiles = new HashMap<>();
@@ -229,6 +232,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				population.minLevel = set.getInt("minLevel", 1);
 				population.maxLevel = set.getInt("maxLevel", 60);
 				population.respawn = set.getBoolean("respawn", false);
+				population.storeType = set.contains("store") ? set.getString("store") : null;
 				population.profileName = set.getString("profile", _defaultProfile);
 				if (set.contains("race"))
 				{
@@ -355,7 +359,14 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			if (npc != null)
 			{
 				// Give the bot its own procedurally generated identity and broadcast the new look.
-				npc.setFakePlayerAppearance(FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, population.race));
+				final FakePlayerAppearance look = FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, population.race);
+				if (population.storeType != null)
+				{
+					final boolean buy = population.storeType.equalsIgnoreCase("BUY");
+					final int storeId = buy ? PrivateStoreType.BUY.getId() : population.storeType.equalsIgnoreCase("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : PrivateStoreType.SELL.getId();
+					look.setStore(storeId, FakePlayerAppearanceFactory.storeTitle(buy));
+				}
+				npc.setFakePlayerAppearance(look);
 				npc.broadcastInfo();
 
 				if (profile != null)
@@ -485,6 +496,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 
 	private void process(Npc npc, BotState state, long now)
 	{
+		// Private-store vendors are seated and never move.
+		final FakePlayerAppearance look = npc.getFakePlayerAppearance();
+		if ((look != null) && (look.getPrivateStoreType() != 0))
+		{
+			return;
+		}
+
 		// Let the combat AI run uninterrupted; resume wandering shortly after the fight.
 		if (npc.isInCombat() || npc.isAttackingNow())
 		{

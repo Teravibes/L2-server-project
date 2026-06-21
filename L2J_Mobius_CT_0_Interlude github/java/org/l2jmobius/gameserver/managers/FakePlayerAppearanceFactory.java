@@ -147,6 +147,19 @@ public class FakePlayerAppearanceFactory
 		Race.DWARF
 	};
 
+	// Believable private-store titles shown above seated vendors.
+	private static final String[] SELL_TITLES =
+	{
+		"WTS items pm", "WTS D grade cheap", "WTS C grade", "WTS soulshots", "WTS spiritshots",
+		"WTS mats cheap", "WTS adena items", "cheap stuff inside", "WTS armor parts", "WTS recipes",
+		"WTS keymats", "clearance sale", "WTS top D", "WTS weapon", "WTS jewels"
+	};
+	private static final String[] BUY_TITLES =
+	{
+		"WTB adena", "WTB D grade", "WTB mats", "WTB soulshots", "WTB recipes",
+		"buying keymats", "WTB C grade", "WTB enchant scrolls", "WTB proofs", "WTB gemstones"
+	};
+
 	private static final Set<String> USED_NAMES = ConcurrentHashMap.newKeySet();
 
 	private FakePlayerAppearanceFactory()
@@ -274,6 +287,15 @@ public class FakePlayerAppearanceFactory
 		// Completeness varies a lot: most wear a chest, fewer wear legs, helmets/gloves are uncommon
 		// (so we don't get a cluster of identical fully-armored clones).
 		look.setArmor(Rnd.get(100) < 40 ? head : 0, Rnd.get(100) < 88 ? chest : 0, Rnd.get(100) < 70 ? legs : 0, Rnd.get(100) < 38 ? gloves : 0, Rnd.get(100) < 75 ? feet : 0, 0);
+	}
+
+	/**
+	 * @param buy {@code true} for a buy-store title, {@code false} for a sell-store title
+	 * @return a random believable store title
+	 */
+	public static String storeTitle(boolean buy)
+	{
+		return buy ? BUY_TITLES[Rnd.get(BUY_TITLES.length)] : SELL_TITLES[Rnd.get(SELL_TITLES.length)];
 	}
 
 	private static int[] classForRace(Race race)
