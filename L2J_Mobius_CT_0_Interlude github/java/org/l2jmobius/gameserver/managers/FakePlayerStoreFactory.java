@@ -313,9 +313,8 @@ public class FakePlayerStoreFactory
 		final int lines = Rnd.get(1, 3);
 		for (int i = 0; i < lines; i++)
 		{
-			// Buy stores favour bulk goods players actually carry (mats, shots, potions), so there is a
-			// real chance the viewer has something to sell; a minority want a piece of gear.
-			final boolean bulk = Rnd.get(100) < 85;
+			// Buy stores lean toward bulk goods (mats/shots) with a minority wanting a piece of gear.
+			final boolean bulk = Rnd.get(100) < 70;
 			final ItemTemplate item = bulk ? pickBulk() : pickEquip(level);
 			if ((item == null) || !seen.add(item.getId()))
 			{

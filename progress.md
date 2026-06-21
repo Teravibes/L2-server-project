@@ -170,9 +170,9 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
   NPC-side packets (`FakePlayerStoreList{Sell,Buy}`) plus interception in `NpcClick` and
   `RequestPrivateStore{Buy,Sell}` route around the `Player`-only store path. CRAFT is currently a
   finished-goods seller (renders a "Sell" tag with a "crafting X" title), not a true manufacture/recipe
-  flow. Sold-out vendors close (no runtime restock — they repopulate on restart). **Buy stores only
-  list items the viewer already owns** (standard L2 behaviour), so their demand favours bulk goods
-  (mats/shots) and the title advertises what they want. `Npc.sendInfo` reads the store title from the
+  flow. Sold-out vendors close (no runtime restock — they repopulate on restart). Buy stores list
+  **everything they want**; items the viewer lacks come through with a sellable amount of 0 so the
+  client greys them out (standard L2 behaviour). `Npc.sendInfo` reads the store title from the
   per-instance appearance (not the template), so signs show when you walk up. Pricing markup + grade scarcity weights are hard-coded in
   `FakePlayerStoreFactory` for now (config knobs are a planned follow-up). Needs an ant rebuild +
   in-game test (untestable in this dev env).

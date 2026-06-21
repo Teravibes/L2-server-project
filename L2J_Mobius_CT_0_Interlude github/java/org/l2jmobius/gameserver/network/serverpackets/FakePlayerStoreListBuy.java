@@ -34,35 +34,36 @@ import org.l2jmobius.gameserver.network.GameClient;
 import org.l2jmobius.gameserver.network.ServerPackets;
 
 /**
- * The BUY store window for a fake-player vendor: lists the items the bot wants that the viewing player
- * actually owns, at the bot's offered price. Mirrors {@link PrivateStoreListBuy}'s wire format.
+ * The BUY store window for a fake-player vendor. Lists <b>everything</b> the bot wants; items the
+ * viewer does not own come through with a sellable amount of 0 so the client greys them out, exactly
+ * like a real player's buy store. Mirrors {@link PrivateStoreListBuy}'s wire format.
  * @author Claude
  */
 public class FakePlayerStoreListBuy extends ServerPacket
 {
 	private static class Row
 	{
-		final int itemObjectId;
+		final int itemObjectId; // the viewer's item (0 when they don't own it)
 		final int itemId;
 		final int enchant;
-		final int playerCount;
+		final int sellable; // how many the viewer can actually sell (0 = greyed out)
 		final int referencePrice;
 		final int bodyMask;
 		final int type2;
 		final int price;
-		final int maxTrade;
+		final int wanted; // how many the bot wants
 
-		Row(int itemObjectId, int itemId, int enchant, int playerCount, int referencePrice, int bodyMask, int type2, int price, int maxTrade)
+		Row(int itemObjectId, int itemId, int enchant, int sellable, int referencePrice, int bodyMask, int type2, int price, int wanted)
 		{
 			this.itemObjectId = itemObjectId;
 			this.itemId = itemId;
 			this.enchant = enchant;
-			this.playerCount = playerCount;
+			this.sellable = sellable;
 			this.referencePrice = referencePrice;
 			this.bodyMask = bodyMask;
 			this.type2 = type2;
 			this.price = price;
-			this.maxTrade = maxTrade;
+			this.wanted = wanted;
 		}
 	}
 
@@ -81,17 +82,18 @@ public class FakePlayerStoreListBuy extends ServerPacket
 		}
 		for (FakePlayerStoreItem demand : look.getStoreItems())
 		{
-			final Item owned = player.getInventory().getItemByItemId(demand.getItemId());
-			if ((owned == null) || !owned.isTradeable() || owned.isEquipped())
-			{
-				continue;
-			}
 			final ItemTemplate template = demand.getItem();
 			if (template == null)
 			{
 				continue;
 			}
-			_rows.add(new Row(owned.getObjectId(), template.getId(), owned.getEnchantLevel(), owned.getCount(), template.getReferencePrice(), template.getBodyPart().getMask(), template.getType2(), demand.getPrice(), Math.min(demand.getCount(), owned.getCount())));
+			// Match against a tradeable, non-equipped copy the viewer owns; absent that, list it greyed.
+			final Item owned = player.getInventory().getItemByItemId(demand.getItemId());
+			final boolean canSell = (owned != null) && owned.isTradeable() && !owned.isEquipped();
+			final int objectId = canSell ? owned.getObjectId() : 0;
+			final int enchant = canSell ? owned.getEnchantLevel() : 0;
+			final int sellable = canSell ? Math.min(demand.getCount(), owned.getCount()) : 0;
+			_rows.add(new Row(objectId, template.getId(), enchant, sellable, template.getReferencePrice(), template.getBodyPart().getMask(), template.getType2(), demand.getPrice(), demand.getCount()));
 		}
 	}
 
@@ -107,13 +109,13 @@ public class FakePlayerStoreListBuy extends ServerPacket
 			buffer.writeInt(row.itemObjectId);
 			buffer.writeInt(row.itemId);
 			buffer.writeShort(row.enchant);
-			buffer.writeInt(row.playerCount); // max the player could sell
+			buffer.writeInt(row.sellable); // max the viewer can sell (0 -> greyed out)
 			buffer.writeInt(row.referencePrice);
 			buffer.writeShort(0);
 			buffer.writeInt(row.bodyMask);
 			buffer.writeShort(row.type2);
 			buffer.writeInt(row.price); // buyer's price
-			buffer.writeInt(row.maxTrade); // max the bot will take
+			buffer.writeInt(row.wanted); // max the bot will take
 		}
 	}
 }
