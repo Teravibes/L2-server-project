@@ -63,6 +63,8 @@
 	details.adv > summary:hover { color: #cfd2da; }
 	.toolrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; margin-top: 8px; }
 	.toolrow button { min-width: 0; }
+	.imageSelect { padding: 0 12px; margin-top: 8px; }
+	.imageSelect label { margin-left: 0; margin-right: 0; }
 	#mapWrap.dragover { outline: 2px solid #3a6df0; outline-offset: -2px; }
 
 	/* save confirmation toast */
@@ -97,9 +99,6 @@
 
 		<!-- hidden inputs -->
 		<input id="folderInput" type="file" multiple webkitdirectory hidden />
-		<input id="imgFile" type="file" accept="image/*" multiple hidden />
-		<input id="layoutFile" type="file" accept=".json,application/json" hidden />
-		<input id="imgFolder" type="file" multiple webkitdirectory hidden />
 
 		<h2>Selected population</h2>
 		<div id="formHint">Select a population from the list below, or double-click the map to add one.</div>
@@ -137,24 +136,29 @@
 		<div class="sectionHead"><h2>Populations</h2><button id="toggleAll" class="sec">Hide all</button></div>
 		<div id="list"></div>
 
-		<details class="adv">
-			<summary>Map images (advanced)</summary>
+		<details class="adv" open>
+			<summary>Map image layers</summary>
 			<label><input id="editImages" type="checkbox" style="width:auto;margin-right:6px" />edit images (drag / resize)</label>
 			<label>opacity</label>
 			<input id="imgOpacity" type="range" min="0" max="100" value="70" style="margin:0 12px;width:calc(100% - 24px)" />
-			<div class="toolrow">
-				<button id="loadImg" class="sec">Add images</button>
-				<button id="loadImgFolder" class="sec">Load folder</button>
+			<div class="row" style="margin-top:8px">
+				<button id="loadWorldMap" class="sec" style="flex:1">Load world map</button>
 			</div>
-			<div class="toolrow">
-				<button id="saveImgLayout" class="sec">Save layout</button>
-				<button id="loadImgLayout" class="sec">Load layout</button>
+			<div class="imageSelect">
+				<label>Cities</label>
+				<select id="cityImageSelect" disabled><option value="">Open data folder first</option></select>
+			</div>
+			<div class="imageSelect">
+				<label>World locations</label>
+				<select id="locationImageSelect" disabled><option value="">Open data folder first</option></select>
 			</div>
 			<div class="toolrow">
 				<button id="fitImg" class="sec">Fit selected</button>
 				<button id="removeImg" class="sec">Remove selected</button>
 			</div>
-			<div id="imgStatus" class="muted">Map images load automatically with the data folder. You can also drop images onto the map.</div>
+			<div id="imageLayerHead" class="sectionHead" hidden><h2>Loaded images</h2><button id="toggleImages" class="sec">Hide all</button></div>
+			<div id="imageLayerList"></div>
+			<div id="imgStatus" class="muted">Open a data folder. Use the world map button or category dropdowns to load images.</div>
 		</details>
 	</div>
 </div>
@@ -171,6 +175,7 @@ let profileNames = ['loiter','mill','stroller','visit_giran','farmer','hunter'];
 let selected = -1;
 let mapImages = []; // { img, name, path, x1, y1, x2, y2 }
 let selectedImage = -1;
+let imageCatalog = { worldMap: null, cities: [], locations: [], layout: null };
 let geoRegions = []; // { rx, ry, canvas } rendered geodata tiles
 let xmlFileHandle = null;
 let xmlFileName = 'FakePlayerBehavior.xml';
@@ -223,7 +228,8 @@ function setChip(id, ok, text){ const el = document.getElementById(id); el.textC
 function updateStatus(){
 	setChip('st_xml', xmlLoaded, xmlLoaded ? 'XML ✓ ' + pops.length + ' pops' : 'XML —');
 	setChip('st_geo', geoRegions.length > 0, geoRegions.length ? 'Geodata ✓ ' + geoRegions.length : 'Geodata —');
-	setChip('st_img', mapImages.length > 0, mapImages.length ? 'Images ✓ ' + mapImages.length : 'Images —');
+	const catalogCount = (imageCatalog.worldMap ? 1 : 0) + imageCatalog.cities.length + imageCatalog.locations.length;
+	setChip('st_img', mapImages.length > 0 || catalogCount > 0, mapImages.length ? 'Images ✓ ' + mapImages.length : catalogCount ? 'Images catalog ' + catalogCount : 'Images —');
 	document.getElementById('saveXml').disabled = !xmlLoaded;
 	const fl = document.getElementById('folderLine');
 	if (rememberedHandle){ fl.hidden = false; document.getElementById('folderName').textContent = rememberedHandle.name; }
@@ -277,6 +283,96 @@ async function loadGeodataFiles(fileList, label){
 
 // ---- workspace: pick ONE folder, auto-load XML + geodata + images ----
 function isImageName(name){ return /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(name); }
+function normPath(path){ return String(path || '').replace(/\\/g, '/'); }
+function imageTitle(name){ return String(name || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' '); }
+function isCitiesPath(path){ return normPath(path).split('/').some(p => p.toLowerCase() === 'cities'); }
+function isLocationsPath(path){ return normPath(path).split('/').some(p => ['world locations','worldlocations','world_locations','world-locations'].includes(p.toLowerCase())); }
+function isWorldMapPath(path){
+	const p = normPath(path).toLowerCase();
+	const base = p.split('/').pop();
+	return !isCitiesPath(p) && !isLocationsPath(p) && (/world.*map|map.*world|worldmap|l2.*map/.test(base) || p.split('/').some(s => ['world map','worldmap','world_map','world-map'].includes(s)));
+}
+function layoutEntries(){ return imageCatalog.layout && Array.isArray(imageCatalog.layout.images) ? imageCatalog.layout.images : []; }
+function placementForEntry(entry, category){
+	const p = normPath(entry.path).toLowerCase();
+	const key = imageKey(entry.path);
+	return layoutEntries().find(rec => (rec.category === category) && (normPath(rec.path || '').toLowerCase() === p)) ||
+		layoutEntries().find(rec => (rec.category === category) && (imageKey(rec.path || rec.name) === key)) ||
+		layoutEntries().find(rec => normPath(rec.path || '').toLowerCase() === p) ||
+		layoutEntries().find(rec => imageKey(rec.path || rec.name) === key);
+}
+function imageOptionLabel(entry){ return imageTitle(entry.name); }
+function populateImageSelect(id, entries, label){
+	const sel = document.getElementById(id);
+	sel.innerHTML = '';
+	sel.disabled = !entries.length;
+	if (!entries.length){ const o = document.createElement('option'); o.value = ''; o.textContent = 'No ' + label + ' images found'; sel.appendChild(o); return; }
+	const all = document.createElement('option'); all.value = '__all'; all.textContent = 'Load all'; sel.appendChild(all);
+	entries.forEach((entry, i) => { const o = document.createElement('option'); o.value = String(i); o.textContent = imageOptionLabel(entry); sel.appendChild(o); });
+	sel.selectedIndex = -1;
+}
+function updateImageCatalogUi(){
+	populateImageSelect('cityImageSelect', imageCatalog.cities, 'Cities');
+	populateImageSelect('locationImageSelect', imageCatalog.locations, 'world locations');
+	updateWorldMapButton();
+	renderImageLayerList();
+	updateImageStatus();
+}
+function worldMapIndex(){ return mapImages.findIndex(layer => layer.category === 'world-map'); }
+function updateWorldMapButton(){
+	const btn = document.getElementById('loadWorldMap');
+	const i = worldMapIndex();
+	btn.disabled = !imageCatalog.worldMap && (i < 0);
+	if (i >= 0) btn.textContent = mapImages[i].visible === false ? 'Show world map' : 'Hide world map';
+	else btn.textContent = 'Load world map';
+}
+function listedImageIndexes(){
+	return mapImages.map((layer, i) => ({ layer, i })).filter(x => x.layer.category === 'city' || x.layer.category === 'world-location').map(x => x.i);
+}
+function imageLayerColor(layer){ return layer.category === 'city' ? '#e8c24a' : '#54c06e'; }
+function panToImage(layer){
+	const x = (layer.x1 + layer.x2) / 2, y = (layer.y1 + layer.y2) / 2;
+	cam.x = x - (cv.width / 2) / cam.scale; cam.y = y - (cv.height / 2) / cam.scale; draw();
+}
+function renderImageLayerList(){
+	const indexes = listedImageIndexes();
+	const head = document.getElementById('imageLayerHead');
+	const list = document.getElementById('imageLayerList');
+	head.hidden = !indexes.length;
+	list.innerHTML = '';
+	if (!indexes.length) return;
+	const anyVisible = indexes.some(i => mapImages[i].visible !== false);
+	document.getElementById('toggleImages').textContent = anyVisible ? 'Hide all' : 'Show all';
+	indexes.forEach(i => {
+		const layer = mapImages[i];
+		const d = document.createElement('div'); d.className = 'item' + (i === selectedImage ? ' sel' : '');
+		const eye = document.createElement('span'); eye.textContent = layer.visible === false ? '🚫' : '👁'; eye.title = 'show/hide'; eye.style.cssText = 'cursor:pointer;margin-right:6px;opacity:' + (layer.visible === false ? '.4' : '1');
+		eye.onclick = ev => { ev.stopPropagation(); layer.visible = layer.visible === false; selectImage(i); renderImageLayerList(); updateImageStatus(); updateStatus(); draw(); };
+		const txt = document.createElement('span'); txt.innerHTML = '<span class="dot" style="background:' + imageLayerColor(layer) + '"></span>' + imageTitle(layer.name) + ' <small>' + (layer.category === 'city' ? 'city' : 'world location') + (layer.visible === false ? ' · hidden' : '') + '</small>';
+		txt.onclick = () => { selectImage(i); panToImage(layer); };
+		d.appendChild(eye); d.appendChild(txt); list.appendChild(d);
+	});
+}
+function buildImageCatalog(entries, layoutEntry){
+	const imageEntries = entries.filter(e => isImageName(e.name));
+	const cities = imageEntries.filter(e => isCitiesPath(e.path)).sort((a, b) => imageTitle(a.name).localeCompare(imageTitle(b.name)));
+	const locations = imageEntries.filter(e => isLocationsPath(e.path)).sort((a, b) => imageTitle(a.name).localeCompare(imageTitle(b.name)));
+	const worldCandidates = imageEntries.filter(e => isWorldMapPath(e.path));
+	const rootImages = imageEntries.filter(e => !isCitiesPath(e.path) && !isLocationsPath(e.path));
+	imageCatalog = {
+		worldMap: worldCandidates[0] || (rootImages.length === 1 ? rootImages[0] : null),
+		cities,
+		locations,
+		layout: null
+	};
+	if (layoutEntry) imageCatalog.layoutEntry = layoutEntry;
+}
+function findCatalogEntryByLayoutRecord(rec){
+	const all = [imageCatalog.worldMap, ...imageCatalog.cities, ...imageCatalog.locations].filter(Boolean);
+	const recPath = normPath(rec.path || '').toLowerCase();
+	const recName = imageKey(rec.path || rec.name);
+	return all.find(e => normPath(e.path).toLowerCase() === recPath) || all.find(e => imageKey(e.path) === recName);
+}
 
 // IndexedDB key/value so the chosen folder is remembered between sessions.
 function idbReq(mode, fn){
@@ -302,7 +398,11 @@ async function collectHandles(dirHandle, prefix = '', out = []){
 async function entryFile(e){ return e.file || (e.file = await e.handle.getFile()); }
 
 async function loadWorkspace(entries, label){
-	// pick out the three kinds of files anywhere under the folder
+	// pick out the XML/geodata and catalog image sources anywhere under the folder
+	mapImages = [];
+	selectedImage = -1;
+	imageCatalog = { worldMap: null, cities: [], locations: [], layout: null };
+	renderImageLayerList();
 	const geo = entries.filter(e => /(\d+)_(\d+)\.l2j$/i.test(e.name));
 	let xmlE = entries.find(e => e.name.toLowerCase() === 'fakeplayerbehavior.xml');
 	if (!xmlE){
@@ -311,22 +411,23 @@ async function loadWorkspace(entries, label){
 			if (/<population\b|FakePlayerBehavior/.test(t)){ xmlE = c; xmlE._text = t; break; }
 		}
 	}
-	const imgEntries = entries.filter(e => isImageName(e.name));
 	const layoutE = entries.find(e => e.name.toLowerCase() === 'fpc-map-images.json');
+	buildImageCatalog(entries, layoutE || null);
+	if (layoutE){
+		try { imageCatalog.layout = parseImageLayout(await (await entryFile(layoutE)).text()); }
+		catch (err){ imageCatalog.layout = null; }
+	}
+	if (!imageCatalog.worldMap && imageCatalog.layout){
+		const rec = layoutEntries().find(img => img.category === 'world-map');
+		imageCatalog.worldMap = rec ? findCatalogEntryByLayoutRecord(rec) : null;
+	}
+	updateImageCatalogUi();
 
 	const loaded = [];
 	if (xmlE){
 		const file = await entryFile(xmlE);
 		await loadXmlText(xmlE._text || await file.text(), file.name, xmlE.handle || null);
 		loaded.push('XML');
-	}
-	if (imgEntries.length){
-		const files = [];
-		for (const e of imgEntries) files.push(await entryFile(e));
-		if (layoutE) files.push(await entryFile(layoutE));
-		mapImages = []; selectedImage = -1;
-		await loadImageFolder(files);
-		loaded.push('images');
 	}
 	if (geo.length){
 		const files = [];
@@ -335,7 +436,7 @@ async function loadWorkspace(entries, label){
 		loaded.push('geodata');
 	}
 	updateStatus();
-	if (!loaded.length) alert('That folder has no FakePlayerBehavior.xml, geodata (.l2j), or images.\nPick the folder that contains them (e.g. your server\'s game/data).');
+	if (!loaded.length && !imageCatalog.worldMap && !imageCatalog.cities.length && !imageCatalog.locations.length) alert('That folder has no FakePlayerBehavior.xml, geodata (.l2j), world map, Cities, or world locations images.\nPick the folder that contains them (e.g. your server\'s game/data).');
 }
 
 async function ensurePerm(handle){
@@ -388,6 +489,7 @@ function draw(){
 	if (mapImages.length){
 		ctx.globalAlpha = (+document.getElementById('imgOpacity').value) / 100;
 		mapImages.forEach(layer => {
+			if (layer.visible === false) return;
 			const [sx, sy] = w2s(layer.x1, layer.y1); const [ex, ey] = w2s(layer.x2, layer.y2);
 			if (ex < 0 || ey < 0 || sx > cv.width || sy > cv.height) return;
 			ctx.drawImage(layer.img, sx, sy, ex - sx, ey - sy);
@@ -459,7 +561,7 @@ function imageHandles(layer){
 	];
 }
 function drawImageSelection(){
-	if ((selectedImage < 0) || !mapImages[selectedImage] || !document.getElementById('editImages').checked) return;
+	if ((selectedImage < 0) || !mapImages[selectedImage] || (mapImages[selectedImage].visible === false) || !document.getElementById('editImages').checked) return;
 	const r = imageScreenRect(mapImages[selectedImage]);
 	ctx.save();
 	ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.strokeRect(r.x, r.y, r.w, r.h);
@@ -477,12 +579,13 @@ function pointInImageRect(mx, my, layer){
 }
 function pickImageHit(mx, my){
 	if (!document.getElementById('editImages').checked) return null;
-	if ((selectedImage >= 0) && mapImages[selectedImage]){
+	if ((selectedImage >= 0) && mapImages[selectedImage] && (mapImages[selectedImage].visible !== false)){
 		for (const h of imageHandles(mapImages[selectedImage])){
 			if (Math.abs(mx - h.x) <= IMAGE_HANDLE_SIZE && Math.abs(my - h.y) <= IMAGE_HANDLE_SIZE) return { mode: 'image-resize', i: selectedImage, corner: h.corner, cursor: h.cursor };
 		}
 	}
 	for (let i = mapImages.length - 1; i >= 0; i--){
+		if (mapImages[i].visible === false) continue;
 		for (const h of imageHandles(mapImages[i])){
 			if (Math.abs(mx - h.x) <= IMAGE_HANDLE_SIZE && Math.abs(my - h.y) <= IMAGE_HANDLE_SIZE) return { mode: 'image-resize', i, corner: h.corner, cursor: h.cursor };
 		}
@@ -503,14 +606,16 @@ function selectImage(i){
 	selectedImage = i;
 	if (i >= 0){ selected = -1; syncFormClear(); }
 	updateImageStatus();
+	updateWorldMapButton();
+	renderImageLayerList();
 	renderList();
 	draw();
 }
 function updateImageStatus(){
 	const el = document.getElementById('imgStatus');
-	if (!mapImages.length){ el.textContent = 'Map images load automatically with the data folder. You can also drop images onto the map.'; return; }
+	if (!mapImages.length){ el.textContent = `Catalog: ${imageCatalog.worldMap ? 'world map found' : 'no world map'} · ${imageCatalog.cities.length} cities · ${imageCatalog.locations.length} world locations.`; return; }
 	const layer = mapImages[selectedImage];
-	el.textContent = layer ? `${selectedImage + 1}/${mapImages.length}: ${layer.name}` : `${mapImages.length} map image${mapImages.length === 1 ? '' : 's'} loaded.`;
+	el.textContent = layer ? `${selectedImage + 1}/${mapImages.length}: ${layer.name} (${layer.category || 'manual'}${layer.visible === false ? ', hidden' : ''})` : `${mapImages.length} map image${mapImages.length === 1 ? '' : 's'} loaded.`;
 }
 function imageKey(path){ return String(path || '').replace(/\\/g, '/').split('/').pop().toLowerCase(); }
 function imagePath(layer){ return layer.path || layer.name; }
@@ -519,6 +624,8 @@ function imageRecord(layer){
 	return {
 		name: layer.name,
 		path: imagePath(layer),
+		category: layer.category || 'manual',
+		visible: layer.visible !== false,
 		x1: Math.round(layer.x1),
 		y1: Math.round(layer.y1),
 		x2: Math.round(layer.x2),
@@ -533,6 +640,7 @@ function makeImageLayout(){
 function applyImagePlacement(layer, placement){
 	layer.x1 = Math.round(+placement.x1); layer.y1 = Math.round(+placement.y1);
 	layer.x2 = Math.round(+placement.x2); layer.y2 = Math.round(+placement.y2);
+	if (placement.visible !== undefined) layer.visible = placement.visible !== false;
 }
 function parseImageLayout(text){
 	const layout = JSON.parse(text);
@@ -568,7 +676,7 @@ function loadMapImageFile(file, placement){
 		if (!isImageFile(file)){ resolve(false); return; }
 		const img = new Image();
 		img.onload = () => {
-			const layer = { img, name: file.name, path: file.webkitRelativePath || file.name, x1: 0, y1: 0, x2: 0, y2: 0 };
+			const layer = { img, name: file.name, path: file.webkitRelativePath || file.name, category: 'manual', visible: true, x1: 0, y1: 0, x2: 0, y2: 0 };
 			if (placement) applyImagePlacement(layer, placement);
 			else fitImageToViewport(layer);
 			mapImages.push(layer);
@@ -580,10 +688,44 @@ function loadMapImageFile(file, placement){
 		img.src = URL.createObjectURL(file);
 	});
 }
+function existingImageIndex(path, category){
+	const p = normPath(path).toLowerCase();
+	return mapImages.findIndex(layer => (normPath(imagePath(layer)).toLowerCase() === p) && ((layer.category || 'manual') === category));
+}
+async function loadCatalogImage(entry, category){
+	if (!entry) return false;
+	const existing = existingImageIndex(entry.path, category);
+	if (existing >= 0){ mapImages[existing].visible = true; selectImage(existing); return true; }
+	const file = await entryFile(entry);
+	const placement = placementForEntry(entry, category);
+	return new Promise(resolve => {
+		const img = new Image();
+		img.onload = () => {
+			const layer = { img, name: entry.name, path: entry.path, category, visible: true, x1: 0, y1: 0, x2: 0, y2: 0 };
+			if (placement) applyImagePlacement(layer, placement);
+			else fitImageToViewport(layer);
+			mapImages.push(layer);
+			selectImage(mapImages.length - 1);
+			document.getElementById('editImages').checked = true;
+			updateStatus();
+			resolve(true);
+		};
+		img.onerror = () => resolve(false);
+		img.src = URL.createObjectURL(file);
+	});
+}
+async function loadCatalogImages(entries, category){
+	let loaded = 0;
+	for (const entry of entries) loaded += await loadCatalogImage(entry, category) ? 1 : 0;
+	if (loaded) toast('Loaded ' + loaded + ' ' + category.replace('-', ' ') + ' image' + (loaded === 1 ? '' : 's'));
+	renderImageLayerList();
+	updateImageStatus(); updateStatus(); draw();
+}
 async function loadMapImageFiles(files){
 	let loaded = 0;
 	for (const file of [...files]) loaded += await loadMapImageFile(file) ? 1 : 0;
 	if (loaded) updateImageStatus();
+	renderImageLayerList();
 	updateStatus();
 	draw();
 }
@@ -610,6 +752,7 @@ async function loadImageFolder(files){
 	if (!loaded){ await loadMapImageFiles(imageFiles); return; }
 	document.getElementById('editImages').checked = true;
 	document.getElementById('imgStatus').textContent = `Folder loaded: ${loaded} image${loaded === 1 ? '' : 's'} restored${missing ? `, ${missing} missing` : ''}.`;
+	renderImageLayerList();
 	updateStatus();
 	draw();
 }
@@ -732,19 +875,38 @@ async function loadXmlText(text, name, handle){
 	xmlLoaded = true;
 	updateStatus();
 }
-// advanced image controls
-document.getElementById('loadImg').onclick = () => document.getElementById('imgFile').click();
-document.getElementById('imgFile').onchange = e => { if (!e.target.files.length) return; loadMapImageFiles(e.target.files); e.target.value = ''; };
-document.getElementById('loadImgFolder').onclick = () => document.getElementById('imgFolder').click();
-document.getElementById('imgFolder').onchange = e => { if (!e.target.files.length) return; loadImageFolder(e.target.files); e.target.value = ''; };
-document.getElementById('saveImgLayout').onclick = saveImageLayout;
-document.getElementById('loadImgLayout').onclick = () => document.getElementById('layoutFile').click();
-document.getElementById('layoutFile').onchange = e => {
-	const f = e.target.files[0]; if (!f) return;
-	const r = new FileReader();
-	r.onload = () => { try { applyImageLayout(parseImageLayout(r.result)); } catch (err){ alert('Could not read image layout JSON: ' + err.message); } };
-	r.readAsText(f);
-	e.target.value = '';
+// image layer controls
+document.getElementById('loadWorldMap').onclick = async () => {
+	const existing = worldMapIndex();
+	if (existing >= 0){
+		mapImages[existing].visible = mapImages[existing].visible === false;
+		selectImage(existing);
+		updateWorldMapButton(); updateImageStatus(); updateStatus(); draw();
+		return;
+	}
+	if (!imageCatalog.worldMap){ alert('No world map image found. Put a map image in the data folder with a name like world map.png, or in a World Map folder.'); return; }
+	await loadCatalogImage(imageCatalog.worldMap, 'world-map');
+	updateWorldMapButton(); updateImageStatus(); updateStatus(); draw();
+};
+document.getElementById('cityImageSelect').onchange = async e => {
+	const value = e.target.value;
+	if (value === '__all') await loadCatalogImages(imageCatalog.cities, 'city');
+	else if (value !== '') await loadCatalogImage(imageCatalog.cities[+value], 'city');
+	e.target.selectedIndex = -1;
+	updateImageStatus(); updateStatus(); draw();
+};
+document.getElementById('locationImageSelect').onchange = async e => {
+	const value = e.target.value;
+	if (value === '__all') await loadCatalogImages(imageCatalog.locations, 'world-location');
+	else if (value !== '') await loadCatalogImage(imageCatalog.locations[+value], 'world-location');
+	e.target.selectedIndex = -1;
+	updateImageStatus(); updateStatus(); draw();
+};
+document.getElementById('toggleImages').onclick = () => {
+	const indexes = listedImageIndexes();
+	const anyVisible = indexes.some(i => mapImages[i].visible !== false);
+	indexes.forEach(i => mapImages[i].visible = !anyVisible);
+	renderImageLayerList(); updateImageStatus(); updateStatus(); draw();
 };
 document.getElementById('editImages').addEventListener('change', e => { if (e.target.checked && (selectedImage < 0) && mapImages.length) selectImage(mapImages.length - 1); else draw(); });
 document.getElementById('fitImg').onclick = () => { if ((selectedImage < 0) || !mapImages[selectedImage]) return; fitImageToViewport(mapImages[selectedImage]); draw(); };
@@ -752,7 +914,7 @@ document.getElementById('removeImg').onclick = () => {
 	if ((selectedImage < 0) || !mapImages[selectedImage]) return;
 	mapImages.splice(selectedImage, 1);
 	selectedImage = Math.min(selectedImage, mapImages.length - 1);
-	updateImageStatus(); updateStatus(); draw();
+	updateWorldMapButton(); renderImageLayerList(); updateImageStatus(); updateStatus(); draw();
 };
 wrap.addEventListener('dragover', e => { e.preventDefault(); wrap.classList.add('dragover'); });
 wrap.addEventListener('dragleave', () => wrap.classList.remove('dragover'));

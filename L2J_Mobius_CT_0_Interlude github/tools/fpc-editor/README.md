@@ -6,19 +6,20 @@ No install, no build, no server — it's a single HTML file that runs in your br
 ## Run it
 Double-click `index.html` (or right-click → Open with → your browser).
 
-## Quick start — one folder, one click
+## Quick start — one folder, one save
 1. Click **📂 Open data folder** and pick the folder that holds your fake-player files —
-   usually your server's `game/data`. The editor scans it and **loads everything at once**:
+   usually your server's `game/data`. The editor scans it and loads:
    - `FakePlayerBehavior.xml` (the populations),
    - the `geodata/*.l2j` tiles (the real world map),
-   - any map images plus their `fpc-map-images.json` layout.
+   - the image catalog from your map-image folders.
 2. The folder is **remembered**. Next time you open the editor it **reloads that folder
    automatically** — no clicking, no re-picking. Use **change…** (next to the folder name)
    to point it somewhere else.
 3. Edit your populations (see below), then click **💾 Save** to write the XML back to that
    same folder. Restart/reload the server to apply.
 
-The status chips at the top always show what's loaded: **XML ✓ · Geodata ✓ · Images ✓**.
+The status chips at the top always show what's loaded or cataloged:
+**XML ✓ · Geodata ✓ · Images catalog**.
 
 > Saving directly back to the file needs Chrome/Edge (File System Access API). In Firefox the
 > same **Open data folder** button reads the folder, and **Save** downloads the updated XML.
@@ -37,11 +38,19 @@ The status chips at the top always show what's loaded: **XML ✓ · Geodata ✓ 
   can orient without a map image. Toggle them with the **landmarks** checkbox.
 - **👁 / 🚫** on each list row shows/hides that population; **Hide all / Show all** toggles every one.
 
-## Map images (advanced)
-Map images now load automatically with the data folder. The collapsed **Map images (advanced)**
-panel still lets you add images manually, adjust opacity, drag/resize them against the map
-(**edit images**), and **Save layout** / **Load layout** to keep their positions in
-`fpc-map-images.json`. You can also drag-and-drop image files straight onto the map.
+## Map image layers
+Map images are loaded intentionally from three sources after you open the data folder:
+
+- **Load world map** loads the detected world-map image, then changes to **Hide world map** /
+  **Show world map**. Use a filename like `world map.png` or place it in a `World Map` folder.
+- **Cities** reads images from a folder named `Cities`. Its dropdown starts with **Load all**, then each image name.
+- **World locations** reads images from a folder named `world locations`. Its dropdown starts with **Load all**, then each image name.
+
+Turn on **edit images** to drag/resize loaded image layers. Their positions are saved into
+`fpc-map-images.json` when you click **Save**, and the next load applies the saved placement
+when you load that world map, city, or world-location image again. You can still drag-and-drop
+loose image files onto the map for quick manual overlays. Loaded city/world-location images appear
+in a list with per-image show/hide toggles plus **Hide all / Show all**.
 
 ## Colors
 - blue = town loiterers/default · green = movers (mill/stroller) · purple = visit
