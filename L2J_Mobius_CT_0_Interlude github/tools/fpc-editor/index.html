@@ -31,6 +31,12 @@
 	#del { background: #b5432f; }
 	.muted { color: #9aa0aa; font-size: 11px; padding: 4px 12px 10px; line-height: 1.5; }
 	.cal { font-size: 11px; }
+	.pathStatus { border-bottom: 1px solid #34353b; color: #9aa0aa; font-size: 11px; line-height: 1.45; padding: 7px 12px; }
+	.sectionHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 12px 6px; }
+	.sectionHead h2 { margin: 0 !important; }
+	.sectionHead button { padding: 5px 8px; }
+	.toolrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; margin-top: 8px; }
+	.toolrow button { min-width: 0; }
 	#mapWrap.dragover { outline: 2px solid #3a6df0; outline-offset: -2px; }
 </style>
 </head>
@@ -45,25 +51,34 @@
 			<button id="loadXml" class="sec">Load XML</button>
 			<button id="saveXml">Save XML</button>
 			<button id="loadGeo" class="sec">Load geodata</button>
-			<button id="loadImg" class="sec">Map image</button>
 			<button id="addBtn">+ Population</button>
 			<label style="margin:0;display:flex;align-items:center;gap:4px;color:#cfd2da"><input id="showMarks" type="checkbox" checked style="width:auto" />landmarks</label>
-			<button id="toggleAll" class="sec">Hide all</button>
 			<input id="xmlFile" type="file" accept=".xml" hidden />
 			<input id="imgFile" type="file" accept="image/*" multiple hidden />
+			<input id="layoutFile" type="file" accept=".json,application/json" hidden />
+			<input id="imgFolder" type="file" multiple webkitdirectory hidden />
 			<input id="geoFile" type="file" accept=".l2j" multiple webkitdirectory hidden />
 		</div>
+		<div id="pathStatus" class="pathStatus">XML: not loaded<br>Geodata: not loaded</div>
 
 		<div class="cal">
 			<h2>Map images</h2>
 			<label><input id="editImages" type="checkbox" style="width:auto;margin-right:6px" />edit images</label>
 			<label>map image opacity</label>
 			<input id="imgOpacity" type="range" min="0" max="100" value="70" />
-			<div class="row" style="margin-top:8px">
-				<button id="fitImg" class="sec" style="flex:1">Fit selected</button>
-				<button id="removeImg" class="sec" style="flex:1">Remove selected</button>
+			<div class="toolrow">
+				<button id="loadImg" class="sec">Add images</button>
+				<button id="loadImgFolder" class="sec">Load folder</button>
 			</div>
-			<div id="imgStatus" class="muted">No map images loaded.</div>
+			<div class="toolrow">
+				<button id="saveImgLayout">Save layout</button>
+				<button id="loadImgLayout" class="sec">Load layout</button>
+			</div>
+			<div class="toolrow">
+				<button id="fitImg" class="sec">Fit selected</button>
+				<button id="removeImg" class="sec">Remove selected</button>
+			</div>
+			<div id="imgStatus" class="muted">No map images loaded. Drop images onto the map, or load a folder containing images plus fpc-map-images.json.</div>
 		</div>
 
 		<h2>Selected population</h2>
@@ -98,7 +113,7 @@
 			<div class="muted">Double-click the map to add a population. <b>Draw zone:</b> select a population, click "Draw zone", then click points on the map to outline an area — bots will spawn inside the shape instead of a circle. Drag vertices to adjust. Drag a circle/centroid to move, wheel to zoom, drag empty space to pan.</div>
 		</div>
 
-		<h2>Populations</h2>
+		<div class="sectionHead"><h2>Populations</h2><button id="toggleAll" class="sec">Hide all</button></div>
 		<div id="list"></div>
 	</div>
 </div>
@@ -113,9 +128,12 @@ let pops = [];            // editable population objects
 let preserved = { profiles: [], assigns: [], def: null }; // raw nodes re-emitted on save
 let profileNames = ['loiter','mill','stroller','visit_giran','farmer','hunter'];
 let selected = -1;
-let mapImages = []; // { img, name, x1, y1, x2, y2 }
+let mapImages = []; // { img, name, path, x1, y1, x2, y2 }
 let selectedImage = -1;
 let geoRegions = []; // { rx, ry, canvas } rendered geodata tiles
+let xmlFileHandle = null;
+let xmlFileName = 'FakePlayerBehavior.xml';
+let geoDirName = '';
 const cam = { x: -135000, y: -135000, scale: 0.0035 }; // world coord at top-left, px per world unit
 
 // Geodata constants (mirror the server's GeoEngine).
@@ -157,6 +175,12 @@ function s2w(x, y){ return [ x / cam.scale + cam.x, y / cam.scale + cam.y ]; }
 function resize(){ cv.width = wrap.clientWidth; cv.height = wrap.clientHeight; draw(); }
 window.addEventListener('resize', resize);
 
+function updatePathStatus(){
+	const xml = xmlFileName ? xmlFileName + (xmlFileHandle ? ' (direct save)' : ' (download save)') : 'not loaded';
+	const geo = geoDirName || 'not loaded';
+	document.getElementById('pathStatus').innerHTML = 'XML: ' + xml + '<br>Geodata: ' + geo;
+}
+
 // Render one .l2j region to a high-res tile (per-cell heights). TILE_RES px across a region;
 // SUB px per block (256 blocks). Mirrors Region.load + ComplexBlock cell indexing.
 const TILE_RES = 1024, SUB = TILE_RES / 256;
@@ -185,10 +209,11 @@ function cellFill(put, bx, by, cells, t){
 		put(bx * SUB + sx, by * SUB + sy, cells[cxi * 8 + cyi], t);
 	}
 }
-document.getElementById('loadGeo').onclick = () => document.getElementById('geoFile').click();
-document.getElementById('geoFile').onchange = async e => {
-	const files = [...e.target.files].filter(f => /(\d+)_(\d+)\.l2j$/i.test(f.name));
+async function loadGeodataFiles(fileList, label){
+	const files = [...fileList].filter(f => /(\d+)_(\d+)\.l2j$/i.test(f.name));
 	if (!files.length){ alert('No .l2j files found in that folder.'); return; }
+	geoDirName = label || 'selected folder';
+	updatePathStatus();
 	geoRegions = []; let ok = 0, bad = 0;
 	for (const f of files){
 		const m = f.name.match(/(\d+)_(\d+)\.l2j$/i);
@@ -198,8 +223,28 @@ document.getElementById('geoFile').onchange = async e => {
 		catch (err){ bad++; }
 	}
 	document.getElementById('coord').textContent = 'geodata: ' + ok + ' regions' + (bad ? ' (' + bad + ' failed)' : '');
+	updatePathStatus();
 	draw();
+}
+async function collectDirectoryFiles(dirHandle, out = []){
+	for await (const entry of dirHandle.values()){
+		if (entry.kind === 'file') out.push(await entry.getFile());
+		else if (entry.kind === 'directory') await collectDirectoryFiles(entry, out);
+	}
+	return out;
+}
+document.getElementById('loadGeo').onclick = async () => {
+	if (window.showDirectoryPicker){
+		try {
+			const dir = await window.showDirectoryPicker({ id: 'fpc-geodata', mode: 'read' });
+			await loadGeodataFiles(await collectDirectoryFiles(dir), dir.name);
+			return;
+		}
+		catch (err){ if (err.name === 'AbortError') return; }
+	}
+	document.getElementById('geoFile').click();
 };
+document.getElementById('geoFile').onchange = e => { if (!e.target.files.length) return; loadGeodataFiles(e.target.files, e.target.files[0].webkitRelativePath.split('/')[0] || 'selected folder'); e.target.value = ''; };
 
 function draw(){
 	ctx.clearRect(0, 0, cv.width, cv.height);
@@ -331,17 +376,69 @@ function selectImage(i){
 }
 function updateImageStatus(){
 	const el = document.getElementById('imgStatus');
-	if (!mapImages.length){ el.textContent = 'No map images loaded.'; return; }
+	if (!mapImages.length){ el.textContent = 'No map images loaded. Drop images onto the map, or load a folder containing images plus fpc-map-images.json.'; return; }
 	const layer = mapImages[selectedImage];
 	el.textContent = layer ? `${selectedImage + 1}/${mapImages.length}: ${layer.name}` : `${mapImages.length} map image${mapImages.length === 1 ? '' : 's'} loaded.`;
 }
-function loadMapImageFile(file){
+function imageKey(path){ return String(path || '').replace(/\\/g, '/').split('/').pop().toLowerCase(); }
+function imagePath(layer){ return layer.path || layer.name; }
+function isImageFile(file){ return file.type.startsWith('image/') || /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(file.name); }
+function imageRecord(layer){
+	return {
+		name: layer.name,
+		path: imagePath(layer),
+		x1: Math.round(layer.x1),
+		y1: Math.round(layer.y1),
+		x2: Math.round(layer.x2),
+		y2: Math.round(layer.y2),
+		width: layer.img.naturalWidth || layer.img.width,
+		height: layer.img.naturalHeight || layer.img.height
+	};
+}
+function makeImageLayout(){
+	return { version: 1, opacity: +document.getElementById('imgOpacity').value, images: mapImages.map(imageRecord) };
+}
+function applyImagePlacement(layer, placement){
+	layer.x1 = Math.round(+placement.x1); layer.y1 = Math.round(+placement.y1);
+	layer.x2 = Math.round(+placement.x2); layer.y2 = Math.round(+placement.y2);
+}
+function parseImageLayout(text){
+	const layout = JSON.parse(text);
+	if (!layout || !Array.isArray(layout.images)) throw new Error('Layout must contain an images array.');
+	return layout;
+}
+function applyImageLayout(layout){
+	if (layout.opacity !== undefined) document.getElementById('imgOpacity').value = Math.max(0, Math.min(100, +layout.opacity || 0));
+	const byPath = new Map(mapImages.map(layer => [String(imagePath(layer)).toLowerCase(), layer]));
+	const byName = new Map(mapImages.map(layer => [imageKey(imagePath(layer)), layer]));
+	let matched = 0;
+	layout.images.forEach(rec => {
+		const layer = byPath.get(String(rec.path || rec.name || '').toLowerCase()) || byName.get(imageKey(rec.path || rec.name));
+		if (!layer) return;
+		applyImagePlacement(layer, rec);
+		matched++;
+	});
+	if (matched){ document.getElementById('editImages').checked = true; selectImage(Math.max(0, selectedImage)); }
+	updateImageStatus();
+	document.getElementById('imgStatus').textContent = `Layout loaded: ${matched}/${layout.images.length} image${layout.images.length === 1 ? '' : 's'} matched.`;
+	draw();
+}
+function saveImageLayout(){
+	if (!mapImages.length){ alert('Load and position at least one map image first.'); return; }
+	const blob = new Blob([JSON.stringify(makeImageLayout(), null, 2) + '\n'], { type: 'application/json' });
+	const a = document.createElement('a');
+	a.href = URL.createObjectURL(blob);
+	a.download = 'fpc-map-images.json';
+	a.click();
+}
+function loadMapImageFile(file, placement){
 	return new Promise(resolve => {
-		if (!file.type.startsWith('image/')){ resolve(false); return; }
+		if (!isImageFile(file)){ resolve(false); return; }
 		const img = new Image();
 		img.onload = () => {
-			const layer = { img, name: file.name, x1: 0, y1: 0, x2: 0, y2: 0 };
-			fitImageToViewport(layer);
+			const layer = { img, name: file.name, path: file.webkitRelativePath || file.name, x1: 0, y1: 0, x2: 0, y2: 0 };
+			if (placement) applyImagePlacement(layer, placement);
+			else fitImageToViewport(layer);
 			mapImages.push(layer);
 			selectImage(mapImages.length - 1);
 			document.getElementById('editImages').checked = true;
@@ -355,6 +452,31 @@ async function loadMapImageFiles(files){
 	let loaded = 0;
 	for (const file of [...files]) loaded += await loadMapImageFile(file) ? 1 : 0;
 	if (loaded) updateImageStatus();
+	draw();
+}
+async function loadImageFolder(files){
+	const all = [...files];
+	const layoutFile = all.find(f => f.name.toLowerCase() === 'fpc-map-images.json') || all.find(f => f.name.toLowerCase().endsWith('.json'));
+	const imageFiles = all.filter(isImageFile);
+	if (!imageFiles.length){ alert('No image files found in that folder.'); return; }
+	if (!layoutFile){ await loadMapImageFiles(imageFiles); return; }
+	let layout;
+	try { layout = parseImageLayout(await layoutFile.text()); }
+	catch (err){ alert('Could not read image layout JSON: ' + err.message); return; }
+	if (layout.opacity !== undefined) document.getElementById('imgOpacity').value = Math.max(0, Math.min(100, +layout.opacity || 0));
+	const filesByPath = new Map(imageFiles.map(f => [String(f.webkitRelativePath || f.name).toLowerCase(), f]));
+	const filesByName = new Map(imageFiles.map(f => [imageKey(f.webkitRelativePath || f.name), f]));
+	mapImages = [];
+	selectedImage = -1;
+	let loaded = 0, missing = 0;
+	for (const rec of layout.images){
+		const file = filesByPath.get(String(rec.path || rec.name || '').toLowerCase()) || filesByName.get(imageKey(rec.path || rec.name));
+		if (!file){ missing++; continue; }
+		loaded += await loadMapImageFile(file, rec) ? 1 : 0;
+	}
+	if (!loaded){ await loadMapImageFiles(imageFiles); return; }
+	document.getElementById('editImages').checked = true;
+	document.getElementById('imgStatus').textContent = `Folder loaded: ${loaded} image${loaded === 1 ? '' : 's'} restored${missing ? `, ${missing} missing` : ''}.`;
 	draw();
 }
 function resizeImageLayer(layer, corner, wx, wy){
@@ -466,10 +588,38 @@ document.getElementById('toggleAll').onclick = () => { const anyVisible = pops.s
 document.getElementById('imgOpacity').addEventListener('input', draw);
 
 // ---- XML load/save ----
-document.getElementById('loadXml').onclick = () => document.getElementById('xmlFile').click();
-document.getElementById('xmlFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => parseXml(r.result); r.readAsText(f); };
+async function loadXmlText(text, name, handle){
+	xmlFileName = name || 'FakePlayerBehavior.xml';
+	xmlFileHandle = handle || null;
+	parseXml(text);
+	updatePathStatus();
+}
+document.getElementById('loadXml').onclick = async () => {
+	if (window.showOpenFilePicker){
+		try {
+			const [handle] = await window.showOpenFilePicker({ id: 'fpc-behavior-xml', multiple: false, types: [{ description: 'FakePlayerBehavior XML', accept: { 'application/xml': ['.xml'], 'text/xml': ['.xml'] } }] });
+			const file = await handle.getFile();
+			await loadXmlText(await file.text(), file.name, handle);
+			return;
+		}
+		catch (err){ if (err.name === 'AbortError') return; }
+	}
+	document.getElementById('xmlFile').click();
+};
+document.getElementById('xmlFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => loadXmlText(r.result, f.name, null); r.readAsText(f); e.target.value = ''; };
 document.getElementById('loadImg').onclick = () => document.getElementById('imgFile').click();
 document.getElementById('imgFile').onchange = e => { if (!e.target.files.length) return; loadMapImageFiles(e.target.files); e.target.value = ''; };
+document.getElementById('loadImgFolder').onclick = () => document.getElementById('imgFolder').click();
+document.getElementById('imgFolder').onchange = e => { if (!e.target.files.length) return; loadImageFolder(e.target.files); e.target.value = ''; };
+document.getElementById('saveImgLayout').onclick = saveImageLayout;
+document.getElementById('loadImgLayout').onclick = () => document.getElementById('layoutFile').click();
+document.getElementById('layoutFile').onchange = e => {
+	const f = e.target.files[0]; if (!f) return;
+	const r = new FileReader();
+	r.onload = () => { try { applyImageLayout(parseImageLayout(r.result)); } catch (err){ alert('Could not read image layout JSON: ' + err.message); } };
+	r.readAsText(f);
+	e.target.value = '';
+};
 document.getElementById('editImages').addEventListener('change', e => { if (e.target.checked && (selectedImage < 0) && mapImages.length) selectImage(mapImages.length - 1); else draw(); });
 document.getElementById('fitImg').onclick = () => { if ((selectedImage < 0) || !mapImages[selectedImage]) return; fitImageToViewport(mapImages[selectedImage]); draw(); };
 document.getElementById('removeImg').onclick = () => {
@@ -503,7 +653,7 @@ function parseXml(text){
 }
 function updateProfileList(){ const dl = document.getElementById('profiles'); dl.innerHTML = ''; (profileNames.length ? profileNames : ['loiter','mill','stroller','visit_giran','farmer','hunter']).forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); }); }
 
-document.getElementById('saveXml').onclick = () => {
+function buildXml(){
 	const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 	let out = '<?xml version="1.0" encoding="UTF-8"?>\n';
 	out += '<list xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="xsd/FakePlayerBehavior.xsd">\n';
@@ -529,11 +679,28 @@ document.getElementById('saveXml').onclick = () => {
 	preserved.assigns.forEach(s => out += '\t' + s + '\n');
 	if (preserved.def) out += '\t' + preserved.def + '\n';
 	out += '</list>\n';
+	return out;
+}
+async function saveXml(){
+	const out = buildXml();
+	if (xmlFileHandle && xmlFileHandle.createWritable){
+		try {
+			const writable = await xmlFileHandle.createWritable();
+			await writable.write(out);
+			await writable.close();
+			document.getElementById('coord').textContent = 'saved ' + xmlFileName;
+			updatePathStatus();
+			return;
+		}
+		catch (err){ alert('Could not overwrite the XML file directly. Downloading a copy instead.\n\n' + err.message); }
+	}
 	const blob = new Blob([out], { type: 'application/xml' });
-	const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'FakePlayerBehavior.xml'; a.click();
-};
+	const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = xmlFileName || 'FakePlayerBehavior.xml'; a.click();
+}
+document.getElementById('saveXml').onclick = saveXml;
 
 updateProfileList();
+updatePathStatus();
 resize();
 </script>
 </body>

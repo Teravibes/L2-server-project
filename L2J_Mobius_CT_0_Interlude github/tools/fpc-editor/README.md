@@ -7,19 +7,24 @@ No install, no build, no server — it's a single HTML file that runs in your br
 Double-click `index.html` (or right-click → Open with → your browser).
 
 ## Workflow
-1. **Load XML** — pick your `FakePlayerBehavior.xml`. All `<population>` groups appear as
-   circles on the map (circle = anchor + radius). Profiles, assigns and the default are
-   preserved untouched.
+1. **Load XML** — pick your `FakePlayerBehavior.xml`. In browsers with direct file access support,
+   **Save XML** overwrites that same file; otherwise it downloads a replacement XML. All
+   `<population>` groups appear as circles on the map (circle = anchor + radius). Profiles,
+   assigns and the default are preserved untouched.
 2. **Landmarks** — towns and villages (Giran, Aden, Dion, the starting villages…) are drawn as
    purple diamonds at their real coordinates, so you can orient and place bots relative to them
    **without needing a map image at all**. Toggle them with the *landmarks* checkbox.
-3. **Load geodata** (recommended) — point it at your server's `game/data/geodata` folder. It parses
-   the `.l2j` files in the browser and renders the actual world map (height relief; towns/dungeons
-   tinted) **behind** the landmarks, perfectly aligned to coordinates — no calibration, no external
-   image. Parsing a full pack takes a few seconds. This is the easiest way to see the real world.
+3. **Load geodata** (recommended) — point it at your server's `game/data/geodata` folder. The editor
+   uses a folder picker when the browser supports it, with the old folder-input fallback otherwise.
+   It parses the `.l2j` files in the browser and renders the actual world map (height relief;
+   towns/dungeons tinted) **behind** the landmarks, perfectly aligned to coordinates — no calibration,
+   no external image. Parsing a full pack takes a few seconds. This is the easiest way to see the real world.
 4. *(optional)* **Map images** - load one or more community L2 world-map images as overlays, or
    drop them directly onto the map. Turn on **edit images**, drag an image to position it, and
-   drag its corner handles to resize it against landmarks/geodata.
+   drag its corner handles to resize it against landmarks/geodata. Use **Save layout** to download
+   `fpc-map-images.json`; keep it beside the image files, then use **Load folder** next time to
+   restore the images and their positions together. **Load layout** can also apply a saved layout
+   to already-loaded images with matching filenames.
 5. **Edit:**
    - **Double-click** the map to drop a new population there.
    - **Drag** a circle to move it; the X/Y update live.
