@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>FPC Editor — Fake Player Behavior</title>
+<style>
+	* { box-sizing: border-box; }
+	html, body { margin: 0; height: 100%; font-family: "Segoe UI", system-ui, sans-serif; background: #1e1f22; color: #e6e6e6; }
+	#app { display: flex; height: 100%; }
+	#mapWrap { position: relative; flex: 1; overflow: hidden; background: #15161a; }
+	#map { display: block; cursor: crosshair; }
+	#hud { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 6px; font-size: 12px; pointer-events: none; }
+	#side { width: 340px; background: #25262b; border-left: 1px solid #34353b; display: flex; flex-direction: column; overflow-y: auto; }
+	#side h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #9aa0aa; margin: 14px 12px 6px; }
+	.bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid #34353b; }
+	button, input, select { font: inherit; }
+	button { background: #3a6df0; color: #fff; border: 0; border-radius: 5px; padding: 7px 10px; cursor: pointer; font-size: 12px; }
+	button.sec { background: #3a3b42; }
+	button:hover { filter: brightness(1.1); }
+	label { display: block; font-size: 11px; color: #9aa0aa; margin: 8px 12px 2px; }
+	.row { display: flex; gap: 8px; padding: 0 12px; }
+	.row > div { flex: 1; }
+	input, select { width: 100%; background: #1b1c20; color: #e6e6e6; border: 1px solid #3a3b42; border-radius: 4px; padding: 6px 7px; }
+	#list { flex: 1; overflow-y: auto; padding: 4px 0 12px; }
+	.item { padding: 6px 12px; font-size: 12px; cursor: pointer; border-left: 3px solid transparent; }
+	.item:hover { background: #2c2d33; }
+	.item.sel { background: #313340; border-left-color: #3a6df0; }
+	.item small { color: #9aa0aa; }
+	.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
+	#del { background: #b5432f; }
+	.muted { color: #9aa0aa; font-size: 11px; padding: 4px 12px 10px; line-height: 1.5; }
+	.cal { font-size: 11px; }
+</style>
+</head>
+<body>
+<div id="app">
+	<div id="mapWrap">
+		<canvas id="map"></canvas>
+		<div id="hud">world: <span id="coord">0, 0</span></div>
+	</div>
+	<div id="side">
+		<div class="bar">
+			<button id="loadXml" class="sec">Load XML</button>
+			<button id="saveXml">Save XML</button>
+			<button id="loadImg" class="sec">Map image</button>
+			<button id="addBtn">+ Population</button>
+			<input id="xmlFile" type="file" accept=".xml" hidden />
+			<input id="imgFile" type="file" accept="image/*" hidden />
+		</div>
+
+		<details class="cal">
+			<summary style="padding:8px 12px; cursor:pointer; color:#9aa0aa;">Map calibration (world bounds of image)</summary>
+			<div class="row">
+				<div><label>minX</label><input id="bMinX" type="number" value="-130000" /></div>
+				<div><label>minY</label><input id="bMinY" type="number" value="-130000" /></div>
+			</div>
+			<div class="row">
+				<div><label>maxX</label><input id="bMaxX" type="number" value="130000" /></div>
+				<div><label>maxY</label><input id="bMaxY" type="number" value="130000" /></div>
+			</div>
+			<div class="muted">Load a Lineage 2 world map image, then nudge these bounds until landmarks line up with the populations. With geodata loaded the server snaps Z to ground, so only X/Y need to be right.</div>
+		</details>
+
+		<h2>Selected population</h2>
+		<div id="form">
+			<label>name</label><input id="f_name" />
+			<div class="row">
+				<div><label>x</label><input id="f_x" type="number" /></div>
+				<div><label>y</label><input id="f_y" type="number" /></div>
+				<div><label>z</label><input id="f_z" type="number" /></div>
+			</div>
+			<div class="row">
+				<div><label>radius</label><input id="f_radius" type="number" /></div>
+				<div><label>count</label><input id="f_count" type="number" /></div>
+			</div>
+			<div class="row">
+				<div><label>minLevel</label><input id="f_minLevel" type="number" /></div>
+				<div><label>maxLevel</label><input id="f_maxLevel" type="number" /></div>
+			</div>
+			<label>profile</label><input id="f_profile" list="profiles" />
+			<datalist id="profiles"></datalist>
+			<div class="row">
+				<div><label>race (optional)</label>
+					<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
+				</div>
+				<div><label>store (optional)</label>
+					<select id="f_store"><option value=""></option><option>SELL</option><option>BUY</option><option>PACKAGE</option></select>
+				</div>
+			</div>
+			<label><input id="f_respawn" type="checkbox" style="width:auto;margin-right:6px" />respawn (field hunters)</label>
+			<div class="row" style="margin-top:10px"><button id="del" style="flex:1">Delete population</button></div>
+			<div class="muted">Double-click the map to add a population at that spot. Drag a circle to move it. Wheel to zoom, drag empty space to pan.</div>
+		</div>
+
+		<h2>Populations</h2>
+		<div id="list"></div>
+	</div>
+</div>
+
+<script>
+const cv = document.getElementById('map');
+const ctx = cv.getContext('2d');
+const wrap = document.getElementById('mapWrap');
+
+// ---- state ----
+let pops = [];            // editable population objects
+let preserved = { profiles: [], assigns: [], def: null }; // raw nodes re-emitted on save
+let profileNames = ['loiter','mill','stroller','visit_giran','farmer','hunter'];
+let selected = -1;
+let mapImg = null;
+const cam = { x: -135000, y: -135000, scale: 0.0035 }; // world coord at top-left, px per world unit
+
+// ---- colors ----
+function popColor(p){
+	if (p.store) return '#e8c24a';
+	if (p.profile === 'hunter' || p.profile === 'farmer') return '#e0563b';
+	if (p.profile === 'mill' || p.profile === 'stroller') return '#54c06e';
+	if (p.profile === 'visit_giran') return '#c06ee0';
+	return '#4a8de8';
+}
+
+// ---- transforms ----
+function w2s(x, y){ return [ (x - cam.x) * cam.scale, (y - cam.y) * cam.scale ]; }
+function s2w(x, y){ return [ x / cam.scale + cam.x, y / cam.scale + cam.y ]; }
+
+function resize(){ cv.width = wrap.clientWidth; cv.height = wrap.clientHeight; draw(); }
+window.addEventListener('resize', resize);
+
+function draw(){
+	ctx.clearRect(0, 0, cv.width, cv.height);
+	// map image
+	if (mapImg){
+		const minX = +bMinX.value, minY = +bMinY.value, maxX = +bMaxX.value, maxY = +bMaxY.value;
+		const [sx, sy] = w2s(minX, minY); const [ex, ey] = w2s(maxX, maxY);
+		ctx.globalAlpha = 0.85; ctx.drawImage(mapImg, sx, sy, ex - sx, ey - sy); ctx.globalAlpha = 1;
+	}
+	// grid every 20k world units
+	ctx.strokeStyle = '#2a2c32'; ctx.lineWidth = 1; ctx.fillStyle = '#5a5c66'; ctx.font = '10px monospace';
+	const step = 20000;
+	const [w0x, w0y] = s2w(0, 0); const [w1x, w1y] = s2w(cv.width, cv.height);
+	for (let gx = Math.floor(w0x / step) * step; gx < w1x; gx += step){ const [sx] = w2s(gx, 0); ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, cv.height); ctx.stroke(); ctx.fillText(gx, sx + 2, 10); }
+	for (let gy = Math.floor(w0y / step) * step; gy < w1y; gy += step){ const [, sy] = w2s(0, gy); ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(cv.width, sy); ctx.stroke(); ctx.fillText(gy, 2, sy - 2); }
+	// populations
+	pops.forEach((p, i) => {
+		const [cx, cy] = w2s(p.x, p.y); const r = Math.max(3, (p.radius || 200) * cam.scale);
+		const col = popColor(p);
+		ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
+		ctx.fillStyle = col + '22'; ctx.fill();
+		ctx.lineWidth = i === selected ? 3 : 1.5; ctx.strokeStyle = col; ctx.stroke();
+		ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
+		if (cam.scale > 0.0015 || i === selected){ ctx.fillStyle = '#cfd2da'; ctx.font = '11px sans-serif'; ctx.fillText((p.name || '?') + ' ×' + (p.count || 0), cx + r + 3, cy + 3); }
+	});
+}
+
+// ---- interaction ----
+let drag = null;
+cv.addEventListener('mousedown', e => {
+	const mx = e.offsetX, my = e.offsetY;
+	const hit = pickPop(mx, my);
+	if (hit >= 0){ select(hit); drag = { mode: 'move', i: hit }; }
+	else { drag = { mode: 'pan', sx: mx, sy: my, cx: cam.x, cy: cam.y }; }
+});
+cv.addEventListener('mousemove', e => {
+	const [wx, wy] = s2w(e.offsetX, e.offsetY);
+	document.getElementById('coord').textContent = Math.round(wx) + ', ' + Math.round(wy);
+	if (!drag) return;
+	if (drag.mode === 'pan'){ cam.x = drag.cx - (e.offsetX - drag.sx) / cam.scale; cam.y = drag.cy - (e.offsetY - drag.sy) / cam.scale; draw(); }
+	else if (drag.mode === 'move'){ const p = pops[drag.i]; p.x = Math.round(wx); p.y = Math.round(wy); syncForm(); draw(); }
+});
+window.addEventListener('mouseup', () => drag = null);
+cv.addEventListener('wheel', e => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; const [wx, wy] = s2w(e.offsetX, e.offsetY); cam.scale *= f; cam.x = wx - e.offsetX / cam.scale; cam.y = wy - e.offsetY / cam.scale; draw(); }, { passive: false });
+cv.addEventListener('dblclick', e => { const [wx, wy] = s2w(e.offsetX, e.offsetY); addPop(Math.round(wx), Math.round(wy)); });
+
+function pickPop(mx, my){
+	for (let i = pops.length - 1; i >= 0; i--){ const [cx, cy] = w2s(pops[i].x, pops[i].y); if (Math.hypot(mx - cx, my - cy) < 9) return i; }
+	return -1;
+}
+
+// ---- model ops ----
+function addPop(x, y){
+	pops.push({ name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false });
+	select(pops.length - 1); renderList(); draw();
+}
+function select(i){ selected = i; syncForm(); renderList(); }
+function syncForm(){
+	const p = pops[selected]; if (!p) return;
+	for (const k of ['name','x','y','z','radius','count','minLevel','maxLevel','profile','race','store']) document.getElementById('f_' + k).value = p[k] ?? '';
+	document.getElementById('f_respawn').checked = !!p.respawn;
+}
+document.querySelectorAll('#form input, #form select').forEach(el => el.addEventListener('input', () => {
+	const p = pops[selected]; if (!p) return;
+	const id = el.id.slice(2);
+	if (id === 'respawn') p.respawn = el.checked;
+	else if (['x','y','z','radius','count','minLevel','maxLevel'].includes(id)) p[id] = +el.value;
+	else p[id] = el.value;
+	renderList(); draw();
+}));
+document.getElementById('del').onclick = () => { if (selected < 0) return; pops.splice(selected, 1); selected = -1; renderList(); draw(); syncFormClear(); };
+function syncFormClear(){ document.querySelectorAll('#form input').forEach(i => i.type === 'checkbox' ? i.checked = false : i.value = ''); }
+document.getElementById('addBtn').onclick = () => { const [wx, wy] = s2w(cv.width / 2, cv.height / 2); addPop(Math.round(wx), Math.round(wy)); };
+
+function renderList(){
+	const el = document.getElementById('list'); el.innerHTML = '';
+	pops.forEach((p, i) => {
+		const d = document.createElement('div'); d.className = 'item' + (i === selected ? ' sel' : '');
+		d.innerHTML = '<span class="dot" style="background:' + popColor(p) + '"></span>' + (p.name || '?') + ' <small>×' + (p.count || 0) + (p.store ? ' · ' + p.store : '') + ' · L' + p.minLevel + '-' + p.maxLevel + '</small>';
+		d.onclick = () => { select(i); panTo(p); }; el.appendChild(d);
+	});
+}
+function panTo(p){ cam.x = p.x - (cv.width / 2) / cam.scale; cam.y = p.y - (cv.height / 2) / cam.scale; draw(); }
+
+// ---- XML load/save ----
+document.getElementById('loadXml').onclick = () => document.getElementById('xmlFile').click();
+document.getElementById('xmlFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => parseXml(r.result); r.readAsText(f); };
+document.getElementById('loadImg').onclick = () => document.getElementById('imgFile').click();
+document.getElementById('imgFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const img = new Image(); img.onload = () => { mapImg = img; draw(); }; img.src = URL.createObjectURL(f); };
+['bMinX','bMinY','bMaxX','bMaxY'].forEach(id => document.getElementById(id).addEventListener('input', draw));
+
+function parseXml(text){
+	const doc = new DOMParser().parseFromString(text, 'application/xml');
+	const list = doc.querySelector('list'); if (!list){ alert('No <list> root found.'); return; }
+	pops = []; preserved = { profiles: [], assigns: [], def: null }; profileNames = [];
+	const ser = new XMLSerializer();
+	for (const node of list.children){
+		const tag = node.tagName;
+		if (tag === 'profile'){ preserved.profiles.push(ser.serializeToString(node)); profileNames.push(node.getAttribute('name')); }
+		else if (tag === 'assign'){ preserved.assigns.push(ser.serializeToString(node)); }
+		else if (tag === 'default'){ preserved.def = ser.serializeToString(node); }
+		else if (tag === 'population'){
+			const g = a => node.getAttribute(a);
+			pops.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 600), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 40), profile: g('profile') || '', race: g('race') || '', store: g('store') || '', respawn: g('respawn') === 'true' });
+		}
+	}
+	updateProfileList(); renderList(); selected = -1; draw();
+}
+function updateProfileList(){ const dl = document.getElementById('profiles'); dl.innerHTML = ''; (profileNames.length ? profileNames : ['loiter','mill','stroller','visit_giran','farmer','hunter']).forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); }); }
+
+document.getElementById('saveXml').onclick = () => {
+	const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+	let out = '<?xml version="1.0" encoding="UTF-8"?>\n';
+	out += '<list xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="xsd/FakePlayerBehavior.xsd">\n';
+	preserved.profiles.forEach(s => out += '\t' + s + '\n');
+	if (preserved.profiles.length) out += '\n';
+	pops.forEach(p => {
+		let a = `name="${esc(p.name)}" x="${p.x}" y="${p.y}" z="${p.z}" radius="${p.radius}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
+		if (p.profile) a += ` profile="${esc(p.profile)}"`;
+		if (p.race) a += ` race="${esc(p.race)}"`;
+		if (p.store) a += ` store="${esc(p.store)}"`;
+		if (p.respawn) a += ` respawn="true"`;
+		out += `\t<population ${a} />\n`;
+	});
+	if (preserved.assigns.length || preserved.def) out += '\n';
+	preserved.assigns.forEach(s => out += '\t' + s + '\n');
+	if (preserved.def) out += '\t' + preserved.def + '\n';
+	out += '</list>\n';
+	const blob = new Blob([out], { type: 'application/xml' });
+	const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'FakePlayerBehavior.xml'; a.click();
+};
+
+updateProfileList();
+resize();
+</script>
+</body>
+</html>
