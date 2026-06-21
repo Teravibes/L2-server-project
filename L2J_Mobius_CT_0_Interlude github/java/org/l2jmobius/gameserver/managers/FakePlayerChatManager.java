@@ -30,9 +30,11 @@ import org.l2jmobius.gameserver.data.xml.FakePlayerData;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
+import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.Player;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
@@ -63,6 +65,20 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final long AMBIENT_INTERVAL = 240000; // spontaneous trade line every ~4 min
 	private static final AtomicInteger MESSAGES_THIS_MINUTE = new AtomicInteger();
 	private static boolean SOCIAL_STARTED = false;
+
+	// Datapack-verified town centres, so a bot can truthfully say where it is when asked.
+	private static final String[] TOWN_NAMES =
+	{
+		"Talking Island", "Gludin", "Gludio", "Dion", "Giran", "Oren", "Aden", "Heine",
+		"Goddard", "Rune", "Schuttgart", "the Elven Village", "the Dark Elf Village",
+		"the Dwarven Village", "the Orc Village"
+	};
+	private static final int[][] TOWN_COORDS =
+	{
+		{ -83990, 243336 }, { -83520, 150560 }, { -14288, 122752 }, { 15670, 142980 }, { 83400, 147600 },
+		{ 82200, 53500 }, { 146680, 25800 }, { 111360, 220890 }, { 147300, -56570 }, { 43800, -47700 },
+		{ 87386, -143246 }, { 46926, 51511 }, { 12501, 16768 }, { 115072, -178176 }, { -44316, -113136 }
+	};
 	
 	protected FakePlayerChatManager()
 	{
@@ -111,9 +127,17 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return;
 		}
-		
+
+		// Seated private-store vendors are treated as AFK shops: they do not answer whispers.
+		final Npc bot = resolveBot(fpcName);
+		if ((bot != null) && isStoreVendor(bot))
+		{
+			return;
+		}
+
 		// LLM brain hook (private whisper). Falls back to canned chat if the bridge is offline.
-		final String aiReply = askBrain(player.getName(), fpcName, message);
+		// The bot's whereabouts go along so it can truthfully answer "where are you?".
+		final String aiReply = askBrain(player.getName(), fpcName, message, nearestLocation(bot));
 		if (aiReply != null)
 		{
 			sendChat(player, fpcName, aiReply);
@@ -239,8 +263,8 @@ public class FakePlayerChatManager implements IXmlReader
 		World.getInstance().forEachVisibleObjectInRange(origin, Npc.class, range, npc ->
 		{
 			// Dedupe by name: several spawns can share one fake player name, but a given
-			// character should answer a message only once.
-			if (npc.isFakePlayer() && (npc != origin) && !npc.getName().equals(speakerName) && seenNames.add(npc.getName()))
+			// character should answer a message only once. AFK store vendors stay silent.
+			if (npc.isFakePlayer() && !isStoreVendor(npc) && (npc != origin) && !npc.getName().equals(speakerName) && seenNames.add(npc.getName()))
 			{
 				bots.add(npc);
 			}
@@ -280,7 +304,7 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return;
 		}
-		final String line = askBrainPublic(bot.getName(), speakerName, overheard, channel);
+		final String line = askBrainPublic(bot.getName(), speakerName, overheard, channel, nearestLocation(bot));
 		if ((line == null) || line.isEmpty())
 		{
 			return;
@@ -339,7 +363,7 @@ public class FakePlayerChatManager implements IXmlReader
 		final List<Npc> bots = new ArrayList<>();
 		World.getInstance().forEachVisibleObjectInRange(witness, Npc.class, SOCIAL_RANGE, npc ->
 		{
-			if (npc.isFakePlayer())
+			if (npc.isFakePlayer() && !isStoreVendor(npc))
 			{
 				bots.add(npc);
 			}
@@ -350,17 +374,17 @@ public class FakePlayerChatManager implements IXmlReader
 		}
 	}
 	
-	private String askBrain(String playerName, String fpcName, String message)
+	private String askBrain(String playerName, String fpcName, String message, String location)
 	{
-		return callBridge(fpcName, "WHISPER", playerName, "", message);
+		return callBridge(fpcName, "WHISPER", playerName, "", message, location);
 	}
-	
-	private String askBrainPublic(String fpcName, String speakerName, String overheard, String mode)
+
+	private String askBrainPublic(String fpcName, String speakerName, String overheard, String mode, String location)
 	{
-		return callBridge(fpcName, mode, "", speakerName, overheard);
+		return callBridge(fpcName, mode, "", speakerName, overheard, location);
 	}
-	
-	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body)
+
+	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location)
 	{
 		try
 		{
@@ -371,6 +395,7 @@ public class FakePlayerChatManager implements IXmlReader
 				.header("X-Mode", mode) //
 				.header("X-Player", playerName) //
 				.header("X-Speaker", speakerName) //
+				.header("X-Location", location == null ? "" : location) //
 				.header("Content-Type", "text/plain; charset=utf-8") //
 				.POST(HttpRequest.BodyPublishers.ofString(body)) //
 				.build();
@@ -393,15 +418,88 @@ public class FakePlayerChatManager implements IXmlReader
 	
 	public void sendChat(Player player, String fpcName, String message)
 	{
-		final Spawn spawn = SpawnTable.getInstance().getAnySpawn(FakePlayerData.getInstance().getNpcIdByName(fpcName));
-		if (spawn != null)
+		final Npc npc = resolveBot(fpcName);
+		if (npc != null)
 		{
-			final Npc npc = spawn.getLastSpawn();
-			if (npc != null)
+			player.sendPacket(new CreatureSay(npc, ChatType.WHISPER, fpcName, message));
+		}
+	}
+
+	/**
+	 * @return the proper-cased name of a whisper-able roaming bot, or {@code null} if the name is not a
+	 *         live fake player or it is an AFK store vendor (those are treated as offline shops)
+	 */
+	public String talkableBotName(String name)
+	{
+		final Npc bot = resolveBot(name);
+		return ((bot == null) || isStoreVendor(bot)) ? null : bot.getName();
+	}
+
+	/**
+	 * Resolves a fake player by name: template bots through the spawn table, procedurally generated bots
+	 * by scanning the live world (their names are not in {@link FakePlayerData}).
+	 */
+	private Npc resolveBot(String name)
+	{
+		if ((name == null) || name.isEmpty())
+		{
+			return null;
+		}
+		final int npcId = FakePlayerData.getInstance().getNpcIdByName(name);
+		if (npcId > 0)
+		{
+			final Spawn spawn = SpawnTable.getInstance().getAnySpawn(npcId);
+			if ((spawn != null) && (spawn.getLastSpawn() != null))
 			{
-				player.sendPacket(new CreatureSay(npc, ChatType.WHISPER, fpcName, message));
+				return spawn.getLastSpawn();
 			}
 		}
+		for (WorldObject object : World.getInstance().getVisibleObjects())
+		{
+			if (object.isNpc())
+			{
+				final Npc npc = object.asNpc();
+				if (npc.isFakePlayer() && name.equalsIgnoreCase(npc.getName()))
+				{
+					return npc;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** A seated private-store vendor is an AFK shop and never chats. */
+	private static boolean isStoreVendor(Npc npc)
+	{
+		final FakePlayerAppearance look = npc.getFakePlayerAppearance();
+		return (look != null) && (look.getPrivateStoreType() != 0);
+	}
+
+	/** @return a short phrase like "in Giran" or "near Aden" for the bot's current position. */
+	private static String nearestLocation(Npc npc)
+	{
+		if (npc == null)
+		{
+			return "";
+		}
+		int best = -1;
+		long bestDistanceSq = Long.MAX_VALUE;
+		for (int i = 0; i < TOWN_COORDS.length; i++)
+		{
+			final long dx = npc.getX() - TOWN_COORDS[i][0];
+			final long dy = npc.getY() - TOWN_COORDS[i][1];
+			final long distanceSq = (dx * dx) + (dy * dy);
+			if (distanceSq < bestDistanceSq)
+			{
+				bestDistanceSq = distanceSq;
+				best = i;
+			}
+		}
+		if (best < 0)
+		{
+			return "";
+		}
+		return (Math.sqrt(bestDistanceSq) < 3000 ? "in " : "near ") + TOWN_NAMES[best];
 	}
 	
 	public static FakePlayerChatManager getInstance()

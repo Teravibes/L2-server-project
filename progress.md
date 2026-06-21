@@ -149,7 +149,8 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 
 ## 6. Status — what works
 
-- ✅ LLM chat: whisper / say / trade, with silence + reply dedup.
+- ✅ LLM chat: whisper / say / trade, with silence + reply dedup. Roaming bots are whisper-able by
+  their generated name and know their nearest town; seated AFK vendors stay silent.
 - ✅ Procedural identities: hundreds of unique names/races/genders/classes/hair/gear from one template.
 - ✅ Town life: idler clusters around NPCs, purposeful VISIT movers, racial villages, Giran market.
 - ✅ Private shops (**functional**): seated SELL/BUY/CRAFT/PACKAGE vendors with item-accurate signs;
@@ -183,8 +184,12 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
   in-game test (untestable in this dev env).
 - **Map image**: must be supplied by the user (not in server files); calibration is bounds-based
   (a friendlier 2-click calibration was discussed but not built).
-- **Whisper to generated bots**: trade/say social uses the NPC instance and works; whispering a
-  *generated* name isn't wired (those names aren't registered "talkable").
+- **Whisper to generated bots** (done): you can now whisper a roaming bot by its generated name —
+  `ChatWhisper` resolves it from the live world and `FakePlayerChatManager` replies via the brain.
+  **AFK store vendors are intentionally silent** (treated as offline shops) in whisper, trade and say.
+  Bots also get an `X-Location` (nearest town) so they answer "where are you?" truthfully.
+  **Next (Phase 2):** let a roaming seller sit + open a real private store on demand so you can
+  actually trade with one you tracked down — reuses the shop system.
 
 ## 8. Suggested next steps
 

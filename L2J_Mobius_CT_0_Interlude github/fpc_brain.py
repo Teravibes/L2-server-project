@@ -56,6 +56,10 @@ def clean_reply(text):
 def chat():
     fpc = request.headers.get("X-FPC", "a player")
     mode = request.headers.get("X-Mode", "WHISPER").upper()
+    location = request.headers.get("X-Location", "").strip()
+    # Where the bot actually is, so it can answer "where are you?" truthfully instead of inventing a spot.
+    loc_note = (f" You are currently {location} in the game world; if asked where you are or where to "
+                "meet, answer truthfully with that.") if location else ""
     message = request.get_data(as_text=True)
     reply = ""
     try:
@@ -64,7 +68,7 @@ def chat():
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})
             recent = "\n".join(trade_log) if trade_log else "(nothing recent)"
-            system = whisper_persona(fpc) + f"\n\nRecent public trade chat you saw:\n{recent}"
+            system = whisper_persona(fpc) + loc_note + f"\n\nRecent public trade chat you saw:\n{recent}"
             reply = call_llm(system, list(hist), 80)
             hist.append({"role": "assistant", "content": reply})
         elif mode == "SAY":
@@ -73,7 +77,7 @@ def chat():
             if message and overheard not in say_log:
                 say_log.append(overheard)
             context = "\n".join(say_log) if say_log else "(quiet)"
-            reply = call_llm(say_persona(fpc),
+            reply = call_llm(say_persona(fpc) + loc_note,
                 [{"role": "user", "content": f"People near you just said:\n{context}\n\nReact with ONE short line."}], 60)
             say_log.append(f"{fpc}: {reply}")
         else:  # TRADE or AMBIENT
@@ -93,7 +97,7 @@ def chat():
                           "answer their question, make/counter an offer, haggle, or banter. "
                           "Do NOT just post your own unrelated WTS/WTB ad. "
                           "If it has nothing to do with you, reply with exactly: pass")
-            reply = clean_reply(call_llm(trade_persona(fpc), [{"role": "user", "content": prompt}], 60))
+            reply = clean_reply(call_llm(trade_persona(fpc) + loc_note, [{"role": "user", "content": prompt}], 60))
             if reply:
                 trade_log.append(f"{fpc}: {reply}")
         print(f"[{PROVIDER}:{mode}:{fpc}] '{message}' -> '{reply}'")

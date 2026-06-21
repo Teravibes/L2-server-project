@@ -83,7 +83,20 @@ public class ChatWhisper implements IChatHandler
 			}
 			return;
 		}
-		
+
+		// Procedurally generated fake players are not in FakePlayerData; resolve them from the live world
+		// so you can whisper the roaming bots you see (AFK store vendors stay "offline" and don't reply).
+		if (FakePlayersConfig.FAKE_PLAYERS_ENABLED && FakePlayersConfig.FAKE_PLAYER_CHAT)
+		{
+			final String botName = FakePlayerChatManager.getInstance().talkableBotName(target);
+			if (botName != null)
+			{
+				activeChar.sendPacket(new CreatureSay(activeChar, type, "->" + botName, text));
+				FakePlayerChatManager.getInstance().manageChat(activeChar, botName, text);
+				return;
+			}
+		}
+
 		final Player receiver = World.getInstance().getPlayer(target);
 		if ((receiver != null) && !receiver.isSilenceMode(activeChar.getObjectId()))
 		{
