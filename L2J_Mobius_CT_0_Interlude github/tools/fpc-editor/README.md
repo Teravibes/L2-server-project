@@ -6,37 +6,42 @@ No install, no build, no server — it's a single HTML file that runs in your br
 ## Run it
 Double-click `index.html` (or right-click → Open with → your browser).
 
-## Workflow
-1. **Load XML** — pick your `FakePlayerBehavior.xml`. In browsers with direct file access support,
-   **Save XML** overwrites that same file; otherwise it downloads a replacement XML. All
-   `<population>` groups appear as circles on the map (circle = anchor + radius). Profiles,
-   assigns and the default are preserved untouched.
-2. **Landmarks** — towns and villages (Giran, Aden, Dion, the starting villages…) are drawn as
-   purple diamonds at their real coordinates, so you can orient and place bots relative to them
-   **without needing a map image at all**. Toggle them with the *landmarks* checkbox.
-3. **Load geodata** (recommended) — point it at your server's `game/data/geodata` folder. The editor
-   uses a folder picker when the browser supports it, with the old folder-input fallback otherwise.
-   It parses the `.l2j` files in the browser and renders the actual world map (height relief;
-   towns/dungeons tinted) **behind** the landmarks, perfectly aligned to coordinates — no calibration,
-   no external image. Parsing a full pack takes a few seconds. This is the easiest way to see the real world.
-4. *(optional)* **Map images** - load one or more community L2 world-map images as overlays, or
-   drop them directly onto the map. Turn on **edit images**, drag an image to position it, and
-   drag its corner handles to resize it against landmarks/geodata. Use **Save layout** to download
-   `fpc-map-images.json`; keep it beside the image files, then use **Load folder** next time to
-   restore the images and their positions together. **Load layout** can also apply a saved layout
-   to already-loaded images with matching filenames.
-5. **Edit:**
-   - **Double-click** the map to drop a new population there.
-   - **Drag** a circle to move it; the X/Y update live.
-   - **Click** a circle (or a list row) to edit its fields: count, level range, profile,
-     race, store type (`SELL`/`BUY`/`CRAFT`/`PACKAGE`), respawn.
-   - **Draw zone** — select a population, click **Draw zone**, then click points on the map to
-     outline an area. Bots spawn **inside the shape** instead of a circle (great for sell/buy/craft
-     shop districts). Drag vertices to adjust; double-click or **Esc** to finish; **Clear zone** to
-     revert to a circle. Saved as `<point>` vertices under the population.
-   - **Wheel** to zoom, **drag empty space** to pan. The geodata map is crisp when zoomed in.
-6. **Save XML** — downloads an updated `FakePlayerBehavior.xml`. Drop it into your live
-   server's `game/data/` and restart (or reload).
+## Quick start — one folder, one click
+1. Click **📂 Open data folder** and pick the folder that holds your fake-player files —
+   usually your server's `game/data`. The editor scans it and **loads everything at once**:
+   - `FakePlayerBehavior.xml` (the populations),
+   - the `geodata/*.l2j` tiles (the real world map),
+   - any map images plus their `fpc-map-images.json` layout.
+2. The folder is **remembered**. Next time you open the editor it **reloads that folder
+   automatically** — no clicking, no re-picking. Use **change…** (next to the folder name)
+   to point it somewhere else.
+3. Edit your populations (see below), then click **💾 Save** to write the XML back to that
+   same folder. Restart/reload the server to apply.
+
+The status chips at the top always show what's loaded: **XML ✓ · Geodata ✓ · Images ✓**.
+
+> Saving directly back to the file needs Chrome/Edge (File System Access API). In Firefox the
+> same **Open data folder** button reads the folder, and **Save** downloads the updated XML.
+
+## Editing populations
+- **Double-click** the map to drop a new population there (or **+ Population**).
+- **Drag** a circle to move it; the X/Y update live.
+- **Click** a circle (or a list row) to edit its fields: name, count, level range, profile,
+  race, store type (`SELL`/`BUY`/`CRAFT`/`PACKAGE`), respawn.
+- **Draw zone** — select a population, click **Draw zone**, then click points on the map to
+  outline an area. Bots spawn **inside the shape** instead of a circle (great for sell/buy/craft
+  shop districts). Drag vertices to adjust; double-click or **Esc** to finish; **Clear zone** to
+  revert to a circle. Saved as `<point>` vertices under the population.
+- **Wheel** to zoom, **drag empty space** to pan. The geodata map is crisp when zoomed in.
+- **Landmarks** — towns/villages are drawn as purple diamonds at their real coordinates so you
+  can orient without a map image. Toggle them with the **landmarks** checkbox.
+- **👁 / 🚫** on each list row shows/hides that population; **Hide all / Show all** toggles every one.
+
+## Map images (advanced)
+Map images now load automatically with the data folder. The collapsed **Map images (advanced)**
+panel still lets you add images manually, adjust opacity, drag/resize them against the map
+(**edit images**), and **Save layout** / **Load layout** to keep their positions in
+`fpc-map-images.json`. You can also drag-and-drop image files straight onto the map.
 
 ## Colors
 - blue = town loiterers/default · green = movers (mill/stroller) · purple = visit

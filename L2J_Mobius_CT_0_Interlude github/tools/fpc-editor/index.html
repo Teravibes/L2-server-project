@@ -13,16 +13,36 @@
 	#hud { position: absolute; top: 8px; left: 8px; background: rgba(0,0,0,.55); padding: 6px 10px; border-radius: 6px; font-size: 12px; pointer-events: none; }
 	#side { width: 340px; background: #25262b; border-left: 1px solid #34353b; display: flex; flex-direction: column; overflow-y: auto; }
 	#side h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: #9aa0aa; margin: 14px 12px 6px; }
-	.bar { display: flex; gap: 6px; flex-wrap: wrap; padding: 10px 12px; border-bottom: 1px solid #34353b; }
 	button, input, select { font: inherit; }
 	button { background: #3a6df0; color: #fff; border: 0; border-radius: 5px; padding: 7px 10px; cursor: pointer; font-size: 12px; }
 	button.sec { background: #3a3b42; }
 	button:hover { filter: brightness(1.1); }
 	label { display: block; font-size: 11px; color: #9aa0aa; margin: 8px 12px 2px; }
+
+	/* top action bar */
+	#topbar { display: flex; gap: 8px; padding: 12px; border-bottom: 1px solid #34353b; }
+	#openFolder { flex: 1; padding: 10px; font-size: 13px; font-weight: 600; }
+	#saveXml { padding: 10px 14px; font-weight: 600; background: #2e9d62; }
+	#saveXml:disabled { background: #3a3b42; color: #777; cursor: not-allowed; filter: none; }
+
+	/* status chips */
+	#status { padding: 9px 12px; border-bottom: 1px solid #34353b; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+	.chip { font-size: 11px; padding: 3px 8px; border-radius: 10px; background: #2c2d33; color: #9aa0aa; border: 1px solid #34353b; }
+	.chip.ok { background: #1d3326; color: #6fcf97; border-color: #265038; }
+	#folderLine { width: 100%; font-size: 11px; color: #9aa0aa; display: flex; gap: 8px; align-items: center; }
+	#folderName { color: #cfd2da; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.link { background: none; color: #6f9bff; padding: 0; font-size: 11px; text-decoration: underline; }
+	.link:hover { filter: none; color: #9cbcff; }
+
+	.quickbar { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #34353b; }
+	.quickbar label { margin: 0; display: flex; align-items: center; gap: 5px; color: #cfd2da; }
+
 	.row { display: flex; gap: 8px; padding: 0 12px; }
 	.row > div { flex: 1; }
 	input, select { width: 100%; background: #1b1c20; color: #e6e6e6; border: 1px solid #3a3b42; border-radius: 4px; padding: 6px 7px; }
-	#list { flex: 1; overflow-y: auto; padding: 4px 0 12px; }
+	#form.empty { display: none; }
+	#formHint { color: #9aa0aa; font-size: 12px; padding: 6px 12px 12px; line-height: 1.5; }
+	#list { overflow-y: auto; padding: 4px 0 12px; }
 	.item { padding: 6px 12px; font-size: 12px; cursor: pointer; border-left: 3px solid transparent; }
 	.item:hover { background: #2c2d33; }
 	.item.sel { background: #313340; border-left-color: #3a6df0; }
@@ -30,11 +50,17 @@
 	.dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: middle; }
 	#del { background: #b5432f; }
 	.muted { color: #9aa0aa; font-size: 11px; padding: 4px 12px 10px; line-height: 1.5; }
-	.cal { font-size: 11px; }
-	.pathStatus { border-bottom: 1px solid #34353b; color: #9aa0aa; font-size: 11px; line-height: 1.45; padding: 7px 12px; }
 	.sectionHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 14px 12px 6px; }
 	.sectionHead h2 { margin: 0 !important; }
 	.sectionHead button { padding: 5px 8px; }
+
+	/* advanced (collapsed) image panel */
+	details.adv { border-top: 1px solid #34353b; margin-top: 6px; }
+	details.adv > summary { list-style: none; cursor: pointer; padding: 11px 12px; font-size: 12px; color: #9aa0aa; user-select: none; }
+	details.adv > summary::-webkit-details-marker { display: none; }
+	details.adv > summary::before { content: '▸ '; color: #6b6d76; }
+	details.adv[open] > summary::before { content: '▾ '; }
+	details.adv > summary:hover { color: #cfd2da; }
 	.toolrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; margin-top: 8px; }
 	.toolrow button { min-width: 0; }
 	#mapWrap.dragover { outline: 2px solid #3a6df0; outline-offset: -2px; }
@@ -47,42 +73,32 @@
 		<div id="hud">world: <span id="coord">0, 0</span></div>
 	</div>
 	<div id="side">
-		<div class="bar">
-			<button id="loadXml" class="sec">Load XML</button>
-			<button id="saveXml">Save XML</button>
-			<button id="loadGeo" class="sec">Load geodata</button>
-			<button id="addBtn">+ Population</button>
-			<label style="margin:0;display:flex;align-items:center;gap:4px;color:#cfd2da"><input id="showMarks" type="checkbox" checked style="width:auto" />landmarks</label>
-			<input id="xmlFile" type="file" accept=".xml" hidden />
-			<input id="imgFile" type="file" accept="image/*" multiple hidden />
-			<input id="layoutFile" type="file" accept=".json,application/json" hidden />
-			<input id="imgFolder" type="file" multiple webkitdirectory hidden />
-			<input id="geoFile" type="file" accept=".l2j" multiple webkitdirectory hidden />
+		<!-- ONE open, ONE save -->
+		<div id="topbar">
+			<button id="openFolder">📂 Open data folder</button>
+			<button id="saveXml" disabled title="Load a folder first">💾 Save</button>
 		</div>
-		<div id="pathStatus" class="pathStatus">XML: not loaded<br>Geodata: not loaded</div>
+		<div id="status">
+			<span class="chip" id="st_xml">XML</span>
+			<span class="chip" id="st_geo">Geodata</span>
+			<span class="chip" id="st_img">Images</span>
+			<div id="folderLine" hidden>folder: <span id="folderName"></span> <button id="changeFolder" class="link">change…</button></div>
+		</div>
 
-		<div class="cal">
-			<h2>Map images</h2>
-			<label><input id="editImages" type="checkbox" style="width:auto;margin-right:6px" />edit images</label>
-			<label>map image opacity</label>
-			<input id="imgOpacity" type="range" min="0" max="100" value="70" />
-			<div class="toolrow">
-				<button id="loadImg" class="sec">Add images</button>
-				<button id="loadImgFolder" class="sec">Load folder</button>
-			</div>
-			<div class="toolrow">
-				<button id="saveImgLayout">Save layout</button>
-				<button id="loadImgLayout" class="sec">Load layout</button>
-			</div>
-			<div class="toolrow">
-				<button id="fitImg" class="sec">Fit selected</button>
-				<button id="removeImg" class="sec">Remove selected</button>
-			</div>
-			<div id="imgStatus" class="muted">No map images loaded. Drop images onto the map, or load a folder containing images plus fpc-map-images.json.</div>
+		<div class="quickbar">
+			<button id="addBtn" class="sec">+ Population</button>
+			<label><input id="showMarks" type="checkbox" checked style="width:auto" /> landmarks</label>
 		</div>
+
+		<!-- hidden inputs -->
+		<input id="folderInput" type="file" multiple webkitdirectory hidden />
+		<input id="imgFile" type="file" accept="image/*" multiple hidden />
+		<input id="layoutFile" type="file" accept=".json,application/json" hidden />
+		<input id="imgFolder" type="file" multiple webkitdirectory hidden />
 
 		<h2>Selected population</h2>
-		<div id="form">
+		<div id="formHint">Select a population from the list below, or double-click the map to add one.</div>
+		<div id="form" class="empty">
 			<label>name</label><input id="f_name" />
 			<div class="row">
 				<div><label>x</label><input id="f_x" type="number" /></div>
@@ -110,11 +126,31 @@
 			<label><input id="f_respawn" type="checkbox" style="width:auto;margin-right:6px" />respawn (field hunters)</label>
 			<div class="row" style="margin-top:10px"><button id="zoneBtn" class="sec" style="flex:2">Draw zone</button><button id="clearZone" class="sec" style="flex:1">Clear zone</button></div>
 			<div class="row" style="margin-top:6px"><button id="del" style="flex:1">Delete population</button></div>
-			<div class="muted">Double-click the map to add a population. <b>Draw zone:</b> select a population, click "Draw zone", then click points on the map to outline an area — bots will spawn inside the shape instead of a circle. Drag vertices to adjust. Drag a circle/centroid to move, wheel to zoom, drag empty space to pan.</div>
+			<div class="muted"><b>Draw zone:</b> click "Draw zone", then click points on the map to outline an area — bots spawn inside the shape instead of a circle. Drag vertices to adjust; double-click or Esc to finish. Drag a circle to move it, wheel to zoom, drag empty space to pan.</div>
 		</div>
 
 		<div class="sectionHead"><h2>Populations</h2><button id="toggleAll" class="sec">Hide all</button></div>
 		<div id="list"></div>
+
+		<details class="adv">
+			<summary>Map images (advanced)</summary>
+			<label><input id="editImages" type="checkbox" style="width:auto;margin-right:6px" />edit images (drag / resize)</label>
+			<label>opacity</label>
+			<input id="imgOpacity" type="range" min="0" max="100" value="70" style="margin:0 12px;width:calc(100% - 24px)" />
+			<div class="toolrow">
+				<button id="loadImg" class="sec">Add images</button>
+				<button id="loadImgFolder" class="sec">Load folder</button>
+			</div>
+			<div class="toolrow">
+				<button id="saveImgLayout" class="sec">Save layout</button>
+				<button id="loadImgLayout" class="sec">Load layout</button>
+			</div>
+			<div class="toolrow">
+				<button id="fitImg" class="sec">Fit selected</button>
+				<button id="removeImg" class="sec">Remove selected</button>
+			</div>
+			<div id="imgStatus" class="muted">Map images load automatically with the data folder. You can also drop images onto the map.</div>
+		</details>
 	</div>
 </div>
 
@@ -133,7 +169,9 @@ let selectedImage = -1;
 let geoRegions = []; // { rx, ry, canvas } rendered geodata tiles
 let xmlFileHandle = null;
 let xmlFileName = 'FakePlayerBehavior.xml';
+let xmlLoaded = false;
 let geoDirName = '';
+let rememberedHandle = null; // persisted workspace directory handle
 const cam = { x: -135000, y: -135000, scale: 0.0035 }; // world coord at top-left, px per world unit
 
 // Geodata constants (mirror the server's GeoEngine).
@@ -175,10 +213,16 @@ function s2w(x, y){ return [ x / cam.scale + cam.x, y / cam.scale + cam.y ]; }
 function resize(){ cv.width = wrap.clientWidth; cv.height = wrap.clientHeight; draw(); }
 window.addEventListener('resize', resize);
 
-function updatePathStatus(){
-	const xml = xmlFileName ? xmlFileName + (xmlFileHandle ? ' (direct save)' : ' (download save)') : 'not loaded';
-	const geo = geoDirName || 'not loaded';
-	document.getElementById('pathStatus').innerHTML = 'XML: ' + xml + '<br>Geodata: ' + geo;
+// ---- status chips ----
+function setChip(id, ok, text){ const el = document.getElementById(id); el.textContent = text; el.classList.toggle('ok', ok); }
+function updateStatus(){
+	setChip('st_xml', xmlLoaded, xmlLoaded ? 'XML ✓ ' + pops.length + ' pops' : 'XML —');
+	setChip('st_geo', geoRegions.length > 0, geoRegions.length ? 'Geodata ✓ ' + geoRegions.length : 'Geodata —');
+	setChip('st_img', mapImages.length > 0, mapImages.length ? 'Images ✓ ' + mapImages.length : 'Images —');
+	document.getElementById('saveXml').disabled = !xmlLoaded;
+	const fl = document.getElementById('folderLine');
+	if (rememberedHandle){ fl.hidden = false; document.getElementById('folderName').textContent = rememberedHandle.name; }
+	else fl.hidden = true;
 }
 
 // Render one .l2j region to a high-res tile (per-cell heights). TILE_RES px across a region;
@@ -211,9 +255,8 @@ function cellFill(put, bx, by, cells, t){
 }
 async function loadGeodataFiles(fileList, label){
 	const files = [...fileList].filter(f => /(\d+)_(\d+)\.l2j$/i.test(f.name));
-	if (!files.length){ alert('No .l2j files found in that folder.'); return; }
+	if (!files.length){ return; }
 	geoDirName = label || 'selected folder';
-	updatePathStatus();
 	geoRegions = []; let ok = 0, bad = 0;
 	for (const f of files){
 		const m = f.name.match(/(\d+)_(\d+)\.l2j$/i);
@@ -223,28 +266,106 @@ async function loadGeodataFiles(fileList, label){
 		catch (err){ bad++; }
 	}
 	document.getElementById('coord').textContent = 'geodata: ' + ok + ' regions' + (bad ? ' (' + bad + ' failed)' : '');
-	updatePathStatus();
+	updateStatus();
 	draw();
 }
-async function collectDirectoryFiles(dirHandle, out = []){
+
+// ---- workspace: pick ONE folder, auto-load XML + geodata + images ----
+function isImageName(name){ return /\.(png|jpe?g|gif|webp|bmp|avif)$/i.test(name); }
+
+// IndexedDB key/value so the chosen folder is remembered between sessions.
+function idbReq(mode, fn){
+	return new Promise((res, rej) => {
+		const open = indexedDB.open('fpc-editor', 1);
+		open.onupgradeneeded = () => open.result.createObjectStore('kv');
+		open.onerror = () => rej(open.error);
+		open.onsuccess = () => { const tx = open.result.transaction('kv', mode); const r = fn(tx.objectStore('kv')); tx.oncomplete = () => res(r && r.result); tx.onerror = () => rej(tx.error); };
+	});
+}
+const idbGet = key => idbReq('readonly', s => s.get(key)).catch(() => null);
+const idbSet = (key, val) => idbReq('readwrite', s => s.put(val, key)).catch(() => {});
+
+// Recursively gather { name, path, handle } so we can read files and save the XML back.
+async function collectHandles(dirHandle, prefix = '', out = []){
 	for await (const entry of dirHandle.values()){
-		if (entry.kind === 'file') out.push(await entry.getFile());
-		else if (entry.kind === 'directory') await collectDirectoryFiles(entry, out);
+		const path = prefix + entry.name;
+		if (entry.kind === 'file') out.push({ name: entry.name, path, handle: entry, file: null });
+		else if (entry.kind === 'directory') await collectHandles(entry, path + '/', out);
 	}
 	return out;
 }
-document.getElementById('loadGeo').onclick = async () => {
-	if (window.showDirectoryPicker){
-		try {
-			const dir = await window.showDirectoryPicker({ id: 'fpc-geodata', mode: 'read' });
-			await loadGeodataFiles(await collectDirectoryFiles(dir), dir.name);
-			return;
+async function entryFile(e){ return e.file || (e.file = await e.handle.getFile()); }
+
+async function loadWorkspace(entries, label){
+	// pick out the three kinds of files anywhere under the folder
+	const geo = entries.filter(e => /(\d+)_(\d+)\.l2j$/i.test(e.name));
+	let xmlE = entries.find(e => e.name.toLowerCase() === 'fakeplayerbehavior.xml');
+	if (!xmlE){
+		for (const c of entries.filter(e => e.name.toLowerCase().endsWith('.xml'))){
+			const t = await (await entryFile(c)).text();
+			if (/<population\b|FakePlayerBehavior/.test(t)){ xmlE = c; xmlE._text = t; break; }
 		}
-		catch (err){ if (err.name === 'AbortError') return; }
 	}
-	document.getElementById('geoFile').click();
+	const imgEntries = entries.filter(e => isImageName(e.name));
+	const layoutE = entries.find(e => e.name.toLowerCase() === 'fpc-map-images.json');
+
+	const loaded = [];
+	if (xmlE){
+		const file = await entryFile(xmlE);
+		await loadXmlText(xmlE._text || await file.text(), file.name, xmlE.handle || null);
+		loaded.push('XML');
+	}
+	if (imgEntries.length){
+		const files = [];
+		for (const e of imgEntries) files.push(await entryFile(e));
+		if (layoutE) files.push(await entryFile(layoutE));
+		mapImages = []; selectedImage = -1;
+		await loadImageFolder(files);
+		loaded.push('images');
+	}
+	if (geo.length){
+		const files = [];
+		for (const e of geo) files.push(await entryFile(e));
+		await loadGeodataFiles(files, label); // slow — do last so the rest shows first
+		loaded.push('geodata');
+	}
+	updateStatus();
+	if (!loaded.length) alert('That folder has no FakePlayerBehavior.xml, geodata (.l2j), or images.\nPick the folder that contains them (e.g. your server\'s game/data).');
+}
+
+async function ensurePerm(handle){
+	const opts = { mode: 'readwrite' };
+	if ((await handle.queryPermission(opts)) === 'granted') return true;
+	if ((await handle.requestPermission(opts)) === 'granted') return true;
+	return false;
+}
+
+async function openFolder(forcePick){
+	if (window.showDirectoryPicker){
+		let dir = (!forcePick && rememberedHandle) ? rememberedHandle : null;
+		if (!dir){
+			try { dir = await window.showDirectoryPicker({ id: 'fpc-workspace', mode: 'readwrite' }); }
+			catch (err){ if (err.name === 'AbortError') return; throw err; }
+		}
+		if (!(await ensurePerm(dir))){ alert('Permission to read that folder was denied.'); return; }
+		rememberedHandle = dir; updateStatus();
+		await idbSet('workspace', dir);
+		document.getElementById('coord').textContent = 'reading folder...';
+		await loadWorkspace(await collectHandles(dir), dir.name);
+	} else {
+		document.getElementById('folderInput').click(); // Firefox / no File System Access API
+	}
+}
+document.getElementById('openFolder').onclick = () => openFolder(false);
+document.getElementById('changeFolder').onclick = () => openFolder(true);
+document.getElementById('folderInput').onchange = e => {
+	if (!e.target.files.length) return;
+	const files = [...e.target.files];
+	const label = (files[0].webkitRelativePath || '').split('/')[0] || 'folder';
+	const entries = files.map(f => ({ name: f.name, path: f.webkitRelativePath || f.name, handle: null, file: f }));
+	loadWorkspace(entries, label);
+	e.target.value = '';
 };
-document.getElementById('geoFile').onchange = e => { if (!e.target.files.length) return; loadGeodataFiles(e.target.files, e.target.files[0].webkitRelativePath.split('/')[0] || 'selected folder'); e.target.value = ''; };
 
 function draw(){
 	ctx.clearRect(0, 0, cv.width, cv.height);
@@ -308,6 +429,12 @@ function draw(){
 		if (cam.scale > 0.0015 || i === selected){ ctx.fillStyle = '#cfd2da'; ctx.font = '11px sans-serif'; ctx.fillText((p.name || '?') + ' ×' + (p.count || 0), cx + r + 3, cy + 3); }
 	});
 	drawImageSelection();
+	// empty-state hint
+	if (!geoRegions.length && !mapImages.length && !pops.length){
+		ctx.fillStyle = '#6b6d76'; ctx.font = '14px "Segoe UI", sans-serif'; ctx.textAlign = 'center';
+		ctx.fillText('Click "Open data folder" to load your XML, geodata and images.', cv.width / 2, cv.height / 2);
+		ctx.textAlign = 'left';
+	}
 }
 function polyCentroid(poly){ let x = 0, y = 0; poly.forEach(p => { x += p.x; y += p.y; }); return { x: Math.round(x / poly.length), y: Math.round(y / poly.length) }; }
 function polyRadius(poly, c){ let r = 0; poly.forEach(p => r = Math.max(r, Math.hypot(p.x - c.x, p.y - c.y))); return Math.round(r); }
@@ -376,7 +503,7 @@ function selectImage(i){
 }
 function updateImageStatus(){
 	const el = document.getElementById('imgStatus');
-	if (!mapImages.length){ el.textContent = 'No map images loaded. Drop images onto the map, or load a folder containing images plus fpc-map-images.json.'; return; }
+	if (!mapImages.length){ el.textContent = 'Map images load automatically with the data folder. You can also drop images onto the map.'; return; }
 	const layer = mapImages[selectedImage];
 	el.textContent = layer ? `${selectedImage + 1}/${mapImages.length}: ${layer.name}` : `${mapImages.length} map image${mapImages.length === 1 ? '' : 's'} loaded.`;
 }
@@ -452,6 +579,7 @@ async function loadMapImageFiles(files){
 	let loaded = 0;
 	for (const file of [...files]) loaded += await loadMapImageFile(file) ? 1 : 0;
 	if (loaded) updateImageStatus();
+	updateStatus();
 	draw();
 }
 async function loadImageFolder(files){
@@ -477,6 +605,7 @@ async function loadImageFolder(files){
 	if (!loaded){ await loadMapImageFiles(imageFiles); return; }
 	document.getElementById('editImages').checked = true;
 	document.getElementById('imgStatus').textContent = `Folder loaded: ${loaded} image${loaded === 1 ? '' : 's'} restored${missing ? `, ${missing} missing` : ''}.`;
+	updateStatus();
 	draw();
 }
 function resizeImageLayer(layer, corner, wx, wy){
@@ -549,11 +678,14 @@ function setDrawMode(on){ drawMode = on; cv.style.cursor = on ? 'copy' : 'crossh
 // ---- model ops ----
 function addPop(x, y){
 	pops.push({ name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false, poly: [] });
-	select(pops.length - 1); renderList(); draw();
+	select(pops.length - 1); renderList(); draw(); updateStatus();
 }
 function select(i){ selected = i; selectedImage = -1; updateImageStatus(); syncForm(); renderList(); }
 function syncForm(){
-	const p = pops[selected]; if (!p) return;
+	const p = pops[selected];
+	document.getElementById('form').classList.toggle('empty', !p);
+	document.getElementById('formHint').textContent = p ? 'Editing: ' + (p.name || '(unnamed)') : 'Select a population from the list below, or double-click the map to add one.';
+	if (!p) return;
 	for (const k of ['name','x','y','z','radius','count','minLevel','maxLevel','profile','race','store']) document.getElementById('f_' + k).value = p[k] ?? '';
 	document.getElementById('f_respawn').checked = !!p.respawn;
 }
@@ -565,10 +697,10 @@ document.querySelectorAll('#form input, #form select').forEach(el => el.addEvent
 	else p[id] = el.value;
 	renderList(); draw();
 }));
-document.getElementById('del').onclick = () => { if (selected < 0) return; pops.splice(selected, 1); selected = -1; renderList(); draw(); syncFormClear(); };
+document.getElementById('del').onclick = () => { if (selected < 0) return; pops.splice(selected, 1); selected = -1; renderList(); draw(); syncForm(); updateStatus(); };
 document.getElementById('zoneBtn').onclick = () => { if (selected < 0){ alert('Select or add a population first, then draw its zone.'); return; } pops[selected].poly = pops[selected].poly || []; setDrawMode(!drawMode); };
 document.getElementById('clearZone').onclick = () => { if (selected < 0) return; pops[selected].poly = []; setDrawMode(false); draw(); };
-function syncFormClear(){ document.querySelectorAll('#form input, #form select').forEach(i => i.type === 'checkbox' ? i.checked = false : i.value = ''); }
+function syncFormClear(){ document.getElementById('form').classList.add('empty'); document.querySelectorAll('#form input, #form select').forEach(i => i.type === 'checkbox' ? i.checked = false : i.value = ''); }
 document.getElementById('addBtn').onclick = () => { const [wx, wy] = s2w(cv.width / 2, cv.height / 2); addPop(Math.round(wx), Math.round(wy)); };
 
 function renderList(){
@@ -592,21 +724,10 @@ async function loadXmlText(text, name, handle){
 	xmlFileName = name || 'FakePlayerBehavior.xml';
 	xmlFileHandle = handle || null;
 	parseXml(text);
-	updatePathStatus();
+	xmlLoaded = true;
+	updateStatus();
 }
-document.getElementById('loadXml').onclick = async () => {
-	if (window.showOpenFilePicker){
-		try {
-			const [handle] = await window.showOpenFilePicker({ id: 'fpc-behavior-xml', multiple: false, types: [{ description: 'FakePlayerBehavior XML', accept: { 'application/xml': ['.xml'], 'text/xml': ['.xml'] } }] });
-			const file = await handle.getFile();
-			await loadXmlText(await file.text(), file.name, handle);
-			return;
-		}
-		catch (err){ if (err.name === 'AbortError') return; }
-	}
-	document.getElementById('xmlFile').click();
-};
-document.getElementById('xmlFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => loadXmlText(r.result, f.name, null); r.readAsText(f); e.target.value = ''; };
+// advanced image controls
 document.getElementById('loadImg').onclick = () => document.getElementById('imgFile').click();
 document.getElementById('imgFile').onchange = e => { if (!e.target.files.length) return; loadMapImageFiles(e.target.files); e.target.value = ''; };
 document.getElementById('loadImgFolder').onclick = () => document.getElementById('imgFolder').click();
@@ -626,7 +747,7 @@ document.getElementById('removeImg').onclick = () => {
 	if ((selectedImage < 0) || !mapImages[selectedImage]) return;
 	mapImages.splice(selectedImage, 1);
 	selectedImage = Math.min(selectedImage, mapImages.length - 1);
-	updateImageStatus(); draw();
+	updateImageStatus(); updateStatus(); draw();
 };
 wrap.addEventListener('dragover', e => { e.preventDefault(); wrap.classList.add('dragover'); });
 wrap.addEventListener('dragleave', () => wrap.classList.remove('dragover'));
@@ -649,7 +770,7 @@ function parseXml(text){
 			pops.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 600), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 40), profile: g('profile') || '', race: g('race') || '', store: g('store') || '', respawn: g('respawn') === 'true', poly });
 		}
 	}
-	updateProfileList(); renderList(); selected = -1; draw();
+	updateProfileList(); renderList(); selected = -1; syncForm(); draw();
 }
 function updateProfileList(){ const dl = document.getElementById('profiles'); dl.innerHTML = ''; (profileNames.length ? profileNames : ['loiter','mill','stroller','visit_giran','farmer','hunter']).forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); }); }
 
@@ -682,6 +803,7 @@ function buildXml(){
 	return out;
 }
 async function saveXml(){
+	if (!xmlLoaded){ alert('Open your data folder first.'); return; }
 	const out = buildXml();
 	if (xmlFileHandle && xmlFileHandle.createWritable){
 		try {
@@ -689,7 +811,6 @@ async function saveXml(){
 			await writable.write(out);
 			await writable.close();
 			document.getElementById('coord').textContent = 'saved ' + xmlFileName;
-			updatePathStatus();
 			return;
 		}
 		catch (err){ alert('Could not overwrite the XML file directly. Downloading a copy instead.\n\n' + err.message); }
@@ -699,9 +820,22 @@ async function saveXml(){
 }
 document.getElementById('saveXml').onclick = saveXml;
 
-updateProfileList();
-updatePathStatus();
-resize();
+// ---- startup: restore the remembered folder ----
+(async () => {
+	updateProfileList();
+	updateStatus();
+	resize();
+	try {
+		rememberedHandle = await idbGet('workspace');
+		if (rememberedHandle){
+			updateStatus();
+			if ((await rememberedHandle.queryPermission({ mode: 'readwrite' })) === 'granted'){
+				document.getElementById('coord').textContent = 'reloading last folder...';
+				await loadWorkspace(await collectHandles(rememberedHandle), rememberedHandle.name);
+			}
+		}
+	} catch (err){ /* no remembered folder, or permission lapsed — user clicks Open */ }
+})();
 </script>
 </body>
 </html>
