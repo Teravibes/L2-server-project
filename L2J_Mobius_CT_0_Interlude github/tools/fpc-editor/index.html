@@ -43,11 +43,13 @@
 		<div class="bar">
 			<button id="loadXml" class="sec">Load XML</button>
 			<button id="saveXml">Save XML</button>
+			<button id="loadGeo" class="sec">Load geodata</button>
 			<button id="loadImg" class="sec">Map image</button>
 			<button id="addBtn">+ Population</button>
 			<label style="margin:0;display:flex;align-items:center;gap:4px;color:#cfd2da"><input id="showMarks" type="checkbox" checked style="width:auto" />landmarks</label>
 			<input id="xmlFile" type="file" accept=".xml" hidden />
 			<input id="imgFile" type="file" accept="image/*" hidden />
+			<input id="geoFile" type="file" accept=".l2j" multiple webkitdirectory hidden />
 		</div>
 
 		<details class="cal">
@@ -110,7 +112,11 @@ let preserved = { profiles: [], assigns: [], def: null }; // raw nodes re-emitte
 let profileNames = ['loiter','mill','stroller','visit_giran','farmer','hunter'];
 let selected = -1;
 let mapImg = null;
+let geoRegions = []; // { rx, ry, canvas } rendered geodata tiles
 const cam = { x: -135000, y: -135000, scale: 0.0035 }; // world coord at top-left, px per world unit
+
+// Geodata constants (mirror the server's GeoEngine).
+const WORLD_MIN_X = -655360, WORLD_MIN_Y = -589824, REGION_WORLD = 32768, REGION_BLOCKS = 256;
 
 // Known towns/villages (datapack-verified where possible) for orientation without a map image.
 const LANDMARKS = [
@@ -147,8 +153,61 @@ function s2w(x, y){ return [ x / cam.scale + cam.x, y / cam.scale + cam.y ]; }
 function resize(){ cv.width = wrap.clientWidth; cv.height = wrap.clientHeight; draw(); }
 window.addEventListener('resize', resize);
 
+// Parse one .l2j region into a 256x256 representative-height/type grid (mirrors Region.load).
+function parseRegion(buf){
+	const dv = new DataView(buf); let pos = 0;
+	const heights = new Int16Array(256 * 256); const types = new Uint8Array(256 * 256);
+	for (let i = 0; i < 65536; i++){
+		const type = dv.getUint8(pos); pos += 1;
+		if (type === 0){ heights[i] = dv.getInt16(pos, true); types[i] = 0; pos += 2; }
+		else if (type === 1){ heights[i] = dv.getInt16(pos, true) >> 1; types[i] = 1; pos += 128; }
+		else if (type === 2){ types[i] = 2; let h = 0, got = false;
+			for (let c = 0; c < 64; c++){ const n = dv.getUint8(pos); pos += 1; if (!got && n > 0){ h = dv.getInt16(pos, true) >> 1; got = true; } pos += n * 2; }
+			heights[i] = h; }
+		else throw new Error('bad block type ' + type);
+	}
+	return { heights, types };
+}
+// Render a parsed region to a 256x256 canvas (height relief + structure tint).
+function renderRegion(p){
+	const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+	const img = c.getContext('2d').createImageData(256, 256);
+	for (let i = 0; i < 65536; i++){
+		const bx = i >> 8, by = i & 255; // bx -> worldX, by -> worldY
+		let v = Math.round((p.heights[i] + 4000) / 6000 * 200) + 40; v = v < 20 ? 20 : v > 255 ? 255 : v;
+		let r = v, g = v, b = v; const t = p.types[i];
+		if (t === 1){ g = Math.min(255, v + 12); } else if (t === 2){ b = Math.min(255, v + 30); g = Math.min(255, v + 8); }
+		const idx = (by * 256 + bx) * 4; img.data[idx] = r; img.data[idx + 1] = g; img.data[idx + 2] = b; img.data[idx + 3] = 255;
+	}
+	c.getContext('2d').putImageData(img, 0, 0); return c;
+}
+document.getElementById('loadGeo').onclick = () => document.getElementById('geoFile').click();
+document.getElementById('geoFile').onchange = async e => {
+	const files = [...e.target.files].filter(f => /(\d+)_(\d+)\.l2j$/i.test(f.name));
+	if (!files.length){ alert('No .l2j files found in that folder.'); return; }
+	geoRegions = []; let ok = 0, bad = 0;
+	document.getElementById('coord').textContent = 'parsing geodata...';
+	for (const f of files){
+		const m = f.name.match(/(\d+)_(\d+)\.l2j$/i);
+		try { const buf = await f.arrayBuffer(); geoRegions.push({ rx: +m[1], ry: +m[2], canvas: renderRegion(parseRegion(buf)) }); ok++; }
+		catch (err){ bad++; }
+	}
+	document.getElementById('coord').textContent = 'geodata: ' + ok + ' regions' + (bad ? ' (' + bad + ' failed)' : '');
+	draw();
+};
+
 function draw(){
 	ctx.clearRect(0, 0, cv.width, cv.height);
+	// geodata tiles
+	if (geoRegions.length){
+		ctx.imageSmoothingEnabled = true;
+		geoRegions.forEach(g => {
+			const ox = g.rx * REGION_WORLD + WORLD_MIN_X, oy = g.ry * REGION_WORLD + WORLD_MIN_Y;
+			const [sx, sy] = w2s(ox, oy); const [ex, ey] = w2s(ox + REGION_WORLD, oy + REGION_WORLD);
+			if (ex < 0 || ey < 0 || sx > cv.width || sy > cv.height) return;
+			ctx.drawImage(g.canvas, sx, sy, ex - sx, ey - sy);
+		});
+	}
 	// map image
 	if (mapImg){
 		const minX = +bMinX.value, minY = +bMinY.value, maxX = +bMaxX.value, maxY = +bMaxY.value;
