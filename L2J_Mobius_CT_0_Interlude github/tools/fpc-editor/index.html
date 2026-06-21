@@ -353,7 +353,7 @@ function renderImageLayerList(){
 		d.appendChild(eye); d.appendChild(txt); list.appendChild(d);
 	});
 }
-function buildImageCatalog(entries, layoutEntry){
+function buildImageCatalog(entries){
 	const imageEntries = entries.filter(e => isImageName(e.name));
 	const cities = imageEntries.filter(e => isCitiesPath(e.path)).sort((a, b) => imageTitle(a.name).localeCompare(imageTitle(b.name)));
 	const locations = imageEntries.filter(e => isLocationsPath(e.path)).sort((a, b) => imageTitle(a.name).localeCompare(imageTitle(b.name)));
@@ -365,7 +365,6 @@ function buildImageCatalog(entries, layoutEntry){
 		locations,
 		layout: null
 	};
-	if (layoutEntry) imageCatalog.layoutEntry = layoutEntry;
 }
 function findCatalogEntryByLayoutRecord(rec){
 	const all = [imageCatalog.worldMap, ...imageCatalog.cities, ...imageCatalog.locations].filter(Boolean);
@@ -412,7 +411,7 @@ async function loadWorkspace(entries, label){
 		}
 	}
 	const layoutE = entries.find(e => e.name.toLowerCase() === 'fpc-map-images.json');
-	buildImageCatalog(entries, layoutE || null);
+	buildImageCatalog(entries);
 	if (layoutE){
 		try { imageCatalog.layout = parseImageLayout(await (await entryFile(layoutE)).text()); }
 		catch (err){ imageCatalog.layout = null; }
@@ -646,30 +645,6 @@ function parseImageLayout(text){
 	const layout = JSON.parse(text);
 	if (!layout || !Array.isArray(layout.images)) throw new Error('Layout must contain an images array.');
 	return layout;
-}
-function applyImageLayout(layout){
-	if (layout.opacity !== undefined) document.getElementById('imgOpacity').value = Math.max(0, Math.min(100, +layout.opacity || 0));
-	const byPath = new Map(mapImages.map(layer => [String(imagePath(layer)).toLowerCase(), layer]));
-	const byName = new Map(mapImages.map(layer => [imageKey(imagePath(layer)), layer]));
-	let matched = 0;
-	layout.images.forEach(rec => {
-		const layer = byPath.get(String(rec.path || rec.name || '').toLowerCase()) || byName.get(imageKey(rec.path || rec.name));
-		if (!layer) return;
-		applyImagePlacement(layer, rec);
-		matched++;
-	});
-	if (matched){ document.getElementById('editImages').checked = true; selectImage(Math.max(0, selectedImage)); }
-	updateImageStatus();
-	document.getElementById('imgStatus').textContent = `Layout loaded: ${matched}/${layout.images.length} image${layout.images.length === 1 ? '' : 's'} matched.`;
-	draw();
-}
-function saveImageLayout(){
-	if (!mapImages.length){ alert('Load and position at least one map image first.'); return; }
-	const blob = new Blob([JSON.stringify(makeImageLayout(), null, 2) + '\n'], { type: 'application/json' });
-	const a = document.createElement('a');
-	a.href = URL.createObjectURL(blob);
-	a.download = 'fpc-map-images.json';
-	a.click();
 }
 function loadMapImageFile(file, placement){
 	return new Promise(resolve => {
