@@ -379,7 +379,9 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			if (npc != null)
 			{
 				// Give the bot its own procedurally generated identity and broadcast the new look.
-				final FakePlayerAppearance look = FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, population.race);
+				// Only dwarves craft, so a crafter population is locked to the Dwarven race.
+					final boolean isCrafter = (population.storeType != null) && (population.storeType.equalsIgnoreCase("CRAFT") || population.storeType.equalsIgnoreCase("MANUFACTURE"));
+					final FakePlayerAppearance look = FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, isCrafter ? Race.DWARF : population.race, isCrafter);
 				if (population.storeType != null)
 				{
 					final String kind = population.storeType.toUpperCase();

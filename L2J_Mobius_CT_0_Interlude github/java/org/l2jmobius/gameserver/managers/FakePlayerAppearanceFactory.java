@@ -191,7 +191,20 @@ public class FakePlayerAppearanceFactory
 	 */
 	public static FakePlayerAppearance generate(int minLevel, int maxLevel, Race dominantRace)
 	{
-		final Race race = (dominantRace != null) && (Rnd.get(100) < 82) ? dominantRace : RACE_POOL[Rnd.get(RACE_POOL.length)];
+		return generate(minLevel, maxLevel, dominantRace, false);
+	}
+
+	/**
+	 * Generates a fresh appearance, optionally biased toward (or locked to) a given race.
+	 * @param minLevel lowest level to roll
+	 * @param maxLevel highest level to roll
+	 * @param dominantRace if not {@code null}, bots will be this race (biased, or guaranteed if forced)
+	 * @param forceRace {@code true} to make every bot {@code dominantRace} (e.g. dwarf-only crafters)
+	 * @return a populated {@link FakePlayerAppearance}
+	 */
+	public static FakePlayerAppearance generate(int minLevel, int maxLevel, Race dominantRace, boolean forceRace)
+	{
+		final Race race = (dominantRace != null) && (forceRace || (Rnd.get(100) < 82)) ? dominantRace : RACE_POOL[Rnd.get(RACE_POOL.length)];
 		final boolean female = (race != Race.ORC) && (race != Race.DWARF) ? Rnd.nextBoolean() : Rnd.get(100) < 30; // orcs/dwarves skew male
 		final int classId = classForRace(race)[Rnd.get(classForRace(race).length)];
 		final PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
