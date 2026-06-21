@@ -45,6 +45,7 @@
 			<button id="saveXml">Save XML</button>
 			<button id="loadImg" class="sec">Map image</button>
 			<button id="addBtn">+ Population</button>
+			<label style="margin:0;display:flex;align-items:center;gap:4px;color:#cfd2da"><input id="showMarks" type="checkbox" checked style="width:auto" />landmarks</label>
 			<input id="xmlFile" type="file" accept=".xml" hidden />
 			<input id="imgFile" type="file" accept="image/*" hidden />
 		</div>
@@ -111,6 +112,25 @@ let selected = -1;
 let mapImg = null;
 const cam = { x: -135000, y: -135000, scale: 0.0035 }; // world coord at top-left, px per world unit
 
+// Known towns/villages (datapack-verified where possible) for orientation without a map image.
+const LANDMARKS = [
+	{ n: 'Talking Island', x: -83990, y: 243336 },
+	{ n: 'Gludin', x: -83520, y: 150560 },
+	{ n: 'Gludio', x: -14288, y: 122752 },
+	{ n: 'Dion', x: 15670, y: 142980 },
+	{ n: 'Giran', x: 83400, y: 147600 },
+	{ n: 'Oren', x: 82200, y: 53500 },
+	{ n: 'Aden', x: 146680, y: 25800 },
+	{ n: 'Heine', x: 111360, y: 220890 },
+	{ n: 'Goddard', x: 147300, y: -56570 },
+	{ n: 'Rune', x: 43800, y: -47700 },
+	{ n: 'Schuttgart', x: 87386, y: -143246 },
+	{ n: 'Elven Village', x: 46926, y: 51511 },
+	{ n: 'Dark Elf Village', x: 12501, y: 16768 },
+	{ n: 'Dwarven Village', x: 115072, y: -178176 },
+	{ n: 'Orc Village', x: -44316, y: -113136 }
+];
+
 // ---- colors ----
 function popColor(p){
 	if (p.store) return '#e8c24a';
@@ -141,6 +161,16 @@ function draw(){
 	const [w0x, w0y] = s2w(0, 0); const [w1x, w1y] = s2w(cv.width, cv.height);
 	for (let gx = Math.floor(w0x / step) * step; gx < w1x; gx += step){ const [sx] = w2s(gx, 0); ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, cv.height); ctx.stroke(); ctx.fillText(gx, sx + 2, 10); }
 	for (let gy = Math.floor(w0y / step) * step; gy < w1y; gy += step){ const [, sy] = w2s(0, gy); ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(cv.width, sy); ctx.stroke(); ctx.fillText(gy, 2, sy - 2); }
+	// landmarks (towns) for orientation
+	if (document.getElementById('showMarks').checked){
+		LANDMARKS.forEach(m => {
+			const [mx, my] = w2s(m.x, m.y);
+			if (mx < -40 || my < -10 || mx > cv.width + 40 || my > cv.height + 10) return;
+			ctx.fillStyle = '#d8a0ff'; ctx.strokeStyle = '#241a2e';
+			ctx.beginPath(); ctx.moveTo(mx, my - 6); ctx.lineTo(mx + 6, my); ctx.lineTo(mx, my + 6); ctx.lineTo(mx - 6, my); ctx.closePath(); ctx.fill(); ctx.stroke();
+			ctx.fillStyle = '#d8a0ff'; ctx.font = '11px sans-serif'; ctx.fillText(m.n, mx + 8, my + 4);
+		});
+	}
 	// populations
 	pops.forEach((p, i) => {
 		const [cx, cy] = w2s(p.x, p.y); const r = Math.max(3, (p.radius || 200) * cam.scale);
@@ -216,6 +246,7 @@ document.getElementById('xmlFile').onchange = e => { const f = e.target.files[0]
 document.getElementById('loadImg').onclick = () => document.getElementById('imgFile').click();
 document.getElementById('imgFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const img = new Image(); img.onload = () => { mapImg = img; draw(); }; img.src = URL.createObjectURL(f); };
 ['bMinX','bMinY','bMaxX','bMaxY'].forEach(id => document.getElementById(id).addEventListener('input', draw));
+document.getElementById('showMarks').addEventListener('change', draw);
 
 function parseXml(text){
 	const doc = new DOMParser().parseFromString(text, 'application/xml');

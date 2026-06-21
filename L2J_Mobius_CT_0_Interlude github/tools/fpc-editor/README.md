@@ -10,7 +10,11 @@ Double-click `index.html` (or right-click → Open with → your browser).
 1. **Load XML** — pick your `FakePlayerBehavior.xml`. All `<population>` groups appear as
    circles on the map (circle = anchor + radius). Profiles, assigns and the default are
    preserved untouched.
-2. *(optional)* **Map image** — load a Lineage 2 world-map image as a background, then open
+2. **Landmarks** — towns and villages (Giran, Aden, Dion, the starting villages…) are drawn as
+   purple diamonds at their real coordinates, so you can orient and place bots relative to them
+   **without needing a map image at all**. Toggle them with the *landmarks* checkbox.
+3. *(optional)* **Map image** — the server files do **not** contain a world map (it lives in the L2
+   client), so there's nothing to auto-load. If you grab a community L2 world-map image, load it as a background, then open
    **Map calibration** and nudge the `minX/minY/maxX/maxY` world bounds until landmarks line
    up with the population circles. (Only X/Y matter — with geodata loaded the server snaps Z
    to the ground.)
