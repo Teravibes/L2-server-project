@@ -148,29 +148,24 @@ public class FakePlayerChatManager implements IXmlReader
 		
 		if (text.contains("can you see me"))
 		{
-			final Spawn spawn = SpawnTable.getInstance().getAnySpawn(FakePlayerData.getInstance().getNpcIdByName(fpcName));
-			if (spawn != null)
+			if (bot != null)
 			{
-				final Npc npc = spawn.getLastSpawn();
-				if (npc != null)
+				if (bot.calculateDistance2D(player) < 3000)
 				{
-					if (npc.calculateDistance2D(player) < 3000)
+					if (GeoEngine.getInstance().canSeeTarget(bot, player) && !player.isInvisible())
 					{
-						if (GeoEngine.getInstance().canSeeTarget(npc, player) && !player.isInvisible())
-						{
-							sendChat(player, fpcName, Rnd.nextBoolean() ? "i am not blind" : Rnd.nextBoolean() ? "of course i can" : "yes");
-						}
-						else
-						{
-							sendChat(player, fpcName, Rnd.nextBoolean() ? "i know you are around" : Rnd.nextBoolean() ? "not at the moment :P" : "no, where are you?");
-						}
+						sendChat(player, fpcName, Rnd.nextBoolean() ? "i am not blind" : Rnd.nextBoolean() ? "of course i can" : "yes");
 					}
 					else
 					{
-						sendChat(player, fpcName, Rnd.nextBoolean() ? "nope, can't see you" : Rnd.nextBoolean() ? "nope" : "no");
+						sendChat(player, fpcName, Rnd.nextBoolean() ? "i know you are around" : Rnd.nextBoolean() ? "not at the moment :P" : "no, where are you?");
 					}
-					return;
 				}
+				else
+				{
+					sendChat(player, fpcName, Rnd.nextBoolean() ? "nope, can't see you" : Rnd.nextBoolean() ? "nope" : "no");
+				}
+				return;
 			}
 		}
 		
@@ -445,15 +440,18 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return null;
 		}
-		final int npcId = FakePlayerData.getInstance().getNpcIdByName(name);
-		if (npcId > 0)
+		// Template fake players are the only ones registered in FakePlayerData. Guard with getProperName
+		// first: getNpcIdByName unboxes a null Integer (NPE) for unknown/generated names.
+		final String proper = FakePlayerData.getInstance().getProperName(name);
+		if (proper != null)
 		{
-			final Spawn spawn = SpawnTable.getInstance().getAnySpawn(npcId);
+			final Spawn spawn = SpawnTable.getInstance().getAnySpawn(FakePlayerData.getInstance().getNpcIdByName(proper));
 			if ((spawn != null) && (spawn.getLastSpawn() != null))
 			{
 				return spawn.getLastSpawn();
 			}
 		}
+		// Procedurally generated bots: their names are not in FakePlayerData, so scan the live world.
 		for (WorldObject object : World.getInstance().getVisibleObjects())
 		{
 			if (object.isNpc())
