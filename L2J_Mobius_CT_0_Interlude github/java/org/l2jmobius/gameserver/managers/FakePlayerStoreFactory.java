@@ -262,6 +262,93 @@ public class FakePlayerStoreFactory
 		return BULK.isEmpty() ? null : BULK.get(Rnd.get(BULK.size()));
 	}
 
+	/**
+	 * Best-effort resolve of a free-text item phrase from a trade-chat ad (e.g. "soulshots", "iron ore")
+	 * to a real tradeable item, so a responding bot can offer/want the actual thing.
+	 * @param phrase the words after WTS/WTB
+	 * @return the closest matching item, or {@code null} if nothing reasonable matched
+	 */
+	public static ItemTemplate findItemByName(String phrase)
+	{
+		if (phrase == null)
+		{
+			return null;
+		}
+		final String p = phrase.toLowerCase().trim();
+		if (p.length() < 3)
+		{
+			return null;
+		}
+		ItemTemplate best = null;
+		int bestScore = Integer.MAX_VALUE;
+		for (ItemTemplate item : ItemData.getInstance().getAllItems())
+		{
+			if ((item == null) || (item.getId() == ADENA_ID) || (item.getId() == ANCIENT_ADENA_ID))
+			{
+				continue;
+			}
+			final int price = item.getReferencePrice();
+			if ((price <= 0) || (price > 200_000_000) || !item.isTradeable() || !item.isSellable() || item.isQuestItem())
+			{
+				continue;
+			}
+			final String name = item.getName();
+			if ((name == null) || name.isEmpty())
+			{
+				continue;
+			}
+			final String n = name.toLowerCase();
+			if (n.contains(p) || p.contains(n))
+			{
+				int score = Math.abs(n.length() - p.length());
+				if (n.startsWith(p))
+				{
+					score -= 5;
+				}
+				if (score < bestScore)
+				{
+					bestScore = score;
+					best = item;
+				}
+			}
+		}
+		return best;
+	}
+
+	/**
+	 * One-line stock for a bot that is SELLING a specific item to the player (a WTB responder).
+	 * @param itemId the item to sell
+	 * @return a one-entry sell stock, or empty if the item is unknown
+	 */
+	public static List<FakePlayerStoreItem> dealSellStock(int itemId)
+	{
+		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
+		if (item != null)
+		{
+			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
+			stock.add(line(item, 0, count, priced(item.getReferencePrice(), 1.0, 1.6)));
+		}
+		return stock;
+	}
+
+	/**
+	 * One-line stock for a bot that is BUYING a specific item from the player (a WTS responder).
+	 * @param itemId the item to buy
+	 * @return a one-entry buy stock, or empty if the item is unknown
+	 */
+	public static List<FakePlayerStoreItem> dealBuyStock(int itemId)
+	{
+		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
+		if (item != null)
+		{
+			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
+			stock.add(line(item, 0, count, priced(item.getReferencePrice(), 0.5, 0.85)));
+		}
+		return stock;
+	}
+
 	/** A believable stack size for a stackable good, scaled inversely to its unit value. */
 	private static int bulkAmount(int referencePrice)
 	{

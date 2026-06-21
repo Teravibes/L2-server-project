@@ -69,7 +69,19 @@ def chat():
     message = request.get_data(as_text=True)
     reply = ""
     try:
-        if mode == "WHISPER":
+        if mode == "OFFER":
+            # The bot is proactively PMing the player about their trade post to set up a real deal.
+            player = request.headers.get("X-Player", "someone")
+            deal = request.headers.get("X-Deal", "").strip()
+            hist = conversations[(player, fpc)]
+            system = whisper_persona(fpc) + loc_note
+            prompt = (f'{player} just posted in trade chat: "{message}". '
+                      f"You want to {deal}. Send them ONE short, casual whisper opening the deal and "
+                      "telling them where to meet you. Don't add any meet tag.")
+            reply = call_llm(system, [{"role": "user", "content": prompt}], 70)
+            # Seed the private memory so the follow-up conversation remembers this deal.
+            hist.append({"role": "assistant", "content": reply})
+        elif mode == "WHISPER":
             player = request.headers.get("X-Player", "someone")
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})

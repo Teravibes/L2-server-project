@@ -36,7 +36,10 @@ import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.Player;
+import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
+import org.l2jmobius.gameserver.model.item.ItemTemplate;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
@@ -237,8 +240,78 @@ public class FakePlayerChatManager implements IXmlReader
 	{
 		if (SOCIAL_ENABLED && (speaker != null) && (text != null) && !text.isEmpty())
 		{
+			// A WTS/WTB ad may make one relevant bot PM the player to set up a real trade; otherwise the
+			// usual nearby-bot trade banter applies.
+			if (tryTradeResponder(speaker, text))
+			{
+				return;
+			}
 			reactToChat(speaker, speaker.getName(), text, false, "TRADE");
 		}
+	}
+
+	// Matches a trade ad and captures the direction (sell/buy) plus the item phrase after it.
+	private static final Pattern TRADE_AD = Pattern.compile("(wts|selling|s>|wtb|buying|b>)\\s*(.*)", Pattern.CASE_INSENSITIVE);
+
+	/**
+	 * If the player posted a WTS/WTB for a recognisable item, arms a nearby roaming bot as the
+	 * counterparty: it PMs the player, walks to a meet spot, and opens a real store on arrival.
+	 * @return {@code true} if a responder was set up (so we skip the generic banter)
+	 */
+	private boolean tryTradeResponder(Player player, String text)
+	{
+		if (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE)
+		{
+			return false;
+		}
+		final Matcher matcher = TRADE_AD.matcher(text);
+		if (!matcher.find())
+		{
+			return false;
+		}
+		final String token = matcher.group(1).toLowerCase();
+		final boolean playerSelling = token.startsWith("wts") || token.startsWith("selling") || token.equals("s>");
+		// Strip quantities/punctuation from the item phrase.
+		final String phrase = matcher.group(2).replaceAll("[0-9]+(k|kk)?", " ").replaceAll("[^a-zA-Z ]", " ").trim();
+		final ItemTemplate item = FakePlayerStoreFactory.findItemByName(phrase);
+		if (item == null)
+		{
+			return false;
+		}
+
+		final Npc bot = FakePlayerBehaviorManager.getInstance().pickTradeResponder(player);
+		if (bot == null)
+		{
+			return false;
+		}
+
+		// Player selling -> bot buys it; player buying -> bot sells it.
+		final int storeType = playerSelling ? PrivateStoreType.BUY.getId() : PrivateStoreType.SELL.getId();
+		final List<FakePlayerStoreItem> stock = playerSelling ? FakePlayerStoreFactory.dealBuyStock(item.getId()) : FakePlayerStoreFactory.dealSellStock(item.getId());
+		if (stock.isEmpty())
+		{
+			return false;
+		}
+		final String title = FakePlayerStoreFactory.title(playerSelling ? "BUY" : "SELL", stock);
+		FakePlayerBehaviorManager.getInstance().setupDeal(bot, storeType, stock, title);
+
+		// Send it walking to its nearest gatekeeper; if it can't, drop the deal and let banter handle it.
+		if (!FakePlayerBehaviorManager.getInstance().requestMeet(bot, "gatekeeper", player))
+		{
+			FakePlayerBehaviorManager.getInstance().setupDeal(bot, 0, null, null);
+			return false;
+		}
+
+		final int unit = stock.get(0).getPrice();
+		final String deal = (playerSelling ? "buy their " : "sell ") + item.getName() + " at " + unit + " adena each; tell them to meet you at the " + nearestLocation(bot).replace("in ", "").replace("near ", "") + " gatekeeper";
+		final String fpcName = bot.getName();
+		ThreadPool.schedule(() ->
+		{
+			final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal);
+			sendChat(player, fpcName, (line == null) || line.isEmpty() ? ("saw ur post, lets deal - meet me at the " + nearestLocation(bot).replace("in ", "").replace("near ", "") + " gatekeeper") : line);
+		}, Rnd.get(MIN_DELAY, MAX_DELAY));
+		MESSAGES_THIS_MINUTE.incrementAndGet();
+		return true;
 	}
 	
 	// Called from ChatGeneral when a real player uses normal (say) chat.
@@ -376,15 +449,15 @@ public class FakePlayerChatManager implements IXmlReader
 	
 	private String askBrain(String playerName, String fpcName, String message, String location)
 	{
-		return callBridge(fpcName, "WHISPER", playerName, "", message, location);
+		return callBridge(fpcName, "WHISPER", playerName, "", message, location, "");
 	}
 
 	private String askBrainPublic(String fpcName, String speakerName, String overheard, String mode, String location)
 	{
-		return callBridge(fpcName, mode, "", speakerName, overheard, location);
+		return callBridge(fpcName, mode, "", speakerName, overheard, location, "");
 	}
 
-	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location)
+	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location, String deal)
 	{
 		try
 		{
@@ -396,6 +469,7 @@ public class FakePlayerChatManager implements IXmlReader
 				.header("X-Player", playerName) //
 				.header("X-Speaker", speakerName) //
 				.header("X-Location", location == null ? "" : location) //
+				.header("X-Deal", deal == null ? "" : deal) //
 				.header("Content-Type", "text/plain; charset=utf-8") //
 				.POST(HttpRequest.BodyPublishers.ofString(body)) //
 				.build();

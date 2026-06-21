@@ -151,6 +151,10 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 
 - ✅ LLM chat: whisper / say / trade, with silence + reply dedup. Roaming bots are whisper-able by
   their generated name and know their nearest town; seated AFK vendors stay silent.
+- ✅ Trade-ad matchmaking + roaming trade (Phase 2): a WTS/WTB in trade chat can make one relevant
+  same-town bot PM you, walk to its gatekeeper, and open a real one-item store there so you actually
+  buy/sell. Item is resolved from your message text; the deal store tears down when sold out / the
+  meet ends, and the bot resumes roaming.
 - ✅ Procedural identities: hundreds of unique names/races/genders/classes/hair/gear from one template.
 - ✅ Town life: idler clusters around NPCs, purposeful VISIT movers, racial villages, Giran market.
 - ✅ Private shops (**functional**): seated SELL/BUY/CRAFT/PACKAGE vendors with item-accurate signs;
@@ -198,8 +202,13 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
   `cancelMeet`), or you go quiet — after ~5 min it whispers "still coming?" and leaves if no reply within
   3 min (any whisper resets the timer via `noteMeetInteraction`). Same-town only — long cross-town
   pathfinding is unreliable.
-  **Next (Phase 2):** let a roaming seller sit + open a real private store on demand so you can
-  actually trade with one you tracked down — reuses the shop system (arrival could be the trigger).
+- **Trade-ad → roaming trade (Phase 2, done):** `overheardTradeChat` runs `tryTradeResponder` first —
+  it parses WTS/WTB + the item phrase (`FakePlayerStoreFactory.findItemByName`), picks a nearby roaming
+  bot (`pickTradeResponder`), arms it with a one-item BUY/SELL deal (`setupDeal` + `dealBuy/SellStock`),
+  sends it to its gatekeeper (`requestMeet`) and PMs the player (brain `OFFER` mode). On arrival the FSM
+  activates the store (it becomes a clickable vendor); selling out (or the meet ending) tears the store
+  down via `endMeet` and the bot roams again. Reuses all the existing store packets/transactions.
+  Cross-town and exact-item matching are best-effort; relies on a roaming bot being near the player.
 
 ## 8. Suggested next steps
 

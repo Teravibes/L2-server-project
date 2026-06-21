@@ -154,6 +154,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		boolean summonNudged; // already asked "still coming?" for this window
 		Player summonPlayer;
 
+		// A trade arranged from chat: the store to open when the bot reaches the meet spot.
+		int pendingStoreType; // PrivateStoreType id to activate on arrival, or 0 for a plain meet
+		List<FakePlayerStoreItem> pendingStock;
+		String pendingTitle;
+		boolean dealActive; // a deal store is currently open on this bot
+
 		BotState(Profile profile, Location home, int radius, Population population)
 		{
 			this.profile = profile;
@@ -616,14 +622,10 @@ public class FakePlayerBehaviorManager implements IXmlReader
 
 	private void process(Npc npc, BotState state, long now)
 	{
-		// Private-store vendors are seated and never move.
 		final FakePlayerAppearance look = npc.getFakePlayerAppearance();
-		if ((look != null) && (look.getPrivateStoreType() != 0))
-		{
-			return;
-		}
 
-		// "Come meet me" override takes priority over the normal routine while it is active.
+		// "Come meet me" override takes priority over the normal routine while it is active. (Checked
+		// before the vendor short-circuit so a bot running a temporary deal store still runs this loop.)
 		if (state.summonTarget != null)
 		{
 			final Player who = state.summonPlayer;
@@ -633,6 +635,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			}
 			else if (state.summonArrived)
 			{
+				// A deal store that has sold out / been satisfied closes itself: end the meet and resume.
+				if (state.dealActive && (look != null) && (look.getPrivateStoreType() == 0))
+				{
+					endMeet(npc, state);
+					return;
+				}
 				// Waiting at the spot (pinned). Nudge once after a while, then leave if still no answer.
 				if (!state.summonNudged && ((now - state.waitingSince) > MEET_NUDGE_AFTER))
 				{
@@ -670,9 +678,21 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				state.phase = Phase.IDLE;
 				npc.disableCoreAI(true);
 				npc.setImmobilized(true);
+				// If a trade was arranged, open the real store now so the player can buy/sell.
+				if ((state.pendingStoreType != 0) && (look != null))
+				{
+					look.setStoreItems(state.pendingStock);
+					look.setStore(state.pendingStoreType, state.pendingTitle);
+					state.dealActive = true;
+					state.pendingStoreType = 0;
+					state.pendingStock = null;
+					state.pendingTitle = null;
+					npc.updateAbnormalEffect(); // show the store sign
+				}
 				if (who != null)
 				{
-					FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), Rnd.nextBoolean() ? "im here" : "here, where are u");
+					final String line = state.dealActive ? (Rnd.nextBoolean() ? "im here, check my store" : "here, open my shop") : (Rnd.nextBoolean() ? "im here" : "here, where are u");
+					FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), line);
 				}
 				return;
 			}
@@ -696,6 +716,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				}
 				return;
 			}
+		}
+
+		// Seated private-store vendors are otherwise stationary (static vendors, or a bot mid-deal whose
+		// meet just ended this tick has already cleared its store).
+		if ((look != null) && (look.getPrivateStoreType() != 0))
+		{
+			return;
 		}
 
 		// Let the combat AI run uninterrupted; resume wandering shortly after the fight.
@@ -872,15 +899,85 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		}
 	}
 
-	/** Clears a meetup and un-pins the bot so its normal routine takes back over. */
+	/** Clears a meetup (and any deal store it opened) and un-pins the bot so its routine takes back over. */
 	private void endMeet(Npc bot, BotState state)
 	{
 		state.summonTarget = null;
 		state.summonPlayer = null;
 		state.summonArrived = false;
 		state.summonNudged = false;
+		state.pendingStoreType = 0;
+		state.pendingStock = null;
+		state.pendingTitle = null;
+		// Tear down a temporary deal store so the bot becomes a normal roamer again.
+		final FakePlayerAppearance look = bot.getFakePlayerAppearance();
+		if (state.dealActive && (look != null))
+		{
+			look.setStore(0, "");
+			look.setStoreItems(null);
+			bot.updateAbnormalEffect();
+		}
+		state.dealActive = false;
 		bot.setImmobilized(false);
 		bot.disableCoreAI(false);
+	}
+
+	/**
+	 * Picks a roaming bot near a player to play the counterparty for a trade-chat ad: must be behavior
+	 * controlled, not already a vendor / in a meet / holding a deal, and within the same town.
+	 * @return a suitable bot, or {@code null} if none is around
+	 */
+	public Npc pickTradeResponder(Player player)
+	{
+		if (player == null)
+		{
+			return null;
+		}
+		final List<Npc> candidates = new ArrayList<>();
+		World.getInstance().forEachVisibleObjectInRange(player, Npc.class, SUMMON_SEARCH_RANGE, npc ->
+		{
+			if (!npc.isFakePlayer())
+			{
+				return;
+			}
+			final BotState state = _bots.get(npc.getObjectId());
+			final FakePlayerAppearance look = npc.getFakePlayerAppearance();
+			if ((state == null) || (state.summonTarget != null) || (state.pendingStoreType != 0) || state.dealActive)
+			{
+				return;
+			}
+			if ((look != null) && (look.getPrivateStoreType() != 0))
+			{
+				return; // already a vendor
+			}
+			candidates.add(npc);
+		});
+		return candidates.isEmpty() ? null : candidates.get(Rnd.get(candidates.size()));
+	}
+
+	/**
+	 * Arms a bot with a store to open when it next reaches a meet spot (set up by the trade-ad responder).
+	 * @param bot the responder bot
+	 * @param storeType a {@code PrivateStoreType} id (SELL or BUY)
+	 * @param stock the one-item deal stock
+	 * @param title the store sign
+	 * @return {@code true} if armed
+	 */
+	public boolean setupDeal(Npc bot, int storeType, List<FakePlayerStoreItem> stock, String title)
+	{
+		if (bot == null)
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		if (state == null)
+		{
+			return false;
+		}
+		state.pendingStoreType = storeType;
+		state.pendingStock = stock;
+		state.pendingTitle = title;
+		return true;
 	}
 
 	/** Resolves a meet-spot keyword to the nearest matching town NPC's location, searching near the bot. */
