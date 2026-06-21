@@ -306,12 +306,18 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		{
 			for (Population population : _populations)
 			{
+				int groupDeployed = 0;
 				for (int i = 0; i < population.count; i++)
 				{
 					if (deployOne(population))
 					{
-						deployed++;
+						groupDeployed++;
 					}
+				}
+				deployed += groupDeployed;
+				if (groupDeployed < population.count)
+				{
+					LOGGER.warning(getClass().getSimpleName() + ": Population '" + population.name + "' deployed " + groupDeployed + "/" + population.count + " (bad anchor/geodata?).");
 				}
 			}
 		}
@@ -328,16 +334,17 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private boolean deployOne(Population population)
 	{
 		final Profile profile = population.profileName == null ? null : _profiles.get(population.profileName);
-		final double angle = Rnd.nextDouble() * 2 * Math.PI;
-		final int distance = Rnd.get(0, population.radius);
-		final int x = population.center.getX() + (int) (Math.cos(angle) * distance);
-		final int y = population.center.getY() + (int) (Math.sin(angle) * distance);
-		final Location loc = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
-		// Snap to the ground height. With geodata loaded this corrects open-field Z automatically;
-		// without geodata it is a no-op (so field bots need geodata to place reliably outdoors).
-		final int groundZ = GeoEngine.getInstance().getHeight(loc.getX(), loc.getY(), loc.getZ());
 		try
 		{
+			final double angle = Rnd.nextDouble() * 2 * Math.PI;
+			final int distance = Rnd.get(0, population.radius);
+			final int x = population.center.getX() + (int) (Math.cos(angle) * distance);
+			final int y = population.center.getY() + (int) (Math.sin(angle) * distance);
+			final Location loc = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
+			// Snap to the ground height. With geodata loaded this corrects open-field Z automatically;
+			// without geodata it is a no-op (so field bots need geodata to place reliably outdoors).
+			final int groundZ = GeoEngine.getInstance().getHeight(loc.getX(), loc.getY(), loc.getZ());
+
 			final Spawn spawn = new Spawn(_baseId);
 			spawn.setXYZ(loc.getX(), loc.getY(), groundZ);
 			spawn.setHeading(Rnd.get(65536));
