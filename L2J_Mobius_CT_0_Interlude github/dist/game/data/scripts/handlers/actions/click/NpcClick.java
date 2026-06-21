@@ -25,10 +25,12 @@ import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.PlayerConfig;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.handler.IActionClickHandler;
+import org.l2jmobius.gameserver.managers.FakePlayerStoreManager;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.enums.creature.InstanceType;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.events.EventDispatcher;
 import org.l2jmobius.gameserver.model.events.EventType;
 import org.l2jmobius.gameserver.model.events.holders.actor.npc.OnNpcFirstTalk;
@@ -99,7 +101,19 @@ public class NpcClick implements IActionClickHandler
 					{
 						player.getAI().setIntention(Intention.ACTIVE);
 					}
-					
+
+					// A fake-player vendor opens its private store instead of a chat window.
+					if (npc.isFakePlayer())
+					{
+						final FakePlayerAppearance look = npc.getFakePlayerAppearance();
+						if ((look != null) && (look.getPrivateStoreType() != 0))
+						{
+							player.sendPacket(new MoveToPawn(player, npc, 100));
+							FakePlayerStoreManager.openStore(player, npc);
+							return true;
+						}
+					}
+
 					// Turn NPC to the player.
 					player.sendPacket(new MoveToPawn(player, npc, 100));
 					if (npc.hasRandomAnimation())

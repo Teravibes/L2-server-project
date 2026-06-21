@@ -152,7 +152,11 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 - ✅ LLM chat: whisper / say / trade, with silence + reply dedup.
 - ✅ Procedural identities: hundreds of unique names/races/genders/classes/hair/gear from one template.
 - ✅ Town life: idler clusters around NPCs, purposeful VISIT movers, racial villages, Giran market.
-- ✅ Private shops (**visual**): seated SELL/BUY/CRAFT/PACKAGE vendors with title signs; now pinned.
+- ✅ Private shops (**functional**): seated SELL/BUY/CRAFT/PACKAGE vendors with item-accurate signs;
+  click to open a real store window and actually buy/sell (adena moves, items transfer, stock
+  decrements, vendor restocks when empty). Stock is procedurally generated from the datapack item
+  table — realistic reference-price-based pricing, level-gated grades with weighted scarcity (S-grade
+  stays rare), and value-scaled bulk amounts. CRAFT vendors are deployed as finished-goods sellers.
 - ✅ Field hunters: 26 level-bracketed zones, monster-seeking FARM behavior, respawn.
 - ✅ Geodata-aware placement (Z-snap) and reduced wall-running.
 - ✅ Visual editor with in-browser geodata map, landmarks, polygon zones, visibility, opacity.
@@ -161,9 +165,12 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 
 - **Field hunting feel**: bots can still cluster / move sluggishly in some zones — pathfinding +
   combat tuning is a rabbit hole; deprioritized in favor of town life.
-- **Shops are visual only**: clicking a vendor does **not** open a real buy/sell window. Functional
-  stores need real store item lists (`PrivateStoreListSell`) + trade handling, and these are NPCs not
-  `Player` objects — a meaty Phase 2.
+- **Shops** (Phase 2 done): clicking a vendor opens a working store window and trades for real. Custom
+  NPC-side packets (`FakePlayerStoreList{Sell,Buy}`) plus interception in `NpcClick` and
+  `RequestPrivateStore{Buy,Sell}` route around the `Player`-only store path. CRAFT is currently a
+  finished-goods seller, not a true manufacture/recipe flow. Restock-on-empty is immediate (shops never
+  run dry — intentional for a solo world; revisit if you want them to occasionally close). Needs an
+  ant rebuild + in-game test (untestable in this dev env).
 - **Map image**: must be supplied by the user (not in server files); calibration is bounds-based
   (a friendlier 2-click calibration was discussed but not built).
 - **Whisper to generated bots**: trade/say social uses the NPC instance and works; whispering a
@@ -188,6 +195,11 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 | Chat handlers | `dist/game/data/scripts/handlers/chat/channels/Chat{Trade,General,Whisper}.java` |
 | Behavior manager | `java/.../gameserver/managers/FakePlayerBehaviorManager.java` |
 | Appearance factory | `java/.../gameserver/managers/FakePlayerAppearanceFactory.java` |
+| Store content engine | `java/.../gameserver/managers/FakePlayerStoreFactory.java` |
+| Store transactions | `java/.../gameserver/managers/FakePlayerStoreManager.java` |
+| Store stock holder | `java/.../gameserver/model/actor/holders/npc/FakePlayerStoreItem.java` |
+| Store packets | `java/.../gameserver/network/serverpackets/FakePlayerStoreList{Sell,Buy}.java` |
+| Store wiring | `NpcClick.java` (open), `RequestPrivateStore{Buy,Sell}.java` (trade) |
 | Appearance holder | `java/.../gameserver/model/actor/holders/npc/FakePlayerAppearance.java` |
 | Render packet | `java/.../gameserver/network/serverpackets/FakePlayerInfo.java` |
 | NPC integration | `java/.../gameserver/model/actor/Npc.java` |

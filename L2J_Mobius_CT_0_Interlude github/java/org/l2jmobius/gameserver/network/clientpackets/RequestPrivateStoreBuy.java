@@ -29,6 +29,7 @@ import org.l2jmobius.gameserver.config.GeneralConfig;
 import org.l2jmobius.gameserver.config.PlayerConfig;
 import org.l2jmobius.gameserver.config.custom.OfflineTradeConfig;
 import org.l2jmobius.gameserver.data.sql.OfflineTraderTable;
+import org.l2jmobius.gameserver.managers.FakePlayerStoreManager;
 import org.l2jmobius.gameserver.managers.PunishmentManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
@@ -97,7 +98,15 @@ public class RequestPrivateStoreBuy extends ClientPacket
 			player.sendMessage("You are buying items too fast.");
 			return;
 		}
-		
+
+		// Fake-player vendors are NPCs, not Players, so route their purchases to the dedicated manager.
+		final WorldObject storeObject = World.getInstance().findObject(_storePlayerId);
+		if ((storeObject != null) && storeObject.isNpc() && storeObject.asNpc().isFakePlayer())
+		{
+			FakePlayerStoreManager.buy(player, storeObject.asNpc(), _items);
+			return;
+		}
+
 		final WorldObject object = World.getInstance().getPlayer(_storePlayerId);
 		if (object == null)
 		{

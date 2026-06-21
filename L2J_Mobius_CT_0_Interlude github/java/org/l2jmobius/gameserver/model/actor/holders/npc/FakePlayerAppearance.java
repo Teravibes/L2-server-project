@@ -20,6 +20,9 @@
  */
 package org.l2jmobius.gameserver.model.actor.holders.npc;
 
+import java.util.Collections;
+import java.util.List;
+
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 
@@ -64,6 +67,7 @@ public class FakePlayerAppearance
 	private int _privateStoreType = 0; // 0 = none; otherwise a PrivateStoreType id (1 sell, 3 buy...)
 	private String _storeMessage = "";
 	private boolean _sitting = false;
+	private List<FakePlayerStoreItem> _storeItems = Collections.emptyList();
 
 	public String getName()
 	{
@@ -291,6 +295,20 @@ public class FakePlayerAppearance
 		_privateStoreType = storeType;
 		_storeMessage = message == null ? "" : message;
 		_sitting = storeType != 0;
+		return this;
+	}
+
+	/**
+	 * @return the live stock backing this vendor's store (offered items for SELL, wanted items for BUY)
+	 */
+	public List<FakePlayerStoreItem> getStoreItems()
+	{
+		return _storeItems;
+	}
+
+	public FakePlayerAppearance setStoreItems(List<FakePlayerStoreItem> items)
+	{
+		_storeItems = items == null ? Collections.emptyList() : items;
 		return this;
 	}
 }

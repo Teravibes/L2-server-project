@@ -45,6 +45,7 @@ import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 
@@ -381,8 +382,27 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				if (population.storeType != null)
 				{
 					final String kind = population.storeType.toUpperCase();
-					final int storeId = kind.equals("BUY") ? PrivateStoreType.BUY.getId() : kind.equals("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : (kind.equals("CRAFT") || kind.equals("MANUFACTURE")) ? PrivateStoreType.MANUFACTURE.getId() : PrivateStoreType.SELL.getId();
-					look.setStore(storeId, FakePlayerAppearanceFactory.storeTitle(kind));
+					final int level = look.getLevel();
+					final List<FakePlayerStoreItem> stock;
+					final int storeId;
+					if (kind.equals("BUY"))
+					{
+						stock = FakePlayerStoreFactory.generateBuy(level);
+						storeId = PrivateStoreType.BUY.getId();
+					}
+					else if (kind.equals("CRAFT") || kind.equals("MANUFACTURE"))
+					{
+						// Crafters are deployed as finished-goods sellers, so their stalls are buyable too.
+						stock = FakePlayerStoreFactory.generateCraft(level);
+						storeId = PrivateStoreType.SELL.getId();
+					}
+					else
+					{
+						stock = FakePlayerStoreFactory.generateSell(level);
+						storeId = kind.equals("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : PrivateStoreType.SELL.getId();
+					}
+					look.setStoreItems(stock);
+					look.setStore(storeId, FakePlayerStoreFactory.title(kind, stock));
 				}
 				npc.setFakePlayerAppearance(look);
 				if (look.getPrivateStoreType() != 0)

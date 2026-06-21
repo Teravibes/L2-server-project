@@ -25,7 +25,9 @@ import static org.l2jmobius.gameserver.model.actor.Npc.INTERACTION_DISTANCE;
 import org.l2jmobius.gameserver.config.PlayerConfig;
 import org.l2jmobius.gameserver.config.custom.OfflineTradeConfig;
 import org.l2jmobius.gameserver.data.sql.OfflineTraderTable;
+import org.l2jmobius.gameserver.managers.FakePlayerStoreManager;
 import org.l2jmobius.gameserver.model.World;
+import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.network.PacketLogger;
@@ -92,7 +94,15 @@ public class RequestPrivateStoreSell extends ClientPacket
 			player.sendMessage("You are selling items too fast.");
 			return;
 		}
-		
+
+		// Fake-player buy-stores are NPCs, not Players, so route sales to them through the manager.
+		final WorldObject storeObject = World.getInstance().findObject(_storePlayerId);
+		if ((storeObject != null) && storeObject.isNpc() && storeObject.asNpc().isFakePlayer())
+		{
+			FakePlayerStoreManager.sell(player, storeObject.asNpc(), _items);
+			return;
+		}
+
 		final Player object = World.getInstance().getPlayer(_storePlayerId);
 		if (object == null)
 		{

@@ -1,0 +1,399 @@
+/*
+ * Copyright (c) 2013 L2jMobius
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be
+ * included in all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ * WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+ * IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+ */
+package org.l2jmobius.gameserver.managers;
+
+import java.util.ArrayList;
+import java.util.EnumMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Locale;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
+
+import org.l2jmobius.commons.util.Rnd;
+import org.l2jmobius.gameserver.data.xml.ItemData;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
+import org.l2jmobius.gameserver.model.item.ItemTemplate;
+import org.l2jmobius.gameserver.model.item.type.CrystalType;
+import org.l2jmobius.gameserver.model.item.type.EtcItemType;
+import org.l2jmobius.gameserver.model.item.type.ItemType;
+
+/**
+ * Procedurally fills a fake player's private store with believable, obtainable stock.
+ * <p>
+ * Everything is driven by the datapack item table, so prices and grades are the game's own:
+ * <ul>
+ * <li><b>Realistic pricing</b> - each line is {@link ItemTemplate#getReferencePrice()} times a small
+ * markup (sellers ask above, buyers offer below). No hand-tuned price list to maintain.</li>
+ * <li><b>Grade scarcity</b> - equipment is picked by a weighted grade roll (no-grade/D common, S
+ * extremely rare) and additionally capped by the vendor's level, so a low-level town never floods with
+ * S-grade and high grades stay scarce everywhere.</li>
+ * <li><b>Sensible amounts</b> - stackable goods (shots, mats, scrolls) come in bulk sized by their
+ * value (cheap shots in the thousands, costly mats in single digits); equipment comes one at a time.</li>
+ * <li><b>Matching titles</b> - {@link #title(String, List)} builds the sign ("WTS Soulshot: D 8.4k")
+ * straight from the generated stock, so what is advertised is what is actually inside.</li>
+ * </ul>
+ * @author Claude
+ */
+public class FakePlayerStoreFactory
+{
+	// Synthetic, store-local object ids for SELL lines so the client can round-trip a purchase request.
+	// They never address a real world object; the buy handler matches them only within one vendor.
+	private static final AtomicInteger STORE_ITEM_OID = new AtomicInteger(0x60000000);
+
+	// Relative scarcity per grade, indexed by CrystalType ordinal (NONE, D, C, B, A, S).
+	private static final int[] GRADE_WEIGHT =
+	{
+		26, // NONE
+		30, // D
+		22, // C
+		12, // B
+		7, // A
+		3 // S
+	};
+
+	private static volatile boolean _built = false;
+	private static final EnumMap<CrystalType, List<ItemTemplate>> EQUIP = new EnumMap<>(CrystalType.class);
+	private static final List<ItemTemplate> BULK = new ArrayList<>();
+
+	private FakePlayerStoreFactory()
+	{
+	}
+
+	/**
+	 * Builds the item catalog once: equipment bucketed by grade, plus a bulk pool of stackable
+	 * consumables/materials. Only tradeable, sellable, sanely priced items are kept.
+	 */
+	private static void build()
+	{
+		if (_built)
+		{
+			return;
+		}
+		synchronized (FakePlayerStoreFactory.class)
+		{
+			if (_built)
+			{
+				return;
+			}
+			for (CrystalType grade : CrystalType.values())
+			{
+				EQUIP.put(grade, new ArrayList<>());
+			}
+			for (ItemTemplate item : ItemData.getInstance().getAllItems())
+			{
+				if (item == null)
+				{
+					continue;
+				}
+				final String name = item.getName();
+				if ((name == null) || name.isEmpty() || name.equalsIgnoreCase("NULL"))
+				{
+					continue;
+				}
+				final int price = item.getReferencePrice();
+				if ((price <= 0) || (price > 200_000_000))
+				{
+					continue;
+				}
+				if (!item.isTradeable() || !item.isSellable() || item.isQuestItem())
+				{
+					continue;
+				}
+				if (item.isEquipable())
+				{
+					EQUIP.get(item.getCrystalType()).add(item);
+				}
+				else if (item.isStackable() && isBulkType(item))
+				{
+					BULK.add(item);
+				}
+			}
+			_built = true;
+		}
+	}
+
+	/** Keeps the bulk pool to consumables/materials players actually stock up on. */
+	private static boolean isBulkType(ItemTemplate item)
+	{
+		final ItemType type = item.getItemType();
+		if (!(type instanceof EtcItemType))
+		{
+			return false;
+		}
+		switch ((EtcItemType) type)
+		{
+			case NONE: // soulshots / spiritshots and misc tradeable goods
+			case ARROW:
+			case POTION:
+			case ELIXIR:
+			case SCROLL:
+			case SCRL_ENCHANT_WP:
+			case SCRL_ENCHANT_AM:
+			case BLESS_SCRL_ENCHANT_WP:
+			case BLESS_SCRL_ENCHANT_AM:
+			case MATERIAL:
+			{
+				return true;
+			}
+			default:
+			{
+				return false;
+			}
+		}
+	}
+
+	/** Highest grade a vendor of this level is allowed to surface. */
+	private static CrystalType maxGrade(int level)
+	{
+		if (level < 20)
+		{
+			return CrystalType.D;
+		}
+		if (level < 40)
+		{
+			return CrystalType.C;
+		}
+		if (level < 52)
+		{
+			return CrystalType.B;
+		}
+		if (level < 61)
+		{
+			return CrystalType.A;
+		}
+		return CrystalType.S;
+	}
+
+	/**
+	 * Picks one equipment item: a weighted grade roll (capped by level) then a random item of that
+	 * grade, stepping down to a lower grade if the rolled bucket happens to be empty.
+	 */
+	private static ItemTemplate pickEquip(int level)
+	{
+		final int maxOrdinal = maxGrade(level).ordinal();
+		int total = 0;
+		for (int i = 0; i <= maxOrdinal; i++)
+		{
+			total += GRADE_WEIGHT[i];
+		}
+		if (total <= 0)
+		{
+			return null;
+		}
+		for (int attempt = 0; attempt < 6; attempt++)
+		{
+			int roll = Rnd.get(total);
+			int chosen = 0;
+			for (int i = 0; i <= maxOrdinal; i++)
+			{
+				roll -= GRADE_WEIGHT[i];
+				if (roll < 0)
+				{
+					chosen = i;
+					break;
+				}
+			}
+			for (int i = chosen; i >= 0; i--)
+			{
+				final List<ItemTemplate> bucket = EQUIP.get(CrystalType.values()[i]);
+				if (!bucket.isEmpty())
+				{
+					return bucket.get(Rnd.get(bucket.size()));
+				}
+			}
+		}
+		return null;
+	}
+
+	private static ItemTemplate pickBulk()
+	{
+		return BULK.isEmpty() ? null : BULK.get(Rnd.get(BULK.size()));
+	}
+
+	/** A believable stack size for a stackable good, scaled inversely to its unit value. */
+	private static int bulkAmount(int referencePrice)
+	{
+		if (referencePrice <= 10)
+		{
+			return Rnd.get(2000, 15000); // shots, arrows, cheap mats
+		}
+		if (referencePrice <= 60)
+		{
+			return Rnd.get(300, 3000);
+		}
+		if (referencePrice <= 600)
+		{
+			return Rnd.get(30, 400);
+		}
+		if (referencePrice <= 6000)
+		{
+			return Rnd.get(3, 40);
+		}
+		return Rnd.get(1, 8); // pricey mats / scrolls
+	}
+
+	/** referencePrice * random factor in [lo, hi], clamped to a valid positive int. */
+	private static int priced(int referencePrice, double lo, double hi)
+	{
+		final double factor = lo + (Rnd.nextDouble() * (hi - lo));
+		final long value = Math.round(referencePrice * factor);
+		return (int) Math.max(1L, Math.min(value, Integer.MAX_VALUE));
+	}
+
+	private static FakePlayerStoreItem line(ItemTemplate item, int enchant, int count, int price)
+	{
+		return new FakePlayerStoreItem(STORE_ITEM_OID.getAndIncrement(), item.getId(), enchant, count, price);
+	}
+
+	/**
+	 * Builds a SELL store: a few distinct lines, mostly bulk consumables with some equipment, priced a
+	 * little above reference.
+	 * @param level the vendor's level (gates equipment grade)
+	 * @return the generated stock (may be empty if the catalog is unavailable)
+	 */
+	public static List<FakePlayerStoreItem> generateSell(int level)
+	{
+		build();
+		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final Set<Integer> seen = new HashSet<>();
+		final int lines = Rnd.get(2, 5);
+		for (int i = 0; i < lines; i++)
+		{
+			final boolean bulk = Rnd.get(100) < 55;
+			final ItemTemplate item = bulk ? pickBulk() : pickEquip(level);
+			if ((item == null) || !seen.add(item.getId()))
+			{
+				continue;
+			}
+			final int count = bulk ? bulkAmount(item.getReferencePrice()) : 1;
+			final int enchant = (!bulk && (item.getCrystalType().ordinal() >= 1) && (Rnd.get(100) < 15)) ? Rnd.get(1, 4) : 0;
+			final int price = priced(item.getReferencePrice(), bulk ? 1.0 : 1.0, bulk ? 1.4 : 1.7);
+			stock.add(line(item, enchant, count, price));
+		}
+		return stock;
+	}
+
+	/**
+	 * Builds a BUY store: a few wanted items the bot will pay below reference for.
+	 * @param level the vendor's level (gates equipment grade)
+	 * @return the generated demand list
+	 */
+	public static List<FakePlayerStoreItem> generateBuy(int level)
+	{
+		build();
+		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final Set<Integer> seen = new HashSet<>();
+		final int lines = Rnd.get(1, 3);
+		for (int i = 0; i < lines; i++)
+		{
+			final boolean bulk = Rnd.get(100) < 70;
+			final ItemTemplate item = bulk ? pickBulk() : pickEquip(level);
+			if ((item == null) || !seen.add(item.getId()))
+			{
+				continue;
+			}
+			final int count = bulk ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
+			final int price = priced(item.getReferencePrice(), 0.45, 0.8);
+			stock.add(line(item, 0, count, price));
+		}
+		return stock;
+	}
+
+	/**
+	 * Builds a crafter's stall: finished equipment "made to order", sold around reference price. Falls
+	 * back to a regular sell stock if no equipment could be rolled.
+	 * @param level the crafter's level (gates grade)
+	 * @return the generated finished-goods stock
+	 */
+	public static List<FakePlayerStoreItem> generateCraft(int level)
+	{
+		build();
+		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final Set<Integer> seen = new HashSet<>();
+		final int lines = Rnd.get(1, 4);
+		for (int i = 0; i < lines; i++)
+		{
+			final ItemTemplate item = pickEquip(level);
+			if ((item == null) || !seen.add(item.getId()))
+			{
+				continue;
+			}
+			stock.add(line(item, 0, 1, priced(item.getReferencePrice(), 0.9, 1.3)));
+		}
+		return stock.isEmpty() ? generateSell(level) : stock;
+	}
+
+	/**
+	 * Derives the store sign from the actual stock so the advertised headline matches the contents.
+	 * @param kind SELL / BUY / CRAFT (or MANUFACTURE)
+	 * @param stock the generated lines
+	 * @return a short title such as "WTS Soulshot: D 8.4k" or "WTB Adena"
+	 */
+	public static String title(String kind, List<FakePlayerStoreItem> stock)
+	{
+		if ((stock == null) || stock.isEmpty())
+		{
+			return FakePlayerAppearanceFactory.storeTitle(kind);
+		}
+		FakePlayerStoreItem head = stock.get(0);
+		for (FakePlayerStoreItem entry : stock)
+		{
+			if (entry.getPrice() > head.getPrice())
+			{
+				head = entry;
+			}
+		}
+		final ItemTemplate item = head.getItem();
+		String name = item == null ? "items" : item.getName();
+		if (name.length() > 20)
+		{
+			name = name.substring(0, 20);
+		}
+		final String prefix = "BUY".equalsIgnoreCase(kind) ? "WTB " : ("CRAFT".equalsIgnoreCase(kind) || "MANUFACTURE".equalsIgnoreCase(kind)) ? "crafting " : "WTS ";
+		final StringBuilder sb = new StringBuilder(prefix).append(name);
+		if (head.getEnchant() > 0)
+		{
+			sb.append(" +").append(head.getEnchant());
+		}
+		if (head.getCount() > 1)
+		{
+			sb.append(' ').append(amount(head.getCount()));
+		}
+		String result = sb.toString();
+		if (result.length() > 28)
+		{
+			result = result.substring(0, 28);
+		}
+		return result;
+	}
+
+	/** 15000 -> "15k", 1500 -> "1.5k", 800 -> "800". */
+	private static String amount(int count)
+	{
+		if (count >= 1000)
+		{
+			final double thousands = count / 1000.0;
+			return (thousands == Math.floor(thousands) ? String.valueOf((int) thousands) : String.format(Locale.US, "%.1f", thousands)) + "k";
+		}
+		return String.valueOf(count);
+	}
+}
