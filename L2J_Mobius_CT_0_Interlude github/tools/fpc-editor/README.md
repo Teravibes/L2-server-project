@@ -25,8 +25,12 @@ Double-click `index.html` (or right-click → Open with → your browser).
    - **Double-click** the map to drop a new population there.
    - **Drag** a circle to move it; the X/Y update live.
    - **Click** a circle (or a list row) to edit its fields: count, level range, profile,
-     race, store type (`SELL`/`BUY`/`PACKAGE`), respawn.
-   - **Wheel** to zoom, **drag empty space** to pan.
+     race, store type (`SELL`/`BUY`/`CRAFT`/`PACKAGE`), respawn.
+   - **Draw zone** — select a population, click **Draw zone**, then click points on the map to
+     outline an area. Bots spawn **inside the shape** instead of a circle (great for sell/buy/craft
+     shop districts). Drag vertices to adjust; double-click or **Esc** to finish; **Clear zone** to
+     revert to a circle. Saved as `<point>` vertices under the population.
+   - **Wheel** to zoom, **drag empty space** to pan. The geodata map is crisp when zoomed in.
 4. **Save XML** — downloads an updated `FakePlayerBehavior.xml`. Drop it into your live
    server's `game/data/` and restart (or reload).
 

@@ -88,12 +88,13 @@
 					<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
 				</div>
 				<div><label>store (optional)</label>
-					<select id="f_store"><option value=""></option><option>SELL</option><option>BUY</option><option>PACKAGE</option></select>
+					<select id="f_store"><option value=""></option><option>SELL</option><option>BUY</option><option>CRAFT</option><option>PACKAGE</option></select>
 				</div>
 			</div>
 			<label><input id="f_respawn" type="checkbox" style="width:auto;margin-right:6px" />respawn (field hunters)</label>
-			<div class="row" style="margin-top:10px"><button id="del" style="flex:1">Delete population</button></div>
-			<div class="muted">Double-click the map to add a population at that spot. Drag a circle to move it. Wheel to zoom, drag empty space to pan.</div>
+			<div class="row" style="margin-top:10px"><button id="zoneBtn" class="sec" style="flex:2">Draw zone</button><button id="clearZone" class="sec" style="flex:1">Clear zone</button></div>
+			<div class="row" style="margin-top:6px"><button id="del" style="flex:1">Delete population</button></div>
+			<div class="muted">Double-click the map to add a population. <b>Draw zone:</b> select a population, click "Draw zone", then click points on the map to outline an area — bots will spawn inside the shape instead of a circle. Drag vertices to adjust. Drag a circle/centroid to move, wheel to zoom, drag empty space to pan.</div>
 		</div>
 
 		<h2>Populations</h2>
@@ -153,43 +154,44 @@ function s2w(x, y){ return [ x / cam.scale + cam.x, y / cam.scale + cam.y ]; }
 function resize(){ cv.width = wrap.clientWidth; cv.height = wrap.clientHeight; draw(); }
 window.addEventListener('resize', resize);
 
-// Parse one .l2j region into a 256x256 representative-height/type grid (mirrors Region.load).
-function parseRegion(buf){
+// Render one .l2j region to a high-res tile (per-cell heights). TILE_RES px across a region;
+// SUB px per block (256 blocks). Mirrors Region.load + ComplexBlock cell indexing.
+const TILE_RES = 1024, SUB = TILE_RES / 256;
+function renderRegionHi(buf){
 	const dv = new DataView(buf); let pos = 0;
-	const heights = new Int16Array(256 * 256); const types = new Uint8Array(256 * 256);
+	const c = document.createElement('canvas'); c.width = TILE_RES; c.height = TILE_RES;
+	const cx = c.getContext('2d'); const img = cx.createImageData(TILE_RES, TILE_RES); const d = img.data;
+	const put = (px, py, h, t) => {
+		let v = Math.round((h + 4000) / 6000 * 200) + 40; v = v < 20 ? 20 : v > 255 ? 255 : v;
+		let r = v, g = v, b = v; if (t === 1){ g = Math.min(255, v + 12); } else if (t === 2){ b = Math.min(255, v + 30); g = Math.min(255, v + 8); }
+		const idx = (py * TILE_RES + px) * 4; d[idx] = r; d[idx + 1] = g; d[idx + 2] = b; d[idx + 3] = 255;
+	};
+	const cells = new Int16Array(64);
 	for (let i = 0; i < 65536; i++){
-		const type = dv.getUint8(pos); pos += 1;
-		if (type === 0){ heights[i] = dv.getInt16(pos, true); types[i] = 0; pos += 2; }
-		else if (type === 1){ heights[i] = dv.getInt16(pos, true) >> 1; types[i] = 1; pos += 128; }
-		else if (type === 2){ types[i] = 2; let h = 0, got = false;
-			for (let c = 0; c < 64; c++){ const n = dv.getUint8(pos); pos += 1; if (!got && n > 0){ h = dv.getInt16(pos, true) >> 1; got = true; } pos += n * 2; }
-			heights[i] = h; }
+		const bx = i >> 8, by = i & 255; const type = dv.getUint8(pos); pos += 1;
+		if (type === 0){ const h = dv.getInt16(pos, true); pos += 2; for (let sx = 0; sx < SUB; sx++) for (let sy = 0; sy < SUB; sy++) put(bx * SUB + sx, by * SUB + sy, h, 0); }
+		else if (type === 1){ for (let k = 0; k < 64; k++){ cells[k] = dv.getInt16(pos, true) >> 1; pos += 2; } cellFill(put, bx, by, cells, 1); }
+		else if (type === 2){ for (let k = 0; k < 64; k++){ const n = dv.getUint8(pos); pos += 1; cells[k] = n > 0 ? (dv.getInt16(pos, true) >> 1) : 0; pos += n * 2; } cellFill(put, bx, by, cells, 2); }
 		else throw new Error('bad block type ' + type);
 	}
-	return { heights, types };
+	cx.putImageData(img, 0, 0); return c;
 }
-// Render a parsed region to a 256x256 canvas (height relief + structure tint).
-function renderRegion(p){
-	const c = document.createElement('canvas'); c.width = 256; c.height = 256;
-	const img = c.getContext('2d').createImageData(256, 256);
-	for (let i = 0; i < 65536; i++){
-		const bx = i >> 8, by = i & 255; // bx -> worldX, by -> worldY
-		let v = Math.round((p.heights[i] + 4000) / 6000 * 200) + 40; v = v < 20 ? 20 : v > 255 ? 255 : v;
-		let r = v, g = v, b = v; const t = p.types[i];
-		if (t === 1){ g = Math.min(255, v + 12); } else if (t === 2){ b = Math.min(255, v + 30); g = Math.min(255, v + 8); }
-		const idx = (by * 256 + bx) * 4; img.data[idx] = r; img.data[idx + 1] = g; img.data[idx + 2] = b; img.data[idx + 3] = 255;
+function cellFill(put, bx, by, cells, t){
+	for (let sx = 0; sx < SUB; sx++) for (let sy = 0; sy < SUB; sy++){
+		const cxi = (sx * 8 / SUB) | 0, cyi = (sy * 8 / SUB) | 0; // cellX along worldX, cellY along worldY
+		put(bx * SUB + sx, by * SUB + sy, cells[cxi * 8 + cyi], t);
 	}
-	c.getContext('2d').putImageData(img, 0, 0); return c;
 }
 document.getElementById('loadGeo').onclick = () => document.getElementById('geoFile').click();
 document.getElementById('geoFile').onchange = async e => {
 	const files = [...e.target.files].filter(f => /(\d+)_(\d+)\.l2j$/i.test(f.name));
 	if (!files.length){ alert('No .l2j files found in that folder.'); return; }
 	geoRegions = []; let ok = 0, bad = 0;
-	document.getElementById('coord').textContent = 'parsing geodata...';
 	for (const f of files){
 		const m = f.name.match(/(\d+)_(\d+)\.l2j$/i);
-		try { const buf = await f.arrayBuffer(); geoRegions.push({ rx: +m[1], ry: +m[2], canvas: renderRegion(parseRegion(buf)) }); ok++; }
+		document.getElementById('coord').textContent = 'parsing geodata ' + (ok + bad + 1) + '/' + files.length + '...';
+		await new Promise(r => setTimeout(r, 0));
+		try { const buf = await f.arrayBuffer(); geoRegions.push({ rx: +m[1], ry: +m[2], canvas: renderRegionHi(buf) }); ok++; }
 		catch (err){ bad++; }
 	}
 	document.getElementById('coord').textContent = 'geodata: ' + ok + ' regions' + (bad ? ' (' + bad + ' failed)' : '');
@@ -200,7 +202,7 @@ function draw(){
 	ctx.clearRect(0, 0, cv.width, cv.height);
 	// geodata tiles
 	if (geoRegions.length){
-		ctx.imageSmoothingEnabled = true;
+		ctx.imageSmoothingEnabled = cam.scale < 0.03; // crisp when zoomed in, smooth when zoomed out
 		geoRegions.forEach(g => {
 			const ox = g.rx * REGION_WORLD + WORLD_MIN_X, oy = g.ry * REGION_WORLD + WORLD_MIN_Y;
 			const [sx, sy] = w2s(ox, oy); const [ex, ey] = w2s(ox + REGION_WORLD, oy + REGION_WORLD);
@@ -232,8 +234,20 @@ function draw(){
 	}
 	// populations
 	pops.forEach((p, i) => {
-		const [cx, cy] = w2s(p.x, p.y); const r = Math.max(3, (p.radius || 200) * cam.scale);
 		const col = popColor(p);
+		if (p.poly && p.poly.length){
+			ctx.beginPath();
+			p.poly.forEach((v, k) => { const [sx, sy] = w2s(v.x, v.y); k ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
+			if (!(drawMode && i === selected)) ctx.closePath();
+			ctx.fillStyle = col + '22'; if (p.poly.length > 2) ctx.fill();
+			ctx.lineWidth = i === selected ? 2.5 : 1.5; ctx.strokeStyle = col; ctx.stroke();
+			if (i === selected){ p.poly.forEach(v => { const [sx, sy] = w2s(v.x, v.y); ctx.beginPath(); ctx.arc(sx, sy, 4, 0, 7); ctx.fillStyle = '#fff'; ctx.fill(); ctx.strokeStyle = col; ctx.stroke(); }); }
+			const c = polyCentroid(p.poly); const [cx, cy] = w2s(c.x, c.y);
+			ctx.beginPath(); ctx.arc(cx, cy, 3, 0, 7); ctx.fillStyle = col; ctx.fill();
+			if (cam.scale > 0.0015 || i === selected){ ctx.fillStyle = '#cfd2da'; ctx.font = '11px sans-serif'; ctx.fillText((p.name || '?') + ' ×' + (p.count || 0) + ' [zone]', cx + 6, cy + 3); }
+			return;
+		}
+		const [cx, cy] = w2s(p.x, p.y); const r = Math.max(3, (p.radius || 200) * cam.scale);
 		ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
 		ctx.fillStyle = col + '22'; ctx.fill();
 		ctx.lineWidth = i === selected ? 3 : 1.5; ctx.strokeStyle = col; ctx.stroke();
@@ -241,13 +255,21 @@ function draw(){
 		if (cam.scale > 0.0015 || i === selected){ ctx.fillStyle = '#cfd2da'; ctx.font = '11px sans-serif'; ctx.fillText((p.name || '?') + ' ×' + (p.count || 0), cx + r + 3, cy + 3); }
 	});
 }
+function polyCentroid(poly){ let x = 0, y = 0; poly.forEach(p => { x += p.x; y += p.y; }); return { x: Math.round(x / poly.length), y: Math.round(y / poly.length) }; }
+function polyRadius(poly, c){ let r = 0; poly.forEach(p => r = Math.max(r, Math.hypot(p.x - c.x, p.y - c.y))); return Math.round(r); }
+function pointInPoly(px, py, poly){ let inside = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++){ const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y; if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside; } return inside; }
 
 // ---- interaction ----
-let drag = null;
+let drag = null, drawMode = false;
 cv.addEventListener('mousedown', e => {
-	const mx = e.offsetX, my = e.offsetY;
+	const mx = e.offsetX, my = e.offsetY; const [wx, wy] = s2w(mx, my);
+	// Zone drawing: each click drops a vertex on the selected population.
+	if (drawMode && selected >= 0){ const p = pops[selected]; (p.poly = p.poly || []).push({ x: Math.round(wx), y: Math.round(wy) }); draw(); return; }
+	// Drag an existing polygon vertex of the selected population.
+	const vi = pickVertex(mx, my);
+	if (vi >= 0){ drag = { mode: 'vertex', i: selected, v: vi }; return; }
 	const hit = pickPop(mx, my);
-	if (hit >= 0){ select(hit); drag = { mode: 'move', i: hit }; }
+	if (hit >= 0){ select(hit); drag = { mode: 'move', i: hit, px: wx, py: wy }; }
 	else { drag = { mode: 'pan', sx: mx, sy: my, cx: cam.x, cy: cam.y }; }
 });
 cv.addEventListener('mousemove', e => {
@@ -255,20 +277,35 @@ cv.addEventListener('mousemove', e => {
 	document.getElementById('coord').textContent = Math.round(wx) + ', ' + Math.round(wy);
 	if (!drag) return;
 	if (drag.mode === 'pan'){ cam.x = drag.cx - (e.offsetX - drag.sx) / cam.scale; cam.y = drag.cy - (e.offsetY - drag.sy) / cam.scale; draw(); }
-	else if (drag.mode === 'move'){ const p = pops[drag.i]; p.x = Math.round(wx); p.y = Math.round(wy); syncForm(); draw(); }
+	else if (drag.mode === 'vertex'){ const v = pops[drag.i].poly[drag.v]; v.x = Math.round(wx); v.y = Math.round(wy); draw(); }
+	else if (drag.mode === 'move'){ const p = pops[drag.i];
+		if (p.poly && p.poly.length){ const dx = wx - drag.px, dy = wy - drag.py; p.poly.forEach(v => { v.x = Math.round(v.x + dx); v.y = Math.round(v.y + dy); }); drag.px = wx; drag.py = wy; }
+		else { p.x = Math.round(wx); p.y = Math.round(wy); }
+		syncForm(); draw();
+	}
 });
 window.addEventListener('mouseup', () => drag = null);
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && drawMode){ setDrawMode(false); } });
 cv.addEventListener('wheel', e => { e.preventDefault(); const f = e.deltaY < 0 ? 1.15 : 1 / 1.15; const [wx, wy] = s2w(e.offsetX, e.offsetY); cam.scale *= f; cam.x = wx - e.offsetX / cam.scale; cam.y = wy - e.offsetY / cam.scale; draw(); }, { passive: false });
-cv.addEventListener('dblclick', e => { const [wx, wy] = s2w(e.offsetX, e.offsetY); addPop(Math.round(wx), Math.round(wy)); });
+cv.addEventListener('dblclick', e => { if (drawMode){ setDrawMode(false); return; } const [wx, wy] = s2w(e.offsetX, e.offsetY); addPop(Math.round(wx), Math.round(wy)); });
 
 function pickPop(mx, my){
-	for (let i = pops.length - 1; i >= 0; i--){ const [cx, cy] = w2s(pops[i].x, pops[i].y); if (Math.hypot(mx - cx, my - cy) < 9) return i; }
+	for (let i = pops.length - 1; i >= 0; i--){ const p = pops[i];
+		if (p.poly && p.poly.length){ const c = polyCentroid(p.poly); const [cx, cy] = w2s(c.x, c.y); if (Math.hypot(mx - cx, my - cy) < 9) return i; const [wx, wy] = s2w(mx, my); if (p.poly.length > 2 && pointInPoly(wx, wy, p.poly)) return i; }
+		else { const [cx, cy] = w2s(p.x, p.y); if (Math.hypot(mx - cx, my - cy) < 9) return i; }
+	}
 	return -1;
 }
+function pickVertex(mx, my){
+	if (selected < 0) return -1; const p = pops[selected]; if (!p.poly) return -1;
+	for (let k = 0; k < p.poly.length; k++){ const [sx, sy] = w2s(p.poly[k].x, p.poly[k].y); if (Math.hypot(mx - sx, my - sy) < 7) return k; }
+	return -1;
+}
+function setDrawMode(on){ drawMode = on; cv.style.cursor = on ? 'copy' : 'crosshair'; document.getElementById('zoneBtn').textContent = on ? 'Finish zone (Esc)' : 'Draw zone'; document.getElementById('zoneBtn').classList.toggle('sec', !on); }
 
 // ---- model ops ----
 function addPop(x, y){
-	pops.push({ name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false });
+	pops.push({ name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false, poly: [] });
 	select(pops.length - 1); renderList(); draw();
 }
 function select(i){ selected = i; syncForm(); renderList(); }
@@ -286,6 +323,8 @@ document.querySelectorAll('#form input, #form select').forEach(el => el.addEvent
 	renderList(); draw();
 }));
 document.getElementById('del').onclick = () => { if (selected < 0) return; pops.splice(selected, 1); selected = -1; renderList(); draw(); syncFormClear(); };
+document.getElementById('zoneBtn').onclick = () => { if (selected < 0){ alert('Select or add a population first, then draw its zone.'); return; } pops[selected].poly = pops[selected].poly || []; setDrawMode(!drawMode); };
+document.getElementById('clearZone').onclick = () => { if (selected < 0) return; pops[selected].poly = []; setDrawMode(false); draw(); };
 function syncFormClear(){ document.querySelectorAll('#form input').forEach(i => i.type === 'checkbox' ? i.checked = false : i.value = ''); }
 document.getElementById('addBtn').onclick = () => { const [wx, wy] = s2w(cv.width / 2, cv.height / 2); addPop(Math.round(wx), Math.round(wy)); };
 
@@ -319,7 +358,8 @@ function parseXml(text){
 		else if (tag === 'default'){ preserved.def = ser.serializeToString(node); }
 		else if (tag === 'population'){
 			const g = a => node.getAttribute(a);
-			pops.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 600), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 40), profile: g('profile') || '', race: g('race') || '', store: g('store') || '', respawn: g('respawn') === 'true' });
+			const poly = [...node.children].filter(n => n.tagName === 'point').map(n => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y') }));
+			pops.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 600), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 40), profile: g('profile') || '', race: g('race') || '', store: g('store') || '', respawn: g('respawn') === 'true', poly });
 		}
 	}
 	updateProfileList(); renderList(); selected = -1; draw();
@@ -333,12 +373,20 @@ document.getElementById('saveXml').onclick = () => {
 	preserved.profiles.forEach(s => out += '\t' + s + '\n');
 	if (preserved.profiles.length) out += '\n';
 	pops.forEach(p => {
-		let a = `name="${esc(p.name)}" x="${p.x}" y="${p.y}" z="${p.z}" radius="${p.radius}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
+		// A polygon zone: anchor x/y becomes the centroid, radius the bounding radius, plus <point> vertices.
+		const hasPoly = p.poly && p.poly.length >= 3;
+		let ax = p.x, ay = p.y, ar = p.radius;
+		if (hasPoly){ const c = polyCentroid(p.poly); ax = c.x; ay = c.y; ar = polyRadius(p.poly, c); }
+		let a = `name="${esc(p.name)}" x="${ax}" y="${ay}" z="${p.z}" radius="${ar}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
 		if (p.profile) a += ` profile="${esc(p.profile)}"`;
 		if (p.race) a += ` race="${esc(p.race)}"`;
 		if (p.store) a += ` store="${esc(p.store)}"`;
 		if (p.respawn) a += ` respawn="true"`;
-		out += `\t<population ${a} />\n`;
+		if (hasPoly){
+			out += `\t<population ${a}>\n`;
+			p.poly.forEach(v => out += `\t\t<point x="${v.x}" y="${v.y}" z="${p.z}" />\n`);
+			out += `\t</population>\n`;
+		} else out += `\t<population ${a} />\n`;
 	});
 	if (preserved.assigns.length || preserved.def) out += '\n';
 	preserved.assigns.forEach(s => out += '\t' + s + '\n');

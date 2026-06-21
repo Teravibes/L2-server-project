@@ -159,6 +159,11 @@ public class FakePlayerAppearanceFactory
 		"WTB adena", "WTB D grade", "WTB mats", "WTB soulshots", "WTB recipes",
 		"buying keymats", "WTB C grade", "WTB enchant scrolls", "WTB proofs", "WTB gemstones"
 	};
+	private static final String[] CRAFT_TITLES =
+	{
+		"crafting D grade", "crafting C grade", "armor craft", "weapon craft", "free craft pm mats",
+		"craft service", "making shots", "craft cheap", "mass production"
+	};
 
 	private static final Set<String> USED_NAMES = ConcurrentHashMap.newKeySet();
 
@@ -290,12 +295,20 @@ public class FakePlayerAppearanceFactory
 	}
 
 	/**
-	 * @param buy {@code true} for a buy-store title, {@code false} for a sell-store title
-	 * @return a random believable store title
+	 * @param kind store kind: BUY, CRAFT/MANUFACTURE, or anything else (sell)
+	 * @return a random believable store title for that kind
 	 */
-	public static String storeTitle(boolean buy)
+	public static String storeTitle(String kind)
 	{
-		return buy ? BUY_TITLES[Rnd.get(BUY_TITLES.length)] : SELL_TITLES[Rnd.get(SELL_TITLES.length)];
+		if ("BUY".equalsIgnoreCase(kind))
+		{
+			return BUY_TITLES[Rnd.get(BUY_TITLES.length)];
+		}
+		if ("CRAFT".equalsIgnoreCase(kind) || "MANUFACTURE".equalsIgnoreCase(kind))
+		{
+			return CRAFT_TITLES[Rnd.get(CRAFT_TITLES.length)];
+		}
+		return SELL_TITLES[Rnd.get(SELL_TITLES.length)];
 	}
 
 	private static int[] classForRace(Race race)

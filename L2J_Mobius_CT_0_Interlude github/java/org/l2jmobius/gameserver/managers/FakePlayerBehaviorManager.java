@@ -146,7 +146,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		String profileName;
 		Race race; // optional dominant race for this group (e.g. a Dwarven village)
 		boolean respawn; // field bots die; respawn a fresh replacement to keep the zone populated
-		String storeType; // null, or SELL / BUY / PACKAGE -> seated private-store vendors
+		String storeType; // null, or SELL / BUY / PACKAGE / CRAFT -> seated private-store vendors
+		final List<Location> polygon = new ArrayList<>(); // optional area; bots spawn inside it instead of a circle
 	}
 
 	private final Map<String, Profile> _profiles = new HashMap<>();
@@ -234,6 +235,11 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				population.respawn = set.getBoolean("respawn", false);
 				population.storeType = set.contains("store") ? set.getString("store") : null;
 				population.profileName = set.getString("profile", _defaultProfile);
+				forEach(populationNode, "point", pointNode ->
+				{
+					final StatSet p = new StatSet(parseAttributes(pointNode));
+					population.polygon.add(new Location(p.getInt("x"), p.getInt("y"), p.getInt("z", population.center.getZ())));
+				});
 				if (set.contains("race"))
 				{
 					try
@@ -340,10 +346,22 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		final Profile profile = population.profileName == null ? null : _profiles.get(population.profileName);
 		try
 		{
-			final double angle = Rnd.nextDouble() * 2 * Math.PI;
-			final int distance = Rnd.get(0, population.radius);
-			final int x = population.center.getX() + (int) (Math.cos(angle) * distance);
-			final int y = population.center.getY() + (int) (Math.sin(angle) * distance);
+			final int x;
+			final int y;
+			if (population.polygon.size() >= 3)
+			{
+				// Area population: spawn at a random point inside the drawn shape.
+				final Location pt = randomPointInPolygon(population);
+				x = pt.getX();
+				y = pt.getY();
+			}
+			else
+			{
+				final double angle = Rnd.nextDouble() * 2 * Math.PI;
+				final int distance = Rnd.get(0, population.radius);
+				x = population.center.getX() + (int) (Math.cos(angle) * distance);
+				y = population.center.getY() + (int) (Math.sin(angle) * distance);
+			}
 			final Location loc = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
 			// Snap to the ground height. With geodata loaded this corrects open-field Z automatically;
 			// without geodata it is a no-op (so field bots need geodata to place reliably outdoors).
@@ -362,9 +380,9 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				final FakePlayerAppearance look = FakePlayerAppearanceFactory.generate(population.minLevel, population.maxLevel, population.race);
 				if (population.storeType != null)
 				{
-					final boolean buy = population.storeType.equalsIgnoreCase("BUY");
-					final int storeId = buy ? PrivateStoreType.BUY.getId() : population.storeType.equalsIgnoreCase("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : PrivateStoreType.SELL.getId();
-					look.setStore(storeId, FakePlayerAppearanceFactory.storeTitle(buy));
+					final String kind = population.storeType.toUpperCase();
+					final int storeId = kind.equals("BUY") ? PrivateStoreType.BUY.getId() : kind.equals("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : (kind.equals("CRAFT") || kind.equals("MANUFACTURE")) ? PrivateStoreType.MANUFACTURE.getId() : PrivateStoreType.SELL.getId();
+					look.setStore(storeId, FakePlayerAppearanceFactory.storeTitle(kind));
 				}
 				npc.setFakePlayerAppearance(look);
 				npc.broadcastInfo();
@@ -412,6 +430,49 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ()), profile.radius, null));
 			}
 		}
+	}
+
+	/**
+	 * Picks a random point inside a population's polygon (rejection sampling), falling back to the
+	 * centroid if sampling fails.
+	 * @param pop the area population
+	 * @return a location inside the polygon
+	 */
+	private Location randomPointInPolygon(Population pop)
+	{
+		int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+		for (Location v : pop.polygon)
+		{
+			minX = Math.min(minX, v.getX());
+			maxX = Math.max(maxX, v.getX());
+			minY = Math.min(minY, v.getY());
+			maxY = Math.max(maxY, v.getY());
+		}
+		for (int i = 0; i < 30; i++)
+		{
+			final int rx = Rnd.get(minX, maxX);
+			final int ry = Rnd.get(minY, maxY);
+			if (isInPolygon(rx, ry, pop.polygon))
+			{
+				return new Location(rx, ry, pop.center.getZ());
+			}
+		}
+		return pop.center;
+	}
+
+	private static boolean isInPolygon(int px, int py, List<Location> poly)
+	{
+		boolean inside = false;
+		for (int i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+		{
+			final int xi = poly.get(i).getX(), yi = poly.get(i).getY();
+			final int xj = poly.get(j).getX(), yj = poly.get(j).getY();
+			if (((yi > py) != (yj > py)) && (px < ((double) (xj - xi) * (py - yi) / (yj - yi)) + xi))
+			{
+				inside = !inside;
+			}
+		}
+		return inside;
 	}
 
 	/**

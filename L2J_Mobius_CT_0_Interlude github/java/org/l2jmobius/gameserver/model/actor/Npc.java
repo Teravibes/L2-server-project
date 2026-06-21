@@ -417,9 +417,14 @@ public class Npc extends Creature
 				final FakePlayerAppearance look = _fakePlayerAppearance;
 				if ((look != null) && (look.getPrivateStoreType() != 0))
 				{
-					if (look.getPrivateStoreType() == PrivateStoreType.BUY.getId())
+					final int storeType = look.getPrivateStoreType();
+					if (storeType == PrivateStoreType.BUY.getId())
 					{
 						player.sendPacket(new PrivateStoreMsgBuy(getObjectId(), look.getStoreMessage()));
+					}
+					else if (storeType == PrivateStoreType.MANUFACTURE.getId())
+					{
+						player.sendPacket(new RecipeShopMsg(getObjectId(), look.getStoreMessage()));
 					}
 					else
 					{
