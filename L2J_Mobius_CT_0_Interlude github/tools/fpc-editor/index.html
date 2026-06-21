@@ -47,6 +47,7 @@
 			<button id="loadImg" class="sec">Map image</button>
 			<button id="addBtn">+ Population</button>
 			<label style="margin:0;display:flex;align-items:center;gap:4px;color:#cfd2da"><input id="showMarks" type="checkbox" checked style="width:auto" />landmarks</label>
+			<button id="toggleAll" class="sec">Hide all</button>
 			<input id="xmlFile" type="file" accept=".xml" hidden />
 			<input id="imgFile" type="file" accept="image/*" hidden />
 			<input id="geoFile" type="file" accept=".l2j" multiple webkitdirectory hidden />
@@ -62,7 +63,9 @@
 				<div><label>maxX</label><input id="bMaxX" type="number" value="130000" /></div>
 				<div><label>maxY</label><input id="bMaxY" type="number" value="130000" /></div>
 			</div>
-			<div class="muted">Load a Lineage 2 world map image, then nudge these bounds until landmarks line up with the populations. With geodata loaded the server snaps Z to ground, so only X/Y need to be right.</div>
+			<label>map image opacity</label>
+			<input id="imgOpacity" type="range" min="0" max="100" value="70" />
+			<div class="muted">The server files have no world map (it lives in the L2 client). If you extract/obtain a client world-map image you can load it here over the geodata, then nudge these bounds until landmarks line up. Only X/Y matter — the server snaps Z to ground.</div>
 		</details>
 
 		<h2>Selected population</h2>
@@ -214,7 +217,7 @@ function draw(){
 	if (mapImg){
 		const minX = +bMinX.value, minY = +bMinY.value, maxX = +bMaxX.value, maxY = +bMaxY.value;
 		const [sx, sy] = w2s(minX, minY); const [ex, ey] = w2s(maxX, maxY);
-		ctx.globalAlpha = 0.85; ctx.drawImage(mapImg, sx, sy, ex - sx, ey - sy); ctx.globalAlpha = 1;
+		ctx.globalAlpha = (+document.getElementById('imgOpacity').value) / 100; ctx.drawImage(mapImg, sx, sy, ex - sx, ey - sy); ctx.globalAlpha = 1;
 	}
 	// grid every 20k world units
 	ctx.strokeStyle = '#2a2c32'; ctx.lineWidth = 1; ctx.fillStyle = '#5a5c66'; ctx.font = '10px monospace';
@@ -234,6 +237,7 @@ function draw(){
 	}
 	// populations
 	pops.forEach((p, i) => {
+		if (p.visible === false) return;
 		const col = popColor(p);
 		if (p.poly && p.poly.length){
 			ctx.beginPath();
@@ -332,11 +336,17 @@ function renderList(){
 	const el = document.getElementById('list'); el.innerHTML = '';
 	pops.forEach((p, i) => {
 		const d = document.createElement('div'); d.className = 'item' + (i === selected ? ' sel' : '');
-		d.innerHTML = '<span class="dot" style="background:' + popColor(p) + '"></span>' + (p.name || '?') + ' <small>×' + (p.count || 0) + (p.store ? ' · ' + p.store : '') + ' · L' + p.minLevel + '-' + p.maxLevel + '</small>';
-		d.onclick = () => { select(i); panTo(p); }; el.appendChild(d);
+		const eye = document.createElement('span'); eye.textContent = p.visible === false ? '🚫' : '👁'; eye.title = 'show/hide'; eye.style.cssText = 'cursor:pointer;margin-right:6px;opacity:' + (p.visible === false ? '.4' : '1');
+		eye.onclick = ev => { ev.stopPropagation(); p.visible = p.visible === false; renderList(); draw(); };
+		const txt = document.createElement('span'); txt.innerHTML = '<span class="dot" style="background:' + popColor(p) + '"></span>' + (p.name || '?') + ' <small>×' + (p.count || 0) + (p.store ? ' · ' + p.store : '') + ' · L' + p.minLevel + '-' + p.maxLevel + '</small>';
+		txt.onclick = () => { select(i); panToPop(p); };
+		d.appendChild(eye); d.appendChild(txt); el.appendChild(d);
 	});
 }
-function panTo(p){ cam.x = p.x - (cv.width / 2) / cam.scale; cam.y = p.y - (cv.height / 2) / cam.scale; draw(); }
+function popAnchor(p){ return (p.poly && p.poly.length) ? polyCentroid(p.poly) : { x: p.x, y: p.y }; }
+function panToPop(p){ const a = popAnchor(p); cam.x = a.x - (cv.width / 2) / cam.scale; cam.y = a.y - (cv.height / 2) / cam.scale; draw(); }
+document.getElementById('toggleAll').onclick = () => { const anyVisible = pops.some(p => p.visible !== false); pops.forEach(p => p.visible = !anyVisible); document.getElementById('toggleAll').textContent = anyVisible ? 'Show all' : 'Hide all'; renderList(); draw(); };
+document.getElementById('imgOpacity').addEventListener('input', draw);
 
 // ---- XML load/save ----
 document.getElementById('loadXml').onclick = () => document.getElementById('xmlFile').click();

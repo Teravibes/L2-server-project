@@ -385,6 +385,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 					look.setStore(storeId, FakePlayerAppearanceFactory.storeTitle(kind));
 				}
 				npc.setFakePlayerAppearance(look);
+				if (look.getPrivateStoreType() != 0)
+				{
+					// Seated vendors must never move: stop their own NPC AI and pin them in place.
+					npc.disableCoreAI(true);
+					npc.setImmobilized(true);
+				}
 				npc.broadcastInfo();
 
 				if (profile != null)
