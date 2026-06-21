@@ -1474,11 +1474,11 @@ public class Npc extends Creature
 				
 				// Private store message support.
 				final FakePlayerHolder fakePlayerInfo = getTemplate().getFakePlayerInfo();
-				final int storeType = fakePlayerInfo.getPrivateStoreType();
+				final int storeType = (_fakePlayerAppearance != null) && (_fakePlayerAppearance.getPrivateStoreType() != 0) ? _fakePlayerAppearance.getPrivateStoreType() : fakePlayerInfo.getPrivateStoreType();
 				if (storeType > 0)
 				{
-					final String message = fakePlayerInfo.getPrivateStoreMessage();
-					if (!message.isEmpty())
+					final String message = (_fakePlayerAppearance != null) && (_fakePlayerAppearance.getPrivateStoreType() != 0) ? _fakePlayerAppearance.getStoreMessage() : fakePlayerInfo.getPrivateStoreMessage();
+					if ((message != null) && !message.isEmpty())
 					{
 						switch (storeType)
 						{

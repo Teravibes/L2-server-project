@@ -70,6 +70,10 @@ public class FakePlayerStoreFactory
 		3 // S
 	};
 
+	// Currencies never belong in a store (a vendor "WTB Adena" makes no sense).
+	private static final int ADENA_ID = 57;
+	private static final int ANCIENT_ADENA_ID = 5575;
+
 	private static volatile boolean _built = false;
 	private static final EnumMap<CrystalType, List<ItemTemplate>> EQUIP = new EnumMap<>(CrystalType.class);
 	private static final List<ItemTemplate> BULK = new ArrayList<>();
@@ -101,6 +105,10 @@ public class FakePlayerStoreFactory
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
 				if (item == null)
+				{
+					continue;
+				}
+				if ((item.getId() == ADENA_ID) || (item.getId() == ANCIENT_ADENA_ID))
 				{
 					continue;
 				}
@@ -305,7 +313,9 @@ public class FakePlayerStoreFactory
 		final int lines = Rnd.get(1, 3);
 		for (int i = 0; i < lines; i++)
 		{
-			final boolean bulk = Rnd.get(100) < 70;
+			// Buy stores favour bulk goods players actually carry (mats, shots, potions), so there is a
+			// real chance the viewer has something to sell; a minority want a piece of gear.
+			final boolean bulk = Rnd.get(100) < 85;
 			final ItemTemplate item = bulk ? pickBulk() : pickEquip(level);
 			if ((item == null) || !seen.add(item.getId()))
 			{
