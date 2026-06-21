@@ -30,8 +30,11 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.data.xml.ItemData;
+import org.l2jmobius.gameserver.data.xml.RecipeData;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerCraftItem;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
 import org.l2jmobius.gameserver.model.item.ItemTemplate;
+import org.l2jmobius.gameserver.model.item.recipe.RecipeList;
 import org.l2jmobius.gameserver.model.item.type.CrystalType;
 import org.l2jmobius.gameserver.model.item.type.EtcItemType;
 import org.l2jmobius.gameserver.model.item.type.ItemType;
@@ -77,6 +80,7 @@ public class FakePlayerStoreFactory
 	private static volatile boolean _built = false;
 	private static final EnumMap<CrystalType, List<ItemTemplate>> EQUIP = new EnumMap<>(CrystalType.class);
 	private static final List<ItemTemplate> BULK = new ArrayList<>();
+	private static final EnumMap<CrystalType, List<RecipeList>> RECIPES = new EnumMap<>(CrystalType.class);
 
 	private FakePlayerStoreFactory()
 	{
@@ -101,6 +105,7 @@ public class FakePlayerStoreFactory
 			for (CrystalType grade : CrystalType.values())
 			{
 				EQUIP.put(grade, new ArrayList<>());
+				RECIPES.put(grade, new ArrayList<>());
 			}
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
@@ -134,6 +139,26 @@ public class FakePlayerStoreFactory
 				{
 					BULK.add(item);
 				}
+			}
+			// Recipes are bucketed by the grade of the item they produce, so crafters honour the same
+			// level-gating and scarcity as sellers.
+			for (RecipeList recipe : RecipeData.getInstance().getAllRecipes())
+			{
+				if (recipe == null)
+				{
+					continue;
+				}
+				final ItemTemplate product = ItemData.getInstance().getTemplate(recipe.getItemId());
+				if ((product == null) || (product.getReferencePrice() <= 0) || !product.isTradeable())
+				{
+					continue;
+				}
+				final String name = product.getName();
+				if ((name == null) || name.isEmpty() || name.equalsIgnoreCase("NULL"))
+				{
+					continue;
+				}
+				RECIPES.get(product.getCrystalType()).add(recipe);
 			}
 			_built = true;
 		}
@@ -327,28 +352,102 @@ public class FakePlayerStoreFactory
 		return stock;
 	}
 
+	/** Picks one recipe by the same weighted grade roll (capped by level) used for equipment. */
+	private static RecipeList pickRecipe(int level)
+	{
+		final int maxOrdinal = maxGrade(level).ordinal();
+		int total = 0;
+		for (int i = 0; i <= maxOrdinal; i++)
+		{
+			total += GRADE_WEIGHT[i];
+		}
+		if (total <= 0)
+		{
+			return null;
+		}
+		for (int attempt = 0; attempt < 6; attempt++)
+		{
+			int roll = Rnd.get(total);
+			int chosen = 0;
+			for (int i = 0; i <= maxOrdinal; i++)
+			{
+				roll -= GRADE_WEIGHT[i];
+				if (roll < 0)
+				{
+					chosen = i;
+					break;
+				}
+			}
+			for (int i = chosen; i >= 0; i--)
+			{
+				final List<RecipeList> bucket = RECIPES.get(CrystalType.values()[i]);
+				if (!bucket.isEmpty())
+				{
+					return bucket.get(Rnd.get(bucket.size()));
+				}
+			}
+		}
+		return null;
+	}
+
 	/**
-	 * Builds a crafter's stall: finished equipment "made to order", sold around reference price. Falls
-	 * back to a regular sell stock if no equipment could be rolled.
-	 * @param level the crafter's level (gates grade)
-	 * @return the generated finished-goods stock
+	 * Builds a crafter's recipe board: a few recipes the bot will make, each with an adena fee. The
+	 * customer supplies the materials.
+	 * @param level the crafter's level (gates the grade of what it can make)
+	 * @return the offered recipes (may be empty if no recipe data is available)
 	 */
-	public static List<FakePlayerStoreItem> generateCraft(int level)
+	public static List<FakePlayerCraftItem> generateCraftRecipes(int level)
 	{
 		build();
-		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final List<FakePlayerCraftItem> recipes = new ArrayList<>();
 		final Set<Integer> seen = new HashSet<>();
-		final int lines = Rnd.get(1, 4);
+		final int lines = Rnd.get(2, 5);
 		for (int i = 0; i < lines; i++)
 		{
-			final ItemTemplate item = pickEquip(level);
-			if ((item == null) || !seen.add(item.getId()))
+			final RecipeList recipe = pickRecipe(level);
+			if ((recipe == null) || !seen.add(recipe.getId()))
 			{
 				continue;
 			}
-			stock.add(line(item, 0, 1, priced(item.getReferencePrice(), 0.9, 1.3)));
+			final ItemTemplate product = ItemData.getInstance().getTemplate(recipe.getItemId());
+			final int productValue = product == null ? 1000 : product.getReferencePrice();
+			final int fee = (int) Math.max(100L, Math.min((long) (productValue * (0.08 + (Rnd.nextDouble() * 0.17))), Integer.MAX_VALUE));
+			recipes.add(new FakePlayerCraftItem(recipe.getId(), fee));
 		}
-		return stock.isEmpty() ? generateSell(level) : stock;
+		return recipes;
+	}
+
+	/**
+	 * @param recipes a crafter's offered recipes
+	 * @return a sign such as "crafting Mithril Gaiters"
+	 */
+	public static String craftTitle(List<FakePlayerCraftItem> recipes)
+	{
+		if ((recipes == null) || recipes.isEmpty())
+		{
+			return FakePlayerAppearanceFactory.storeTitle("CRAFT");
+		}
+		ItemTemplate head = null;
+		for (FakePlayerCraftItem entry : recipes)
+		{
+			final RecipeList recipe = RecipeData.getInstance().getRecipeList(entry.getRecipeListId());
+			final ItemTemplate product = recipe == null ? null : ItemData.getInstance().getTemplate(recipe.getItemId());
+			if ((product != null) && ((head == null) || (product.getReferencePrice() > head.getReferencePrice())))
+			{
+				head = product;
+			}
+		}
+		String name = head == null ? "items" : head.getName();
+		if (name.length() > 18)
+		{
+			name = name.substring(0, 18);
+		}
+		String result = "crafting " + name;
+		if (result.length() > 28)
+		{
+			result = result.substring(0, 28);
+		}
+		return result;
 	}
 
 	/**

@@ -45,6 +45,7 @@ import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerCraftItem;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
@@ -383,26 +384,30 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				{
 					final String kind = population.storeType.toUpperCase();
 					final int level = look.getLevel();
-					final List<FakePlayerStoreItem> stock;
-					final int storeId;
-					if (kind.equals("BUY"))
+					if (kind.equals("CRAFT") || kind.equals("MANUFACTURE"))
 					{
-						stock = FakePlayerStoreFactory.generateBuy(level);
-						storeId = PrivateStoreType.BUY.getId();
-					}
-					else if (kind.equals("CRAFT") || kind.equals("MANUFACTURE"))
-					{
-						// Crafters are deployed as finished-goods sellers, so their stalls are buyable too.
-						stock = FakePlayerStoreFactory.generateCraft(level);
-						storeId = PrivateStoreType.SELL.getId();
+						// A real manufacture store: offers recipes; the customer brings the materials.
+						final List<FakePlayerCraftItem> recipes = FakePlayerStoreFactory.generateCraftRecipes(level);
+						look.setCraftItems(recipes);
+						look.setStore(PrivateStoreType.MANUFACTURE.getId(), FakePlayerStoreFactory.craftTitle(recipes));
 					}
 					else
 					{
-						stock = FakePlayerStoreFactory.generateSell(level);
-						storeId = kind.equals("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : PrivateStoreType.SELL.getId();
+						final List<FakePlayerStoreItem> stock;
+						final int storeId;
+						if (kind.equals("BUY"))
+						{
+							stock = FakePlayerStoreFactory.generateBuy(level);
+							storeId = PrivateStoreType.BUY.getId();
+						}
+						else
+						{
+							stock = FakePlayerStoreFactory.generateSell(level);
+							storeId = kind.equals("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : PrivateStoreType.SELL.getId();
+						}
+						look.setStoreItems(stock);
+						look.setStore(storeId, FakePlayerStoreFactory.title(kind, stock));
 					}
-					look.setStoreItems(stock);
-					look.setStore(storeId, FakePlayerStoreFactory.title(kind, stock));
 				}
 				npc.setFakePlayerAppearance(look);
 				if (look.getPrivateStoreType() != 0)

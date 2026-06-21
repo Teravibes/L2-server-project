@@ -20,7 +20,9 @@
  */
 package org.l2jmobius.gameserver.network.clientpackets;
 
+import org.l2jmobius.gameserver.managers.FakePlayerStoreManager;
 import org.l2jmobius.gameserver.model.World;
+import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.network.serverpackets.RecipeShopItemInfo;
@@ -48,7 +50,15 @@ public class RequestRecipeShopMakeInfo extends ClientPacket
 		{
 			return;
 		}
-		
+
+		// Fake-player crafters are NPCs, not Players: hand the preview to the dedicated manager.
+		final WorldObject storeObject = World.getInstance().findObject(_playerObjectId);
+		if ((storeObject != null) && storeObject.isNpc() && storeObject.asNpc().isFakePlayer())
+		{
+			FakePlayerStoreManager.makeInfo(player, storeObject.asNpc(), _recipeId);
+			return;
+		}
+
 		final Player shop = World.getInstance().getPlayer(_playerObjectId);
 		if ((shop == null) || (shop.getPrivateStoreType() != PrivateStoreType.MANUFACTURE))
 		{

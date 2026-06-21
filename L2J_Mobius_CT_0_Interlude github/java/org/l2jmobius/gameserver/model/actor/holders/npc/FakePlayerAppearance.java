@@ -68,6 +68,7 @@ public class FakePlayerAppearance
 	private String _storeMessage = "";
 	private boolean _sitting = false;
 	private List<FakePlayerStoreItem> _storeItems = Collections.emptyList();
+	private List<FakePlayerCraftItem> _craftItems = Collections.emptyList();
 
 	public String getName()
 	{
@@ -309,6 +310,20 @@ public class FakePlayerAppearance
 	public FakePlayerAppearance setStoreItems(List<FakePlayerStoreItem> items)
 	{
 		_storeItems = items == null ? Collections.emptyList() : items;
+		return this;
+	}
+
+	/**
+	 * @return the recipes this crafter offers in its manufacture store
+	 */
+	public List<FakePlayerCraftItem> getCraftItems()
+	{
+		return _craftItems;
+	}
+
+	public FakePlayerAppearance setCraftItems(List<FakePlayerCraftItem> items)
+	{
+		_craftItems = items == null ? Collections.emptyList() : items;
 		return this;
 	}
 }

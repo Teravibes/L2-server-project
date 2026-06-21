@@ -28,15 +28,23 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.l2jmobius.commons.util.Rnd;
+import org.l2jmobius.gameserver.data.holders.RecipeHolder;
+import org.l2jmobius.gameserver.data.xml.RecipeData;
 import org.l2jmobius.gameserver.model.actor.Npc;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
+import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerCraftItem;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
 import org.l2jmobius.gameserver.model.item.enums.ItemProcessType;
 import org.l2jmobius.gameserver.model.item.instance.Item;
+import org.l2jmobius.gameserver.model.item.recipe.RecipeList;
+import org.l2jmobius.gameserver.network.SystemMessageId;
 import org.l2jmobius.gameserver.network.holders.RequestTrade;
 import org.l2jmobius.gameserver.network.serverpackets.ActionFailed;
+import org.l2jmobius.gameserver.network.serverpackets.FakePlayerRecipeShopItemInfo;
+import org.l2jmobius.gameserver.network.serverpackets.FakePlayerRecipeShopSellList;
 import org.l2jmobius.gameserver.network.serverpackets.FakePlayerStoreListBuy;
 import org.l2jmobius.gameserver.network.serverpackets.FakePlayerStoreListSell;
 
@@ -71,11 +79,98 @@ public class FakePlayerStoreManager
 		{
 			player.sendPacket(new FakePlayerStoreListBuy(player, npc));
 		}
+		else if (look.getPrivateStoreType() == PrivateStoreType.MANUFACTURE.getId())
+		{
+			player.sendPacket(new FakePlayerRecipeShopSellList(player, npc));
+		}
 		else
 		{
 			player.sendPacket(new FakePlayerStoreListSell(player, npc));
 		}
 		return true;
+	}
+
+	/**
+	 * Sends the recipe preview the client asks for after a recipe is selected in a crafter's shop.
+	 */
+	public static void makeInfo(Player player, Npc npc, int recipeId)
+	{
+		final FakePlayerAppearance look = npc.getFakePlayerAppearance();
+		if ((look != null) && (look.getPrivateStoreType() == PrivateStoreType.MANUFACTURE.getId()))
+		{
+			player.sendPacket(new FakePlayerRecipeShopItemInfo(npc, recipeId));
+		}
+	}
+
+	/**
+	 * Player has a crafter bot make an item: the customer supplies the materials and pays the fee, the
+	 * bot rolls the recipe's success rate and (on success) hands over the product.
+	 */
+	public static void craft(Player player, Npc npc, int recipeListId)
+	{
+		final FakePlayerAppearance look = npc.getFakePlayerAppearance();
+		if ((look == null) || (look.getPrivateStoreType() != PrivateStoreType.MANUFACTURE.getId()) || !commonChecks(player, npc))
+		{
+			return;
+		}
+		if (player.isCrafting())
+		{
+			player.sendMessage("You are currently in Craft Mode.");
+			return;
+		}
+
+		// The recipe must be one this crafter actually offers.
+		FakePlayerCraftItem offered = null;
+		for (FakePlayerCraftItem entry : look.getCraftItems())
+		{
+			if (entry.getRecipeListId() == recipeListId)
+			{
+				offered = entry;
+				break;
+			}
+		}
+		final RecipeList recipe = offered == null ? null : RecipeData.getInstance().getRecipeList(recipeListId);
+		if (recipe == null)
+		{
+			player.sendPacket(ActionFailed.STATIC_PACKET);
+			return;
+		}
+
+		// Fee + materials are checked up front so nothing is consumed on a doomed attempt.
+		if (player.getAdena() < offered.getFee())
+		{
+			player.sendPacket(SystemMessageId.YOU_DO_NOT_HAVE_ENOUGH_ADENA);
+			return;
+		}
+		for (RecipeHolder material : recipe.getRecipes())
+		{
+			final Item owned = player.getInventory().getItemByItemId(material.getItemId());
+			if ((owned == null) || (owned.getCount() < material.getQuantity()))
+			{
+				player.sendMessage("You do not have the materials needed to craft this.");
+				return;
+			}
+		}
+
+		if (!player.reduceAdena(ItemProcessType.FEE, offered.getFee(), npc, true))
+		{
+			return;
+		}
+		for (RecipeHolder material : recipe.getRecipes())
+		{
+			player.destroyItemByItemId(ItemProcessType.CRAFT, material.getItemId(), material.getQuantity(), npc, true);
+		}
+
+		// Success uses the recipe's own rate; on failure the materials are still spent (as in normal craft).
+		if (Rnd.get(100) < recipe.getSuccessRate())
+		{
+			player.addItem(ItemProcessType.CRAFT, recipe.getItemId(), recipe.getCount(), npc, true);
+		}
+		else
+		{
+			player.sendMessage("The attempt to craft the item has failed.");
+		}
+		player.sendPacket(new FakePlayerRecipeShopSellList(player, npc)); // refresh adena/MP in the window
 	}
 
 	/**

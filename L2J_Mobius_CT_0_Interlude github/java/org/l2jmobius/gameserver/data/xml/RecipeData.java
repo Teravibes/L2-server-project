@@ -210,7 +210,15 @@ public class RecipeData implements IXmlReader
 	{
 		return _recipes.get(listId);
 	}
-	
+
+	/**
+	 * @return all loaded recipe lists
+	 */
+	public java.util.Collection<RecipeList> getAllRecipes()
+	{
+		return _recipes.values();
+	}
+
 	/**
 	 * Gets the recipe by item id.
 	 * @param itemId the item id
