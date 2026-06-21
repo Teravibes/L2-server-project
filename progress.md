@@ -188,8 +188,14 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
   `ChatWhisper` resolves it from the live world and `FakePlayerChatManager` replies via the brain.
   **AFK store vendors are intentionally silent** (treated as offline shops) in whisper, trade and say.
   Bots also get an `X-Location` (nearest town) so they answer "where are you?" truthfully.
+- **"Come meet me" (done):** in a whisper you can ask a roaming bot to meet you at a same-town spot
+  (gatekeeper / warehouse / shop) and it actually walks there. The brain agrees and appends a hidden
+  `[[MEET:spot]]` tag; `FakePlayerChatManager` strips it and calls `FakePlayerBehaviorManager.requestMeet`,
+  which resolves the spot to the nearest real Teleporter/Warehouse/Merchant NPC and drives a temporary
+  "summon" override in the FSM (it whispers "im here" on arrival, then resumes its routine after ~3 min).
+  Same-town only — long cross-town pathfinding is unreliable.
   **Next (Phase 2):** let a roaming seller sit + open a real private store on demand so you can
-  actually trade with one you tracked down — reuses the shop system.
+  actually trade with one you tracked down — reuses the shop system (arrival could be the trigger).
 
 ## 8. Suggested next steps
 

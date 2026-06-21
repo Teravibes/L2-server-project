@@ -42,12 +42,16 @@ import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Npc;
+import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PrivateStoreType;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerCraftItem;
 import org.l2jmobius.gameserver.model.actor.holders.npc.FakePlayerStoreItem;
+import org.l2jmobius.gameserver.model.actor.instance.Merchant;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
+import org.l2jmobius.gameserver.model.actor.instance.Teleporter;
+import org.l2jmobius.gameserver.model.actor.instance.Warehouse;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 
 /**
@@ -76,6 +80,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private static final long COMBAT_BACKOFF = 6000;
 	// A killed field bot is replaced (with a fresh identity) after roughly this long.
 	private static final long RESPAWN_DELAY = 45000;
+
+	// "Come meet me" override: how long a summon lasts, how close counts as arrived, and how far we look
+	// for the requested landmark NPC (kept tight so meetups stay within the bot's own town).
+	private static final long SUMMON_DURATION = 180000;
+	private static final int SUMMON_ARRIVE_DIST = 120;
+	private static final int SUMMON_SEARCH_RANGE = 6000;
 
 	// Procedural deployment: where auto-spawned bots are scattered and how wide.
 	// Default center is the Giran town square area; tune to taste.
@@ -127,6 +137,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		Phase phase = Phase.IDLE;
 		long nextActionTime;
 		int patrolIndex;
+
+		// Player-requested "come meet me" override: while set and unexpired, the bot walks to this spot
+		// (and lingers there) instead of following its profile.
+		Location summonTarget;
+		long summonExpire;
+		boolean summonArrived;
+		Player summonPlayer;
 
 		BotState(Profile profile, Location home, int radius, Population population)
 		{
@@ -597,6 +614,45 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			return;
 		}
 
+		// "Come meet me" override takes priority over the normal routine while it is active.
+		if (state.summonTarget != null)
+		{
+			if (now >= state.summonExpire)
+			{
+				// Time's up: drop the meetup and fall back to normal behavior.
+				state.summonTarget = null;
+				state.summonPlayer = null;
+				state.summonArrived = false;
+			}
+			else if (state.summonArrived)
+			{
+				return; // arrived: wait at the spot until the summon expires
+			}
+			else if (npc.isInCombat() || npc.isAttackingNow())
+			{
+				return; // let it fight; it resumes heading over afterwards
+			}
+			else if (npc.calculateDistance2D(state.summonTarget) <= SUMMON_ARRIVE_DIST)
+			{
+				state.summonArrived = true;
+				state.phase = Phase.IDLE;
+				if (state.summonPlayer != null)
+				{
+					FakePlayerChatManager.getInstance().sendChat(state.summonPlayer, npc.getName(), Rnd.nextBoolean() ? "im here" : "here, where are u");
+				}
+				return;
+			}
+			else
+			{
+				if (!npc.isMoving())
+				{
+					npc.setRunning();
+					npc.getAI().setIntention(Intention.MOVE_TO, GeoEngine.getInstance().getValidLocation(npc, state.summonTarget));
+				}
+				return;
+			}
+		}
+
 		// Let the combat AI run uninterrupted; resume wandering shortly after the fight.
 		if (npc.isInCombat() || npc.isAttackingNow())
 		{
@@ -695,6 +751,85 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * Asks a roaming bot to walk to a named meet spot near it (same-town only) and wait there a while.
+	 * Driven by the chat AI when the bot agrees in a whisper to "come meet" the player.
+	 * @param bot the bot to summon (must be one the behavior FSM controls; vendors/route bots are ignored)
+	 * @param spot a keyword like "gatekeeper", "warehouse" or "shop"
+	 * @param player who it is going to meet (gets an "im here" whisper on arrival)
+	 * @return {@code true} if the bot accepted and a destination was found
+	 */
+	public boolean requestMeet(Npc bot, String spot, Player player)
+	{
+		if ((bot == null) || (spot == null))
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		if (state == null)
+		{
+			return false; // not a behavior-controlled roaming bot
+		}
+		final Location destination = resolveMeetSpot(bot, spot);
+		if (destination == null)
+		{
+			return false; // no such landmark nearby (different town / unknown spot)
+		}
+		state.summonTarget = destination;
+		state.summonExpire = System.currentTimeMillis() + SUMMON_DURATION;
+		state.summonArrived = false;
+		state.summonPlayer = player;
+		return true;
+	}
+
+	/** Resolves a meet-spot keyword to the nearest matching town NPC's location, searching near the bot. */
+	private Location resolveMeetSpot(Npc bot, String spot)
+	{
+		final String s = spot.toLowerCase();
+		if (s.contains("gate") || s.equals("gk") || s.contains("teleport"))
+		{
+			return nearestNpcLocation(bot, Teleporter.class, false);
+		}
+		if (s.contains("ware") || s.equals("wh") || s.contains("freight"))
+		{
+			return nearestNpcLocation(bot, Warehouse.class, false);
+		}
+		if (s.contains("shop") || s.contains("merchant") || s.contains("store") || s.contains("grocer") || s.contains("smith"))
+		{
+			return nearestNpcLocation(bot, Merchant.class, true); // a plain merchant, not a gatekeeper
+		}
+		return null;
+	}
+
+	/**
+	 * @param excludeTeleporters {@code true} to skip Teleporters (they are Merchants too) when looking
+	 *            for a plain shop
+	 * @return the nearest in-range NPC of the given type, or {@code null}
+	 */
+	private Location nearestNpcLocation(Npc bot, Class<? extends Npc> type, boolean excludeTeleporters)
+	{
+		final List<Npc> found = new ArrayList<>();
+		World.getInstance().forEachVisibleObjectInRange(bot, type, SUMMON_SEARCH_RANGE, n ->
+		{
+			if (!excludeTeleporters || !(n instanceof Teleporter))
+			{
+				found.add(n);
+			}
+		});
+		Npc nearest = null;
+		double best = Double.MAX_VALUE;
+		for (Npc n : found)
+		{
+			final double distance = bot.calculateDistance2D(n);
+			if (distance < best)
+			{
+				best = distance;
+				nearest = n;
+			}
+		}
+		return nearest == null ? null : new Location(nearest.getX(), nearest.getY(), nearest.getZ());
 	}
 
 	public static FakePlayerBehaviorManager getInstance()

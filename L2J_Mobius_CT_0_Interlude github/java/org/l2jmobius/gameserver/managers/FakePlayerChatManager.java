@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.w3c.dom.Document;
 
@@ -65,6 +67,9 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final long AMBIENT_INTERVAL = 240000; // spontaneous trade line every ~4 min
 	private static final AtomicInteger MESSAGES_THIS_MINUTE = new AtomicInteger();
 	private static boolean SOCIAL_STARTED = false;
+
+	// The brain appends [[MEET:spot]] to a whisper when it agrees to walk over; we act on it then strip it.
+	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 
 	// Datapack-verified town centres, so a bot can truthfully say where it is when asked.
 	private static final String[] TOWN_NAMES =
@@ -140,7 +145,7 @@ public class FakePlayerChatManager implements IXmlReader
 		final String aiReply = askBrain(player.getName(), fpcName, message, nearestLocation(bot));
 		if (aiReply != null)
 		{
-			sendChat(player, fpcName, aiReply);
+			sendChat(player, fpcName, handleMeetRequest(aiReply, player, bot));
 			return;
 		}
 		
@@ -464,6 +469,26 @@ public class FakePlayerChatManager implements IXmlReader
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * If the bot's whisper reply carries a {@code [[MEET:spot]]} tag, send it walking to that spot, then
+	 * strip the tag so the player only sees the natural line.
+	 * @return the cleaned reply text
+	 */
+	private String handleMeetRequest(String reply, Player player, Npc bot)
+	{
+		if (reply == null)
+		{
+			return "";
+		}
+		final Matcher matcher = MEET_TAG.matcher(reply);
+		if (matcher.find() && (bot != null) && !isStoreVendor(bot))
+		{
+			FakePlayerBehaviorManager.getInstance().requestMeet(bot, matcher.group(1), player);
+		}
+		final String cleaned = matcher.replaceAll("").trim();
+		return cleaned.isEmpty() ? "omw" : cleaned;
 	}
 
 	/** A seated private-store vendor is an AFK shop and never chats. */
