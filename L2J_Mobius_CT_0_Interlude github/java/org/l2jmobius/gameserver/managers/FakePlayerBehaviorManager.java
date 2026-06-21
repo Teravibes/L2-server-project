@@ -83,11 +83,15 @@ public class FakePlayerBehaviorManager implements IXmlReader
 
 	// "Come meet me" override: how long a summon lasts, how close counts as arrived, and how far we look
 	// for the requested landmark NPC (kept tight so meetups stay within the bot's own town).
-	private static final long SUMMON_DURATION = 180000;
 	private static final int SUMMON_ARRIVE_DIST = 120;
 	private static final int SUMMON_SEARCH_RANGE = 6000;
-	// Give up walking over if it can't get there in this long (e.g. no path), instead of wall-banging.
+	// Travel time before giving up (e.g. no path) instead of wall-banging.
 	private static final long SUMMON_GIVEUP = 45000;
+	// While waiting at the meet spot: ask "still coming?" after this, then leave if no reply within the grace.
+	private static final long MEET_NUDGE_AFTER = 300000;
+	private static final long MEET_NUDGE_GRACE = 180000;
+	// Absolute safety: never hold a bot at a meet spot longer than this, whatever happens.
+	private static final long MEET_HARD_CAP = 1800000;
 
 	// Procedural deployment: where auto-spawned bots are scattered and how wide.
 	// Default center is the Giran town square area; tune to taste.
@@ -140,12 +144,14 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		long nextActionTime;
 		int patrolIndex;
 
-		// Player-requested "come meet me" override: while set and unexpired, the bot walks to this spot
-		// (and lingers there) instead of following its profile.
+		// Player-requested "come meet me" override: while set, the bot walks to this spot and then waits
+		// there (pinned) until the player shows up, calls it off, or stops answering.
 		Location summonTarget;
-		long summonStart;
-		long summonExpire;
+		long summonStart; // travel start (for the give-up timer)
+		long summonHardExpire; // absolute safety cap
 		boolean summonArrived;
+		long waitingSince; // start of the current wait window (reset whenever the player interacts)
+		boolean summonNudged; // already asked "still coming?" for this window
 		Player summonPlayer;
 
 		BotState(Profile profile, Location home, int radius, Population population)
@@ -620,16 +626,36 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		// "Come meet me" override takes priority over the normal routine while it is active.
 		if (state.summonTarget != null)
 		{
-			if (now >= state.summonExpire)
+			final Player who = state.summonPlayer;
+			if (now >= state.summonHardExpire)
 			{
-				// Time's up: drop the meetup and fall back to normal behavior.
-				state.summonTarget = null;
-				state.summonPlayer = null;
-				state.summonArrived = false;
+				endMeet(npc, state); // safety cap; fall through to normal behavior
 			}
 			else if (state.summonArrived)
 			{
-				return; // arrived: wait at the spot until the summon expires
+				// Waiting at the spot (pinned). Nudge once after a while, then leave if still no answer.
+				if (!state.summonNudged && ((now - state.waitingSince) > MEET_NUDGE_AFTER))
+				{
+					state.summonNudged = true;
+					state.waitingSince = now; // start the grace countdown
+					if (who != null)
+					{
+						FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), Rnd.nextBoolean() ? "u still coming?" : "still waiting, u coming or not?");
+					}
+					return;
+				}
+				if (state.summonNudged && ((now - state.waitingSince) > MEET_NUDGE_GRACE))
+				{
+					if (who != null)
+					{
+						FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), Rnd.nextBoolean() ? "guess not, im off" : "k im leaving, hit me up later");
+					}
+					endMeet(npc, state); // fall through to normal behavior
+				}
+				else
+				{
+					return; // keep waiting
+				}
 			}
 			else if (npc.isInCombat() || npc.isAttackingNow())
 			{
@@ -637,24 +663,27 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			}
 			else if (npc.calculateDistance2D(state.summonTarget) <= SUMMON_ARRIVE_DIST)
 			{
+				// Arrived: pin in place so the core AI doesn't immediately walk it back to its spawn.
 				state.summonArrived = true;
+				state.waitingSince = now;
+				state.summonNudged = false;
 				state.phase = Phase.IDLE;
-				if (state.summonPlayer != null)
+				npc.disableCoreAI(true);
+				npc.setImmobilized(true);
+				if (who != null)
 				{
-					FakePlayerChatManager.getInstance().sendChat(state.summonPlayer, npc.getName(), Rnd.nextBoolean() ? "im here" : "here, where are u");
+					FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), Rnd.nextBoolean() ? "im here" : "here, where are u");
 				}
 				return;
 			}
 			else if ((now - state.summonStart) > SUMMON_GIVEUP)
 			{
 				// Couldn't reach the spot (likely no path); stop trying and say so.
-				if (state.summonPlayer != null)
+				if (who != null)
 				{
-					FakePlayerChatManager.getInstance().sendChat(state.summonPlayer, npc.getName(), Rnd.nextBoolean() ? "cant get there, come to me?" : "im stuck, where r u exactly");
+					FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), Rnd.nextBoolean() ? "cant get there, come to me?" : "im stuck, where r u exactly");
 				}
-				state.summonTarget = null;
-				state.summonPlayer = null;
-				state.summonArrived = false;
+				endMeet(npc, state); // fall through to normal behavior
 			}
 			else
 			{
@@ -793,12 +822,65 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		{
 			return false; // no such landmark nearby (different town / unknown spot)
 		}
+		// Make sure it can move again (in case it was pinned waiting at a previous meet spot).
+		bot.setImmobilized(false);
+		bot.disableCoreAI(false);
 		state.summonTarget = destination;
 		state.summonStart = System.currentTimeMillis();
-		state.summonExpire = state.summonStart + SUMMON_DURATION;
+		state.summonHardExpire = state.summonStart + MEET_HARD_CAP;
 		state.summonArrived = false;
+		state.waitingSince = 0;
+		state.summonNudged = false;
 		state.summonPlayer = player;
 		return true;
+	}
+
+	/**
+	 * Player called the meetup off (or the bot decided to stop waiting): drop it and resume normal life.
+	 * @return {@code true} if the bot actually had a meetup to cancel
+	 */
+	public boolean cancelMeet(Npc bot)
+	{
+		if (bot == null)
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		if ((state == null) || (state.summonTarget == null))
+		{
+			return false;
+		}
+		endMeet(bot, state);
+		return true;
+	}
+
+	/**
+	 * The player just interacted with a bot that is waiting at a meet spot, so treat them as still
+	 * coming: reset the "still coming?" nudge timer and keep waiting.
+	 */
+	public void noteMeetInteraction(Npc bot, Player player)
+	{
+		if (bot == null)
+		{
+			return;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		if ((state != null) && state.summonArrived && (state.summonPlayer == player))
+		{
+			state.waitingSince = System.currentTimeMillis();
+			state.summonNudged = false;
+		}
+	}
+
+	/** Clears a meetup and un-pins the bot so its normal routine takes back over. */
+	private void endMeet(Npc bot, BotState state)
+	{
+		state.summonTarget = null;
+		state.summonPlayer = null;
+		state.summonArrived = false;
+		state.summonNudged = false;
+		bot.setImmobilized(false);
+		bot.disableCoreAI(false);
 	}
 
 	/** Resolves a meet-spot keyword to the nearest matching town NPC's location, searching near the bot. */

@@ -28,8 +28,10 @@ def whisper_persona(fpc):
             "NEVER say you are an AI or bot. Stay in character. Remember the conversation so far. "
             "If the player asks you to come meet them somewhere in your town and you agree to go now, end "
             "your reply with a tag on its own: [[MEET:X]] where X is one of: gatekeeper, warehouse, shop "
-            "(pick the closest match to where they want to meet). Only add the tag if you truly agree to "
-            "walk there now. Never mention, explain or read out the tag.")
+            "(pick the closest match to where they want to meet). "
+            "If they call it off / say they are not coming / tell you to forget it, end your reply with "
+            "[[MEET:cancel]] instead. If you are waiting and they say they are still coming, just reply "
+            "normally with no tag. Only add a tag when it truly fits. Never mention, explain or read out the tag.")
 
 def trade_persona(fpc):
     return (f"You are {fpc}, a real player in Lineage 2 (Interlude) reading the PUBLIC trade channel. "

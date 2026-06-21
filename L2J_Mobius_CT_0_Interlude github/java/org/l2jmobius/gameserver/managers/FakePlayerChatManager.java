@@ -483,12 +483,35 @@ public class FakePlayerChatManager implements IXmlReader
 			return "";
 		}
 		final Matcher matcher = MEET_TAG.matcher(reply);
-		if (matcher.find() && (bot != null) && !isStoreVendor(bot))
+		final boolean tagged = matcher.find();
+		boolean cancelled = false;
+		if ((bot != null) && !isStoreVendor(bot))
 		{
-			FakePlayerBehaviorManager.getInstance().requestMeet(bot, matcher.group(1), player);
+			if (tagged)
+			{
+				final String spot = matcher.group(1);
+				if ("cancel".equalsIgnoreCase(spot))
+				{
+					FakePlayerBehaviorManager.getInstance().cancelMeet(bot);
+					cancelled = true;
+				}
+				else
+				{
+					FakePlayerBehaviorManager.getInstance().requestMeet(bot, spot, player);
+				}
+			}
+			else
+			{
+				// No movement tag: if it is already waiting for this player, they are still engaged -> keep waiting.
+				FakePlayerBehaviorManager.getInstance().noteMeetInteraction(bot, player);
+			}
 		}
 		final String cleaned = matcher.replaceAll("").trim();
-		return cleaned.isEmpty() ? "omw" : cleaned;
+		if (!cleaned.isEmpty())
+		{
+			return cleaned;
+		}
+		return cancelled ? "k np" : "omw";
 	}
 
 	/** A seated private-store vendor is an AFK shop and never chats. */

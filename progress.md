@@ -191,9 +191,13 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 - **"Come meet me" (done):** in a whisper you can ask a roaming bot to meet you at a same-town spot
   (gatekeeper / warehouse / shop) and it actually walks there. The brain agrees and appends a hidden
   `[[MEET:spot]]` tag; `FakePlayerChatManager` strips it and calls `FakePlayerBehaviorManager.requestMeet`,
-  which resolves the spot to the nearest real Teleporter/Warehouse/Merchant NPC and drives a temporary
-  "summon" override in the FSM (it whispers "im here" on arrival, then resumes its routine after ~3 min).
-  Same-town only — long cross-town pathfinding is unreliable.
+  which resolves the spot to the nearest real Teleporter/Warehouse/Merchant NPC. The FSM aims `MOVE_TO`
+  at the **real** destination so the engine pathfinds around walls (no wall-banging; 45s give-up if no
+  path). On arrival it **pins itself** (`disableCoreAI`/`setImmobilized`) so the core AI can't drag it
+  back to spawn, and **waits**: it stays until you show up, you call it off (`[[MEET:cancel]]` →
+  `cancelMeet`), or you go quiet — after ~5 min it whispers "still coming?" and leaves if no reply within
+  3 min (any whisper resets the timer via `noteMeetInteraction`). Same-town only — long cross-town
+  pathfinding is unreliable.
   **Next (Phase 2):** let a roaming seller sit + open a real private store on demand so you can
   actually trade with one you tracked down — reuses the shop system (arrival could be the trigger).
 
