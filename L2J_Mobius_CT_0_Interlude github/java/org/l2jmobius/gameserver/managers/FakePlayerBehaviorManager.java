@@ -86,6 +86,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private static final long SUMMON_DURATION = 180000;
 	private static final int SUMMON_ARRIVE_DIST = 120;
 	private static final int SUMMON_SEARCH_RANGE = 6000;
+	// Give up walking over if it can't get there in this long (e.g. no path), instead of wall-banging.
+	private static final long SUMMON_GIVEUP = 45000;
 
 	// Procedural deployment: where auto-spawned bots are scattered and how wide.
 	// Default center is the Giran town square area; tune to taste.
@@ -141,6 +143,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		// Player-requested "come meet me" override: while set and unexpired, the bot walks to this spot
 		// (and lingers there) instead of following its profile.
 		Location summonTarget;
+		long summonStart;
 		long summonExpire;
 		boolean summonArrived;
 		Player summonPlayer;
@@ -642,12 +645,25 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				}
 				return;
 			}
+			else if ((now - state.summonStart) > SUMMON_GIVEUP)
+			{
+				// Couldn't reach the spot (likely no path); stop trying and say so.
+				if (state.summonPlayer != null)
+				{
+					FakePlayerChatManager.getInstance().sendChat(state.summonPlayer, npc.getName(), Rnd.nextBoolean() ? "cant get there, come to me?" : "im stuck, where r u exactly");
+				}
+				state.summonTarget = null;
+				state.summonPlayer = null;
+				state.summonArrived = false;
+			}
 			else
 			{
 				if (!npc.isMoving())
 				{
+					// Aim at the real destination (not a wall-clamped point) so the engine pathfinds around
+					// obstacles instead of repeatedly walking into a wall.
 					npc.setRunning();
-					npc.getAI().setIntention(Intention.MOVE_TO, GeoEngine.getInstance().getValidLocation(npc, state.summonTarget));
+					npc.getAI().setIntention(Intention.MOVE_TO, state.summonTarget);
 				}
 				return;
 			}
@@ -778,7 +794,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			return false; // no such landmark nearby (different town / unknown spot)
 		}
 		state.summonTarget = destination;
-		state.summonExpire = System.currentTimeMillis() + SUMMON_DURATION;
+		state.summonStart = System.currentTimeMillis();
+		state.summonExpire = state.summonStart + SUMMON_DURATION;
 		state.summonArrived = false;
 		state.summonPlayer = player;
 		return true;
