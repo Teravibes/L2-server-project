@@ -42,9 +42,9 @@ import org.l2jmobius.gameserver.network.serverpackets.FakePlayerStoreListSell;
 
 /**
  * Turns the visual fake-player vendors into working shops. It sends the right store window when a
- * vendor is clicked and carries out real purchases/sales: adena moves, items transfer, the vendor's
- * stock is decremented, and a depleted vendor restocks (with a fresh, matching sign) so the world
- * never runs dry.
+ * vendor is clicked and carries out real purchases/sales: adena moves, items transfer and the vendor's
+ * stock is decremented. A vendor that sells out closes its store (the sign disappears); fresh stock is
+ * generated for every vendor on server start, so the market repopulates each restart.
  * <p>
  * SELL/PACKAGE and BUY are fully transactional; CRAFT vendors are deployed as finished-goods SELL
  * stores, so they are purchasable too.
@@ -133,7 +133,7 @@ public class FakePlayerStoreManager
 			entry.decrease(bought.getValue());
 		}
 
-		restock(npc, look, false);
+		settle(npc, look);
 		player.sendPacket(new FakePlayerStoreListSell(player, npc));
 	}
 
@@ -205,7 +205,7 @@ public class FakePlayerStoreManager
 		}
 		player.addAdena(ItemProcessType.SELL, (int) total, npc, true);
 
-		restock(npc, look, true);
+		settle(npc, look);
 		player.sendPacket(new FakePlayerStoreListBuy(player, npc));
 	}
 
@@ -249,11 +249,10 @@ public class FakePlayerStoreManager
 	}
 
 	/**
-	 * Drops sold-out lines; when the whole store empties, generates a fresh stock and re-signs the
-	 * vendor so it keeps trading.
-	 * @param buying {@code true} for a BUY vendor (regenerate demand), {@code false} for SELL
+	 * Drops sold-out lines; when the whole store empties, the vendor closes (sign removed). Vendors are
+	 * not restocked at runtime on purpose — every server start generates fresh stock for them.
 	 */
-	private static void restock(Npc npc, FakePlayerAppearance look, boolean buying)
+	private static void settle(Npc npc, FakePlayerAppearance look)
 	{
 		final List<FakePlayerStoreItem> remaining = new ArrayList<>();
 		for (FakePlayerStoreItem entry : look.getStoreItems())
@@ -268,10 +267,9 @@ public class FakePlayerStoreManager
 			look.setStoreItems(remaining);
 			return;
 		}
-		final int level = look.getLevel();
-		final List<FakePlayerStoreItem> fresh = buying ? FakePlayerStoreFactory.generateBuy(level) : FakePlayerStoreFactory.generateSell(level);
-		look.setStoreItems(fresh);
-		look.setStore(look.getPrivateStoreType(), FakePlayerStoreFactory.title(buying ? "BUY" : "SELL", fresh));
-		npc.updateAbnormalEffect(); // refresh the sign above the vendor for everyone nearby
+		// Sold out: close the store so it can't be reopened, and drop the sign for everyone nearby.
+		look.setStoreItems(remaining);
+		look.setStore(0, "");
+		npc.updateAbnormalEffect();
 	}
 }

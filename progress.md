@@ -154,9 +154,10 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 - ✅ Town life: idler clusters around NPCs, purposeful VISIT movers, racial villages, Giran market.
 - ✅ Private shops (**functional**): seated SELL/BUY/CRAFT/PACKAGE vendors with item-accurate signs;
   click to open a real store window and actually buy/sell (adena moves, items transfer, stock
-  decrements, vendor restocks when empty). Stock is procedurally generated from the datapack item
-  table — realistic reference-price-based pricing, level-gated grades with weighted scarcity (S-grade
-  stays rare), and value-scaled bulk amounts. CRAFT vendors are deployed as finished-goods sellers.
+  decrements). A vendor that sells out **closes** (sign removed) — no runtime restock; fresh stock is
+  generated for every vendor on each server start. Stock is procedurally generated from the datapack
+  item table — realistic reference-price-based pricing, level-gated grades with weighted scarcity
+  (S-grade stays rare), and value-scaled bulk amounts. CRAFT vendors are deployed as finished-goods sellers.
 - ✅ Field hunters: 26 level-bracketed zones, monster-seeking FARM behavior, respawn.
 - ✅ Geodata-aware placement (Z-snap) and reduced wall-running.
 - ✅ Visual editor with in-browser geodata map, landmarks, polygon zones, visibility, opacity.
@@ -168,9 +169,10 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 - **Shops** (Phase 2 done): clicking a vendor opens a working store window and trades for real. Custom
   NPC-side packets (`FakePlayerStoreList{Sell,Buy}`) plus interception in `NpcClick` and
   `RequestPrivateStore{Buy,Sell}` route around the `Player`-only store path. CRAFT is currently a
-  finished-goods seller, not a true manufacture/recipe flow. Restock-on-empty is immediate (shops never
-  run dry — intentional for a solo world; revisit if you want them to occasionally close). Needs an
-  ant rebuild + in-game test (untestable in this dev env).
+  finished-goods seller, not a true manufacture/recipe flow. Sold-out vendors close (no runtime
+  restock — they repopulate on restart). Pricing markup + grade scarcity weights are hard-coded in
+  `FakePlayerStoreFactory` for now (config knobs are a planned follow-up). Needs an ant rebuild +
+  in-game test (untestable in this dev env).
 - **Map image**: must be supplied by the user (not in server files); calibration is bounds-based
   (a friendlier 2-click calibration was discussed but not built).
 - **Whisper to generated bots**: trade/say social uses the NPC instance and works; whispering a
