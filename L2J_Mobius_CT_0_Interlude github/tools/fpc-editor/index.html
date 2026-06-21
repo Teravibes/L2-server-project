@@ -64,6 +64,10 @@
 	.toolrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; margin-top: 8px; }
 	.toolrow button { min-width: 0; }
 	#mapWrap.dragover { outline: 2px solid #3a6df0; outline-offset: -2px; }
+
+	/* save confirmation toast */
+	#toast { position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(20px); background: #1d3326; color: #cfeede; border: 1px solid #2e9d62; padding: 10px 16px; border-radius: 8px; font-size: 13px; box-shadow: 0 6px 20px rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; max-width: 80%; }
+	#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -71,6 +75,7 @@
 	<div id="mapWrap">
 		<canvas id="map"></canvas>
 		<div id="hud">world: <span id="coord">0, 0</span></div>
+		<div id="toast"></div>
 	</div>
 	<div id="side">
 		<!-- ONE open, ONE save -->
@@ -802,21 +807,49 @@ function buildXml(){
 	out += '</list>\n';
 	return out;
 }
+let toastTimer = null;
+function toast(msg, bad){
+	const el = document.getElementById('toast');
+	el.innerHTML = msg;
+	el.style.background = bad ? '#33201d' : '#1d3326';
+	el.style.borderColor = bad ? '#b5432f' : '#2e9d62';
+	el.style.color = bad ? '#f0cfca' : '#cfeede';
+	el.classList.add('show');
+	clearTimeout(toastTimer);
+	toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+function downloadBlob(text, name, mime){
+	const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: mime })); a.download = name; a.click();
+}
+// Write a file straight into the remembered data folder (Chrome/Edge); returns false if not possible.
+async function writeFileToFolder(name, text){
+	if (!(rememberedHandle && rememberedHandle.getFileHandle)) return false;
+	const fh = await rememberedHandle.getFileHandle(name, { create: true });
+	const w = await fh.createWritable(); await w.write(text); await w.close();
+	return true;
+}
 async function saveXml(){
 	if (!xmlLoaded){ alert('Open your data folder first.'); return; }
+	const saved = [];
+	let direct = false;
 	const out = buildXml();
 	if (xmlFileHandle && xmlFileHandle.createWritable){
-		try {
-			const writable = await xmlFileHandle.createWritable();
-			await writable.write(out);
-			await writable.close();
-			document.getElementById('coord').textContent = 'saved ' + xmlFileName;
-			return;
-		}
+		try { const writable = await xmlFileHandle.createWritable(); await writable.write(out); await writable.close(); direct = true; saved.push(xmlFileName); }
 		catch (err){ alert('Could not overwrite the XML file directly. Downloading a copy instead.\n\n' + err.message); }
 	}
-	const blob = new Blob([out], { type: 'application/xml' });
-	const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = xmlFileName || 'FakePlayerBehavior.xml'; a.click();
+	if (!direct){ downloadBlob(out, xmlFileName || 'FakePlayerBehavior.xml', 'application/xml'); saved.push((xmlFileName || 'FakePlayerBehavior.xml') + ' (downloaded)'); }
+
+	// Persist image positions/sizes too, so they reload exactly as you left them.
+	if (mapImages.length){
+		const layoutText = JSON.stringify(makeImageLayout(), null, 2) + '\n';
+		const count = mapImages.length + ' image' + (mapImages.length === 1 ? '' : 's');
+		let wrote = false;
+		if (direct){ try { wrote = await writeFileToFolder('fpc-map-images.json', layoutText); } catch (err){ wrote = false; } }
+		if (wrote) saved.push('fpc-map-images.json (' + count + ')');
+		else { downloadBlob(layoutText, 'fpc-map-images.json', 'application/json'); saved.push('fpc-map-images.json — ' + count + ' (downloaded)'); }
+	}
+	document.getElementById('coord').textContent = 'saved ' + new Date().toLocaleTimeString();
+	toast('✓ Saved &nbsp;·&nbsp; ' + saved.join(' &nbsp;·&nbsp; '));
 }
 document.getElementById('saveXml').onclick = saveXml;
 
