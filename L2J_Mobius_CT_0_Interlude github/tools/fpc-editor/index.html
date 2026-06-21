@@ -31,6 +31,7 @@
 	#del { background: #b5432f; }
 	.muted { color: #9aa0aa; font-size: 11px; padding: 4px 12px 10px; line-height: 1.5; }
 	.cal { font-size: 11px; }
+	#mapWrap.dragover { outline: 2px solid #3a6df0; outline-offset: -2px; }
 </style>
 </head>
 <body>
@@ -49,24 +50,21 @@
 			<label style="margin:0;display:flex;align-items:center;gap:4px;color:#cfd2da"><input id="showMarks" type="checkbox" checked style="width:auto" />landmarks</label>
 			<button id="toggleAll" class="sec">Hide all</button>
 			<input id="xmlFile" type="file" accept=".xml" hidden />
-			<input id="imgFile" type="file" accept="image/*" hidden />
+			<input id="imgFile" type="file" accept="image/*" multiple hidden />
 			<input id="geoFile" type="file" accept=".l2j" multiple webkitdirectory hidden />
 		</div>
 
-		<details class="cal">
-			<summary style="padding:8px 12px; cursor:pointer; color:#9aa0aa;">Map calibration (world bounds of image)</summary>
-			<div class="row">
-				<div><label>minX</label><input id="bMinX" type="number" value="-130000" /></div>
-				<div><label>minY</label><input id="bMinY" type="number" value="-130000" /></div>
-			</div>
-			<div class="row">
-				<div><label>maxX</label><input id="bMaxX" type="number" value="130000" /></div>
-				<div><label>maxY</label><input id="bMaxY" type="number" value="130000" /></div>
-			</div>
+		<div class="cal">
+			<h2>Map images</h2>
+			<label><input id="editImages" type="checkbox" style="width:auto;margin-right:6px" />edit images</label>
 			<label>map image opacity</label>
 			<input id="imgOpacity" type="range" min="0" max="100" value="70" />
-			<div class="muted">The server files have no world map (it lives in the L2 client). If you extract/obtain a client world-map image you can load it here over the geodata, then nudge these bounds until landmarks line up. Only X/Y matter — the server snaps Z to ground.</div>
-		</details>
+			<div class="row" style="margin-top:8px">
+				<button id="fitImg" class="sec" style="flex:1">Fit selected</button>
+				<button id="removeImg" class="sec" style="flex:1">Remove selected</button>
+			</div>
+			<div id="imgStatus" class="muted">No map images loaded.</div>
+		</div>
 
 		<h2>Selected population</h2>
 		<div id="form">
@@ -115,12 +113,14 @@ let pops = [];            // editable population objects
 let preserved = { profiles: [], assigns: [], def: null }; // raw nodes re-emitted on save
 let profileNames = ['loiter','mill','stroller','visit_giran','farmer','hunter'];
 let selected = -1;
-let mapImg = null;
+let mapImages = []; // { img, name, x1, y1, x2, y2 }
+let selectedImage = -1;
 let geoRegions = []; // { rx, ry, canvas } rendered geodata tiles
 const cam = { x: -135000, y: -135000, scale: 0.0035 }; // world coord at top-left, px per world unit
 
 // Geodata constants (mirror the server's GeoEngine).
 const WORLD_MIN_X = -655360, WORLD_MIN_Y = -589824, REGION_WORLD = 32768, REGION_BLOCKS = 256;
+const IMAGE_HANDLE_SIZE = 9;
 
 // Known towns/villages (datapack-verified where possible) for orientation without a map image.
 const LANDMARKS = [
@@ -213,11 +213,15 @@ function draw(){
 			ctx.drawImage(g.canvas, sx, sy, ex - sx, ey - sy);
 		});
 	}
-	// map image
-	if (mapImg){
-		const minX = +bMinX.value, minY = +bMinY.value, maxX = +bMaxX.value, maxY = +bMaxY.value;
-		const [sx, sy] = w2s(minX, minY); const [ex, ey] = w2s(maxX, maxY);
-		ctx.globalAlpha = (+document.getElementById('imgOpacity').value) / 100; ctx.drawImage(mapImg, sx, sy, ex - sx, ey - sy); ctx.globalAlpha = 1;
+	// map images
+	if (mapImages.length){
+		ctx.globalAlpha = (+document.getElementById('imgOpacity').value) / 100;
+		mapImages.forEach(layer => {
+			const [sx, sy] = w2s(layer.x1, layer.y1); const [ex, ey] = w2s(layer.x2, layer.y2);
+			if (ex < 0 || ey < 0 || sx > cv.width || sy > cv.height) return;
+			ctx.drawImage(layer.img, sx, sy, ex - sx, ey - sy);
+		});
+		ctx.globalAlpha = 1;
 	}
 	// grid every 20k world units
 	ctx.strokeStyle = '#2a2c32'; ctx.lineWidth = 1; ctx.fillStyle = '#5a5c66'; ctx.font = '10px monospace';
@@ -258,10 +262,118 @@ function draw(){
 		ctx.beginPath(); ctx.arc(cx, cy, 3, 0, Math.PI * 2); ctx.fillStyle = col; ctx.fill();
 		if (cam.scale > 0.0015 || i === selected){ ctx.fillStyle = '#cfd2da'; ctx.font = '11px sans-serif'; ctx.fillText((p.name || '?') + ' ×' + (p.count || 0), cx + r + 3, cy + 3); }
 	});
+	drawImageSelection();
 }
 function polyCentroid(poly){ let x = 0, y = 0; poly.forEach(p => { x += p.x; y += p.y; }); return { x: Math.round(x / poly.length), y: Math.round(y / poly.length) }; }
 function polyRadius(poly, c){ let r = 0; poly.forEach(p => r = Math.max(r, Math.hypot(p.x - c.x, p.y - c.y))); return Math.round(r); }
 function pointInPoly(px, py, poly){ let inside = false; for (let i = 0, j = poly.length - 1; i < poly.length; j = i++){ const xi = poly[i].x, yi = poly[i].y, xj = poly[j].x, yj = poly[j].y; if (((yi > py) !== (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) inside = !inside; } return inside; }
+
+function imageScreenRect(layer){
+	const [sx, sy] = w2s(layer.x1, layer.y1); const [ex, ey] = w2s(layer.x2, layer.y2);
+	return { x: sx, y: sy, w: ex - sx, h: ey - sy };
+}
+function imageHandles(layer){
+	const r = imageScreenRect(layer);
+	return [
+		{ corner: 'nw', x: r.x, y: r.y, cursor: 'nwse-resize' },
+		{ corner: 'ne', x: r.x + r.w, y: r.y, cursor: 'nesw-resize' },
+		{ corner: 'sw', x: r.x, y: r.y + r.h, cursor: 'nesw-resize' },
+		{ corner: 'se', x: r.x + r.w, y: r.y + r.h, cursor: 'nwse-resize' }
+	];
+}
+function drawImageSelection(){
+	if ((selectedImage < 0) || !mapImages[selectedImage] || !document.getElementById('editImages').checked) return;
+	const r = imageScreenRect(mapImages[selectedImage]);
+	ctx.save();
+	ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]); ctx.strokeRect(r.x, r.y, r.w, r.h);
+	ctx.setLineDash([]);
+	imageHandles(mapImages[selectedImage]).forEach(h => {
+		ctx.fillStyle = '#15161a'; ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 1.5;
+		ctx.fillRect(h.x - IMAGE_HANDLE_SIZE / 2, h.y - IMAGE_HANDLE_SIZE / 2, IMAGE_HANDLE_SIZE, IMAGE_HANDLE_SIZE);
+		ctx.strokeRect(h.x - IMAGE_HANDLE_SIZE / 2, h.y - IMAGE_HANDLE_SIZE / 2, IMAGE_HANDLE_SIZE, IMAGE_HANDLE_SIZE);
+	});
+	ctx.restore();
+}
+function pointInImageRect(mx, my, layer){
+	const r = imageScreenRect(layer);
+	return mx >= Math.min(r.x, r.x + r.w) && mx <= Math.max(r.x, r.x + r.w) && my >= Math.min(r.y, r.y + r.h) && my <= Math.max(r.y, r.y + r.h);
+}
+function pickImageHit(mx, my){
+	if (!document.getElementById('editImages').checked) return null;
+	if ((selectedImage >= 0) && mapImages[selectedImage]){
+		for (const h of imageHandles(mapImages[selectedImage])){
+			if (Math.abs(mx - h.x) <= IMAGE_HANDLE_SIZE && Math.abs(my - h.y) <= IMAGE_HANDLE_SIZE) return { mode: 'image-resize', i: selectedImage, corner: h.corner, cursor: h.cursor };
+		}
+	}
+	for (let i = mapImages.length - 1; i >= 0; i--){
+		for (const h of imageHandles(mapImages[i])){
+			if (Math.abs(mx - h.x) <= IMAGE_HANDLE_SIZE && Math.abs(my - h.y) <= IMAGE_HANDLE_SIZE) return { mode: 'image-resize', i, corner: h.corner, cursor: h.cursor };
+		}
+		if (pointInImageRect(mx, my, mapImages[i])) return { mode: 'image-move', i, cursor: 'move' };
+	}
+	return null;
+}
+function fitImageToViewport(layer){
+	const maxW = cv.width * 0.7, maxH = cv.height * 0.7;
+	let sw = maxW, sh = sw * (layer.img.height / layer.img.width);
+	if (sh > maxH){ sh = maxH; sw = sh * (layer.img.width / layer.img.height); }
+	const [cx, cy] = s2w(cv.width / 2, cv.height / 2);
+	const ww = sw / cam.scale, wh = sh / cam.scale;
+	layer.x1 = Math.round(cx - ww / 2); layer.y1 = Math.round(cy - wh / 2);
+	layer.x2 = Math.round(cx + ww / 2); layer.y2 = Math.round(cy + wh / 2);
+}
+function selectImage(i){
+	selectedImage = i;
+	if (i >= 0){ selected = -1; syncFormClear(); }
+	updateImageStatus();
+	renderList();
+	draw();
+}
+function updateImageStatus(){
+	const el = document.getElementById('imgStatus');
+	if (!mapImages.length){ el.textContent = 'No map images loaded.'; return; }
+	const layer = mapImages[selectedImage];
+	el.textContent = layer ? `${selectedImage + 1}/${mapImages.length}: ${layer.name}` : `${mapImages.length} map image${mapImages.length === 1 ? '' : 's'} loaded.`;
+}
+function loadMapImageFile(file){
+	return new Promise(resolve => {
+		if (!file.type.startsWith('image/')){ resolve(false); return; }
+		const img = new Image();
+		img.onload = () => {
+			const layer = { img, name: file.name, x1: 0, y1: 0, x2: 0, y2: 0 };
+			fitImageToViewport(layer);
+			mapImages.push(layer);
+			selectImage(mapImages.length - 1);
+			document.getElementById('editImages').checked = true;
+			resolve(true);
+		};
+		img.onerror = () => resolve(false);
+		img.src = URL.createObjectURL(file);
+	});
+}
+async function loadMapImageFiles(files){
+	let loaded = 0;
+	for (const file of [...files]) loaded += await loadMapImageFile(file) ? 1 : 0;
+	if (loaded) updateImageStatus();
+	draw();
+}
+function resizeImageLayer(layer, corner, wx, wy){
+	const minWorld = Math.max(1, 24 / cam.scale);
+	wx = Math.round(wx); wy = Math.round(wy);
+	if (corner === 'nw' || corner === 'sw') layer.x1 = Math.min(wx, layer.x2 - minWorld);
+	if (corner === 'ne' || corner === 'se') layer.x2 = Math.max(wx, layer.x1 + minWorld);
+	if (corner === 'nw' || corner === 'ne') layer.y1 = Math.min(wy, layer.y2 - minWorld);
+	if (corner === 'sw' || corner === 'se') layer.y2 = Math.max(wy, layer.y1 + minWorld);
+	layer.x1 = Math.round(layer.x1); layer.y1 = Math.round(layer.y1); layer.x2 = Math.round(layer.x2); layer.y2 = Math.round(layer.y2);
+}
+function updateCanvasCursor(mx, my){
+	if (drawMode){ cv.style.cursor = 'copy'; return; }
+	const imgHit = pickImageHit(mx, my);
+	if (imgHit){ cv.style.cursor = imgHit.cursor; return; }
+	if (pickVertex(mx, my) >= 0){ cv.style.cursor = 'grab'; return; }
+	if (pickPop(mx, my) >= 0){ cv.style.cursor = 'move'; return; }
+	cv.style.cursor = 'crosshair';
+}
 
 // ---- interaction ----
 let drag = null, drawMode = false;
@@ -269,6 +381,9 @@ cv.addEventListener('mousedown', e => {
 	const mx = e.offsetX, my = e.offsetY; const [wx, wy] = s2w(mx, my);
 	// Zone drawing: each click drops a vertex on the selected population.
 	if (drawMode && selected >= 0){ const p = pops[selected]; (p.poly = p.poly || []).push({ x: Math.round(wx), y: Math.round(wy) }); draw(); return; }
+	const imgHit = pickImageHit(mx, my);
+	if (imgHit){ selectImage(imgHit.i); drag = { mode: imgHit.mode, i: imgHit.i, corner: imgHit.corner, px: wx, py: wy }; cv.style.cursor = imgHit.cursor; return; }
+	if (document.getElementById('editImages').checked && (selectedImage >= 0)){ selectedImage = -1; updateImageStatus(); draw(); }
 	// Drag an existing polygon vertex of the selected population.
 	const vi = pickVertex(mx, my);
 	if (vi >= 0){ drag = { mode: 'vertex', i: selected, v: vi }; return; }
@@ -279,7 +394,7 @@ cv.addEventListener('mousedown', e => {
 cv.addEventListener('mousemove', e => {
 	const [wx, wy] = s2w(e.offsetX, e.offsetY);
 	document.getElementById('coord').textContent = Math.round(wx) + ', ' + Math.round(wy);
-	if (!drag) return;
+	if (!drag){ updateCanvasCursor(e.offsetX, e.offsetY); return; }
 	if (drag.mode === 'pan'){ cam.x = drag.cx - (e.offsetX - drag.sx) / cam.scale; cam.y = drag.cy - (e.offsetY - drag.sy) / cam.scale; draw(); }
 	else if (drag.mode === 'vertex'){ const v = pops[drag.i].poly[drag.v]; v.x = Math.round(wx); v.y = Math.round(wy); draw(); }
 	else if (drag.mode === 'move'){ const p = pops[drag.i];
@@ -287,6 +402,8 @@ cv.addEventListener('mousemove', e => {
 		else { p.x = Math.round(wx); p.y = Math.round(wy); }
 		syncForm(); draw();
 	}
+	else if (drag.mode === 'image-move'){ const layer = mapImages[drag.i]; const dx = wx - drag.px, dy = wy - drag.py; layer.x1 = Math.round(layer.x1 + dx); layer.y1 = Math.round(layer.y1 + dy); layer.x2 = Math.round(layer.x2 + dx); layer.y2 = Math.round(layer.y2 + dy); drag.px = wx; drag.py = wy; draw(); }
+	else if (drag.mode === 'image-resize'){ resizeImageLayer(mapImages[drag.i], drag.corner, wx, wy); updateImageStatus(); draw(); }
 });
 window.addEventListener('mouseup', () => drag = null);
 window.addEventListener('keydown', e => { if (e.key === 'Escape' && drawMode){ setDrawMode(false); } });
@@ -312,7 +429,7 @@ function addPop(x, y){
 	pops.push({ name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false, poly: [] });
 	select(pops.length - 1); renderList(); draw();
 }
-function select(i){ selected = i; syncForm(); renderList(); }
+function select(i){ selected = i; selectedImage = -1; updateImageStatus(); syncForm(); renderList(); }
 function syncForm(){
 	const p = pops[selected]; if (!p) return;
 	for (const k of ['name','x','y','z','radius','count','minLevel','maxLevel','profile','race','store']) document.getElementById('f_' + k).value = p[k] ?? '';
@@ -329,7 +446,7 @@ document.querySelectorAll('#form input, #form select').forEach(el => el.addEvent
 document.getElementById('del').onclick = () => { if (selected < 0) return; pops.splice(selected, 1); selected = -1; renderList(); draw(); syncFormClear(); };
 document.getElementById('zoneBtn').onclick = () => { if (selected < 0){ alert('Select or add a population first, then draw its zone.'); return; } pops[selected].poly = pops[selected].poly || []; setDrawMode(!drawMode); };
 document.getElementById('clearZone').onclick = () => { if (selected < 0) return; pops[selected].poly = []; setDrawMode(false); draw(); };
-function syncFormClear(){ document.querySelectorAll('#form input').forEach(i => i.type === 'checkbox' ? i.checked = false : i.value = ''); }
+function syncFormClear(){ document.querySelectorAll('#form input, #form select').forEach(i => i.type === 'checkbox' ? i.checked = false : i.value = ''); }
 document.getElementById('addBtn').onclick = () => { const [wx, wy] = s2w(cv.width / 2, cv.height / 2); addPop(Math.round(wx), Math.round(wy)); };
 
 function renderList(){
@@ -352,8 +469,18 @@ document.getElementById('imgOpacity').addEventListener('input', draw);
 document.getElementById('loadXml').onclick = () => document.getElementById('xmlFile').click();
 document.getElementById('xmlFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const r = new FileReader(); r.onload = () => parseXml(r.result); r.readAsText(f); };
 document.getElementById('loadImg').onclick = () => document.getElementById('imgFile').click();
-document.getElementById('imgFile').onchange = e => { const f = e.target.files[0]; if (!f) return; const img = new Image(); img.onload = () => { mapImg = img; draw(); }; img.src = URL.createObjectURL(f); };
-['bMinX','bMinY','bMaxX','bMaxY'].forEach(id => document.getElementById(id).addEventListener('input', draw));
+document.getElementById('imgFile').onchange = e => { if (!e.target.files.length) return; loadMapImageFiles(e.target.files); e.target.value = ''; };
+document.getElementById('editImages').addEventListener('change', e => { if (e.target.checked && (selectedImage < 0) && mapImages.length) selectImage(mapImages.length - 1); else draw(); });
+document.getElementById('fitImg').onclick = () => { if ((selectedImage < 0) || !mapImages[selectedImage]) return; fitImageToViewport(mapImages[selectedImage]); draw(); };
+document.getElementById('removeImg').onclick = () => {
+	if ((selectedImage < 0) || !mapImages[selectedImage]) return;
+	mapImages.splice(selectedImage, 1);
+	selectedImage = Math.min(selectedImage, mapImages.length - 1);
+	updateImageStatus(); draw();
+};
+wrap.addEventListener('dragover', e => { e.preventDefault(); wrap.classList.add('dragover'); });
+wrap.addEventListener('dragleave', () => wrap.classList.remove('dragover'));
+wrap.addEventListener('drop', e => { e.preventDefault(); wrap.classList.remove('dragover'); if (e.dataTransfer.files.length) loadMapImageFiles(e.dataTransfer.files); });
 document.getElementById('showMarks').addEventListener('change', draw);
 
 function parseXml(text){

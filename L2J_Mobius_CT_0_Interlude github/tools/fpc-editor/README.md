@@ -17,11 +17,10 @@ Double-click `index.html` (or right-click → Open with → your browser).
    the `.l2j` files in the browser and renders the actual world map (height relief; towns/dungeons
    tinted) **behind** the landmarks, perfectly aligned to coordinates — no calibration, no external
    image. Parsing a full pack takes a few seconds. This is the easiest way to see the real world.
-4. *(optional)* **Map image** — alternatively, if you have a community L2 world-map image, load it as a background, then open
-   **Map calibration** and nudge the `minX/minY/maxX/maxY` world bounds until landmarks line
-   up with the population circles. (Only X/Y matter — with geodata loaded the server snaps Z
-   to the ground.)
-3. **Edit:**
+4. *(optional)* **Map images** - load one or more community L2 world-map images as overlays, or
+   drop them directly onto the map. Turn on **edit images**, drag an image to position it, and
+   drag its corner handles to resize it against landmarks/geodata.
+5. **Edit:**
    - **Double-click** the map to drop a new population there.
    - **Drag** a circle to move it; the X/Y update live.
    - **Click** a circle (or a list row) to edit its fields: count, level range, profile,
@@ -31,7 +30,7 @@ Double-click `index.html` (or right-click → Open with → your browser).
      shop districts). Drag vertices to adjust; double-click or **Esc** to finish; **Clear zone** to
      revert to a circle. Saved as `<point>` vertices under the population.
    - **Wheel** to zoom, **drag empty space** to pan. The geodata map is crisp when zoomed in.
-4. **Save XML** — downloads an updated `FakePlayerBehavior.xml`. Drop it into your live
+6. **Save XML** — downloads an updated `FakePlayerBehavior.xml`. Drop it into your live
    server's `game/data/` and restart (or reload).
 
 ## Colors
