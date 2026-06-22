@@ -230,26 +230,44 @@ real-Player phantoms** (combat/leveling).
 (`if (_client != null)`), the `gameserver/ai` package has **zero** direct `getClient().` derefs, and
 offline traders already prove clientless Players live in the World loop and are visible to others.
 
-**Slice scope (done):** create/spawn a clientless `FIGHTER` phantom and tick it (every 4s) to seek and
-**melee** the nearest monster, sitting to rest when nothing is in range. A clientless Player's AI is
-event-driven, so the tick **re-issues `Intention.ATTACK`** each cycle to keep combat moving.
+**Combat = native auto-hunt (key decision).** Instead of hand-rolling a combat FSM (or porting
+miacodeweb's `PhantomAI`), phantoms are driven by the engine's own **`AutoPlayTaskManager` +
+`AutoUseTaskManager`** — the exact systems `OfflinePlayTable.restoreOfflinePlayers` uses to make a
+clientless player farm. They handle target-finding, movement (geodata pathfinding), attacking, and —
+once phantoms are leveled/geared — skills, buffs, soulshots and potions, all tested and maintained
+upstream. `PhantomManager` now owns only the **macro** layer.
 
-- `managers/PhantomManager.java` — lifecycle (`spawnPhantom`/`clear`/`count`) + hunting tick.
+**Done (increment 2):**
+- `managers/PhantomManager.java`
+  - Spawn a clientless `FIGHTER` (offline-play pattern: `setOnlineStatus` → `spawnMe` →
+    `setOfflinePlay(true)` → `broadcastUserInfo`). `setOfflinePlay(true)` is **required** — a phantom
+    has `_client == null`, so `isInOfflineMode()` is true, and without the offline-play flag AutoPlay
+    would immediately stop the task.
+  - `enableAutoHunt`: sets `AutoPlaySettings` (target mode = monsters, long range, pickup on), adds
+    auto-action `2` (basic melee — without it AutoPlay treats the char as a non-hitting mage caster),
+    then `startAutoPlay` + `startAutoUseTask`.
+  - Light **supervisor** tick (5s): forgets phantoms that left the world; **revives** dead ones at
+    their home spot after 15s and resumes hunting.
 - `handlers/chat/commands/admin/AdminPhantom.java` — `//phantom spawn [count] | clear | count`
   (registered in `MasterHandler.java`).
 
-**Deliberately NOT done yet (next increments):** skills/buffs/shots, PvP/PK, MP-flee + town rest,
-relocate-after-N-failed-searches, gearing, procedural identities, persistence/respawn, config knobs.
-These follow miacodeweb/L2-Phantom-AI's `PhantomAI` heuristics as a *blueprint*, reimplemented for
-Interlude (its Essence skill/class IDs don't port).
+**REQUIRED config:** set `EnableAutoPlay = True` in `config/Custom/AutoPlay.ini` (default false). With
+it off, phantoms spawn but stand still (the manager logs a warning).
+
+**Deliberately NOT done yet (next increments):** leveling + learning class skills, gearing
+(weapon/armor) + registering soulshots/skills/buffs into `getAutoUseSettings()`, hunting-zone routing
+& relocate-when-area-empty, PvP target mode, procedural identities, persistence across restarts, DB
+cleanup, config knobs. miacodeweb's `PhantomFactory`/`PhantomEquipment`/`PhantomProgression` are the
+*blueprint* for the level/skill/gear step (reimplemented for Interlude IDs).
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
+- Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.
 - `clear()` despawns via `Player.deleteMe()` but does **not** delete the DB row, so repeated
-  spawn/clear cycles leave orphan `phantom`-account characters. Fine for a slice; add cleanup later.
-- Confirm the clientless Player's `PlayerAI` actually carries out `ATTACK` between ticks (re-issuing
-  every 4s is the safety net). If it stalls, drive `doAttack`/movement more directly.
-- Watch for any **unguarded** `getClient().x()` outside the AI package triggered during combat/skill
-  effects; add null-checks reactively (offline traders suggest the common paths are already safe).
+  spawn/clear cycles leave orphan `phantom`-account characters. Add DB cleanup later.
+- A level-1 fighter with no weapon melees with fists and is weak — expected until the gearing/leveling
+  increment. Verify it actually finds, walks to, and hits a low-level mob.
+- Watch for any **unguarded** `getClient().x()` outside the AI package during combat/skill effects;
+  add null-checks reactively (offline-play characters suggest the common paths are already safe).
 
 ---
 

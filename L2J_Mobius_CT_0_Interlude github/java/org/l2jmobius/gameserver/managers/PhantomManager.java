@@ -27,30 +27,33 @@ import java.util.logging.Logger;
 
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.Rnd;
-import org.l2jmobius.gameserver.ai.Intention;
+import org.l2jmobius.gameserver.config.custom.AutoPlayConfig;
 import org.l2jmobius.gameserver.data.sql.CharInfoTable;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.World;
-import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
-import org.l2jmobius.gameserver.model.actor.instance.Monster;
+import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
+import org.l2jmobius.gameserver.taskmanagers.AutoPlayTaskManager;
+import org.l2jmobius.gameserver.taskmanagers.AutoUseTaskManager;
 
 /**
- * Real-Player phantom system (vertical slice).
+ * Real-Player phantom system.
  * <p>
- * Unlike the NPC-based {@link FakePlayerBehaviorManager} (which renders NPCs to <i>look</i> like
- * players), a phantom here is a genuine {@link Player} database object with no client attached - the
- * same clientless-Player pattern Mobius already uses for offline traders
- * ({@code OfflineTraderTable.restoreOfflineTraders}). That gives a phantom real skills, inventory,
- * stats, leveling and PvP eligibility that an NPC cannot have.
+ * A phantom is a genuine {@link Player} database object with no client attached - the same
+ * clientless-Player pattern Mobius ships for offline traders / offline-play
+ * ({@code OfflineTraderTable}, {@code OfflinePlayTable}). That gives it real skills, inventory, stats,
+ * leveling and PvP eligibility an NPC cannot have.
  * <p>
- * This slice does the minimum end-to-end: create/spawn a clientless fighter, then tick it to seek and
- * melee the nearest monster, resting when there is nothing to hit. Skills, buffs, shots, PvP, gearing,
- * persistence and procedural identities are deliberately left for later increments.
+ * <b>Combat is delegated to the engine's native auto-hunt</b> ({@link AutoPlayTaskManager} +
+ * {@link AutoUseTaskManager}) - the exact systems {@code OfflinePlayTable.restoreOfflinePlayers}
+ * uses to make a clientless player farm. They handle target selection, movement (geodata
+ * pathfinding), attacking, and - once a phantom has them - skills, buffs, soulshots and potions. This
+ * manager only owns the <b>macro</b> layer: spawning, supervision and reviving. Hunting-zone routing
+ * and procedural identities/gear are later increments.
  * @author Claude
  */
 public class PhantomManager
@@ -58,29 +61,50 @@ public class PhantomManager
 	private static final Logger LOGGER = Logger.getLogger(PhantomManager.class.getName());
 
 	private static final String ACCOUNT_NAME = "phantom";
-	// How often each phantom re-evaluates what to do. A clientless Player's AI is event-driven, so we
-	// re-issue its intention on every tick to keep combat moving forward (mirrors the offline-trader idea
-	// of the server driving a Player that has no client of its own).
-	private static final long TICK_INTERVAL = 4000;
-	// How far a phantom looks for something to kill.
-	private static final int HUNT_RANGE = 1600;
+	// Supervisor cadence: cleanup gone phantoms and revive dead ones. Combat runs on AutoPlay's own
+	// 700ms loop, so this can be lazy.
+	private static final long SUPERVISE_INTERVAL = 5000;
+	// How long a dead phantom stays down before it is revived at its home spot and resumes hunting.
+	private static final long REVIVE_DELAY = 15000;
+	// AutoPlay "next target" modes (mirrors the client toggle): 1 = monsters only.
+	private static final int TARGET_MODE_MONSTER = 1;
+	// AutoPlay auto-action id for the basic melee attack. Without it, AutoPlay treats the character as a
+	// mage caster that never auto-hits (see AutoPlayTaskManager.isMageCaster).
+	private static final int AUTO_ATTACK_ACTION = 2;
 
-	private final List<Player> _phantoms = new ArrayList<>();
-	private final ConcurrentHashMap<Integer, Player> _byObjectId = new ConcurrentHashMap<>();
-	private boolean _ticking = false;
+	private static class PhantomData
+	{
+		final Player player;
+		final Location home;
+		long deadSince; // 0 while alive
+
+		PhantomData(Player player, Location home)
+		{
+			this.player = player;
+			this.home = home;
+		}
+	}
+
+	private final ConcurrentHashMap<Integer, PhantomData> _phantoms = new ConcurrentHashMap<>();
+	private boolean _supervising = false;
 
 	protected PhantomManager()
 	{
 	}
 
 	/**
-	 * Creates a brand-new clientless fighter phantom and spawns it at the given location, then registers
-	 * it with the hunting tick.
-	 * @param location where to spawn
+	 * Creates a brand-new clientless fighter phantom, spawns it, and hands it to the native auto-hunt so
+	 * it seeks and fights monsters on its own.
+	 * @param location where to spawn (also its revive home)
 	 * @return the spawned phantom, or {@code null} on failure
 	 */
 	public Player spawnPhantom(Location location)
 	{
+		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - phantoms will spawn but not hunt.");
+		}
+
 		try
 		{
 			final PlayerTemplate template = PlayerTemplateData.getInstance().getTemplate(PlayerClass.FIGHTER);
@@ -98,20 +122,11 @@ public class PhantomManager
 				return null;
 			}
 
-			// Full bars and an online flag so it behaves like a live character, then drop it into the world
-			// exactly the way offline traders are restored - no GameClient is ever attached.
-			phantom.setOnlineStatus(true, false);
-			phantom.setCurrentHp(phantom.getMaxHp());
-			phantom.setCurrentMp(phantom.getMaxMp());
-			phantom.setCurrentCp(phantom.getMaxCp());
-			phantom.spawnMe(location.getX(), location.getY(), location.getZ());
-			phantom.setOnlineStatus(true, true);
-			phantom.broadcastUserInfo();
-			phantom.setRunning();
+			bringOnline(phantom, location);
+			enableAutoHunt(phantom);
 
-			_phantoms.add(phantom);
-			_byObjectId.put(phantom.getObjectId(), phantom);
-			startTicking();
+			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location));
+			startSupervising();
 			LOGGER.info(getClass().getSimpleName() + ": Spawned phantom '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ").");
 			return phantom;
 		}
@@ -122,24 +137,63 @@ public class PhantomManager
 		}
 	}
 
-	/** Despawns and forgets every phantom (slice cleanup; does not delete the DB rows). */
+	/**
+	 * Drops a clientless player into the world exactly the way offline-play characters are restored - no
+	 * GameClient is ever attached. {@code setOfflinePlay(true)} is required so the AutoPlay loop does not
+	 * treat the missing client as a plain offline-shop and stop the task.
+	 */
+	private void bringOnline(Player phantom, Location location)
+	{
+		phantom.setOnlineStatus(true, false);
+		phantom.setCurrentHp(phantom.getMaxHp());
+		phantom.setCurrentMp(phantom.getMaxMp());
+		phantom.setCurrentCp(phantom.getMaxCp());
+		phantom.spawnMe(location.getX(), location.getY(), location.getZ());
+		phantom.setOfflinePlay(true);
+		phantom.setOnlineStatus(true, true);
+		phantom.setRunning();
+		phantom.broadcastUserInfo();
+	}
+
+	/**
+	 * Configures the auto-hunt preferences and starts the native AutoPlay + AutoUse tasks. Skills, buffs
+	 * and soulshots would be registered here too (via {@code getAutoUseSettings()}) once phantoms are
+	 * leveled and geared - the basic melee action is enough for the current fighter.
+	 */
+	private void enableAutoHunt(Player phantom)
+	{
+		final AutoPlaySettingsHolder settings = phantom.getAutoPlaySettings();
+		settings.setNextTargetMode(TARGET_MODE_MONSTER);
+		settings.setShortRange(false); // search the long range so it actually goes looking for mobs
+		settings.setRespectfulHunting(false); // do not skip mobs already targeting something
+		settings.setPickup(true);
+
+		// Melee auto-attack; without this AutoPlay assumes a non-hitting mage caster.
+		phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
+
+		AutoPlayTaskManager.getInstance().startAutoPlay(phantom);
+		AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
+	}
+
+	/** Despawns and forgets every phantom (does not delete the DB rows). */
 	public int clear()
 	{
 		int removed = 0;
-		for (Player phantom : new ArrayList<>(_phantoms))
+		for (PhantomData data : new ArrayList<>(_phantoms.values()))
 		{
 			try
 			{
-				phantom.deleteMe();
+				AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
+				AutoUseTaskManager.getInstance().stopAutoUseTask(data.player);
+				data.player.deleteMe();
 				removed++;
 			}
 			catch (Exception e)
 			{
-				LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + phantom.getObjectId() + ": " + e.getMessage());
+				LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + data.player.getObjectId() + ": " + e.getMessage());
 			}
 		}
 		_phantoms.clear();
-		_byObjectId.clear();
 		return removed;
 	}
 
@@ -148,87 +202,72 @@ public class PhantomManager
 		return _phantoms.size();
 	}
 
-	private synchronized void startTicking()
+	private synchronized void startSupervising()
 	{
-		if (_ticking)
+		if (_supervising)
 		{
 			return;
 		}
-		_ticking = true;
-		ThreadPool.scheduleAtFixedRate(this::tick, TICK_INTERVAL, TICK_INTERVAL);
-		LOGGER.info(getClass().getSimpleName() + ": Phantom tick started.");
+		_supervising = true;
+		ThreadPool.scheduleAtFixedRate(this::supervise, SUPERVISE_INTERVAL, SUPERVISE_INTERVAL);
+		LOGGER.info(getClass().getSimpleName() + ": Phantom supervisor started.");
 	}
 
-	private void tick()
+	private void supervise()
 	{
-		for (Player phantom : new ArrayList<>(_phantoms))
+		final long now = System.currentTimeMillis();
+		for (PhantomData data : new ArrayList<>(_phantoms.values()))
 		{
+			final Player phantom = data.player;
 			try
 			{
-				// Drop phantoms that died or otherwise left the world; this slice does not respawn them yet.
-				if (phantom.isDead() || (World.getInstance().findObject(phantom.getObjectId()) == null))
+				// Forget phantoms that left the world for good.
+				if (World.getInstance().findObject(phantom.getObjectId()) == null)
 				{
-					_phantoms.remove(phantom);
-					_byObjectId.remove(phantom.getObjectId());
+					_phantoms.remove(phantom.getObjectId());
 					continue;
 				}
-				process(phantom);
+
+				if (phantom.isDead())
+				{
+					if (data.deadSince == 0)
+					{
+						data.deadSince = now;
+					}
+					else if ((now - data.deadSince) >= REVIVE_DELAY)
+					{
+						revive(data);
+					}
+					continue;
+				}
+
+				// Alive again / still alive: clear the death stamp.
+				data.deadSince = 0;
 			}
 			catch (Exception e)
 			{
-				LOGGER.warning(getClass().getSimpleName() + ": Tick error for " + phantom.getName() + ": " + e.getMessage());
+				LOGGER.warning(getClass().getSimpleName() + ": Supervise error for " + phantom.getName() + ": " + e.getMessage());
 			}
 		}
 	}
 
-	private void process(Player phantom)
+	/** Brings a dead phantom back to full health at its home spot and resumes the auto-hunt. */
+	private void revive(PhantomData data)
 	{
-		// Let an in-progress attack run; we only redirect when idle so we do not interrupt every swing.
-		if (phantom.isAttackingNow() || phantom.isCastingNow())
+		final Player phantom = data.player;
+		phantom.doRevive();
+		phantom.setCurrentHp(phantom.getMaxHp());
+		phantom.setCurrentMp(phantom.getMaxMp());
+		phantom.setCurrentCp(phantom.getMaxCp());
+		phantom.teleToLocation(data.home);
+		phantom.setRunning();
+		data.deadSince = 0;
+		// AutoPlay keeps the player pooled across death; only restart if it somehow dropped out.
+		if (!phantom.isAutoPlaying())
 		{
-			return;
+			AutoPlayTaskManager.getInstance().startAutoPlay(phantom);
+			AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
 		}
-
-		final Monster target = nearestMonster(phantom);
-		if (target != null)
-		{
-			phantom.setRunning();
-			phantom.setTarget(target);
-			// ATTACK drives the full engine path: walk into range via geodata, then auto-attack.
-			phantom.getAI().setIntention(Intention.ATTACK, target);
-			return;
-		}
-
-		// Nothing to hit nearby: sit and recover instead of pacing around.
-		if (!phantom.isSitting())
-		{
-			phantom.getAI().setIntention(Intention.IDLE);
-			phantom.sitDown();
-		}
-	}
-
-	private Monster nearestMonster(Player phantom)
-	{
-		final List<Monster> found = new ArrayList<>();
-		World.getInstance().forEachVisibleObjectInRange(phantom, Monster.class, HUNT_RANGE, monster ->
-		{
-			if (!monster.isDead() && !monster.isAlikeDead())
-			{
-				found.add(monster);
-			}
-		});
-		Monster nearest = null;
-		double best = Double.MAX_VALUE;
-		for (Monster monster : found)
-		{
-			final double distance = phantom.calculateDistance2D(monster);
-			if (distance < best)
-			{
-				best = distance;
-				nearest = monster;
-			}
-		}
-		return nearest;
 	}
 
 	/** Generates a unique character name not already taken in the DB (slice naming; identities come later). */
