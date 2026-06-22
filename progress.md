@@ -318,16 +318,24 @@ it off, phantoms spawn but stand still (the manager logs a warning).
   `pickForSlot` rolls one at random; armor **completeness varies** (chest almost always; helmet/gloves
   often skipped) so a group is not a row of identical clones. Applies to respawns too.
 
-**Performance note (discussed):** phantoms are full `Player` objects, far heavier than NPC fake players
-(700ms auto-hunt loop with geodata LOS/path checks, per-Player tasks, combat). Realistic scale is dozens
-to ~100-150, not the hundreds NPCs handle. Recommended next safeguard: **proximity dormancy** (pause a
-phantom's auto-hunt when no real player is near its region; resume on approach — ideal for solo play) +
-a **hard cap** + skipping phantom auto-save.
+**Done (increment 8 — proximity dormancy + cap):**
+- **Proximity dormancy:** the supervisor pauses a phantom's auto-hunt (`stopAutoPlay`/`stopAutoUseTask`
+  + park via `Intention.IDLE`) when no genuine client-connected player is within `SLEEP_RANGE` (4500),
+  and resumes (`startAutoPlay`/`startAutoUseTask`) within `WAKE_RANGE` (3500). Hysteresis stops flapping.
+  Observers are `World.getPlayers()` filtered by `!isInOfflineMode()` (excludes phantoms/offline shops).
+  For solo play this means only the handful of phantoms around you actually compute the 700ms loop.
+- **Hard cap:** `MAX_PHANTOMS` (200) safety ceiling enforced in `createAndSpawn` (covers deploy, respawn
+  and admin spawns) — caps total live `Player` objects (memory), independent of dormancy (CPU).
 
-**Deliberately NOT done yet (next increments):** **proximity dormancy + cap** (perf/scale), runtime shot
-restock, 1st/2nd **class transfer** (richer kits), hunting-zone relocate-when-empty, PvP target mode,
-persistence across restarts, DB cleanup of orphan phantom rows, config knobs, and **parties** (engine
-already supports auto-assist + offline-play party restore).
+**Performance context:** phantoms are full `Player` objects (700ms auto-hunt with geodata LOS/path
+checks, per-Player tasks, combat), far heavier than NPC fake players. Dormancy cuts the CPU of distant
+phantoms to ~nil; the cap bounds memory. A large world-filling population is now viable for solo play
+because only nearby phantoms are live.
+
+**Deliberately NOT done yet (next increments):** skip phantom **auto-save** (transient chars — minor I/O
+win), runtime shot restock, 1st/2nd **class transfer** (richer kits), hunting-zone relocate-when-empty,
+PvP target mode, persistence across restarts, DB cleanup of orphan phantom rows, config knobs for the
+ranges/cap, and **parties** (engine already supports auto-assist + offline-play party restore).
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.

@@ -34,6 +34,7 @@ import org.w3c.dom.Document;
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
+import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.custom.AutoPlayConfig;
 import org.l2jmobius.gameserver.data.sql.CharInfoTable;
 import org.l2jmobius.gameserver.data.xml.ExperienceData;
@@ -113,6 +114,13 @@ public class PhantomManager implements IXmlReader
 	// How many (cheapest) candidate items to keep per slot/grade, so phantoms vary their look without
 	// pulling in rare/expensive drops.
 	private static final int CANDIDATES_PER_SLOT = 6;
+	// Safety ceiling on total live phantom Player objects (each is far heavier than an NPC fake player).
+	private static final int MAX_PHANTOMS = 200;
+	// Proximity dormancy: a phantom only runs the (costly) auto-hunt while a real, client-connected player
+	// is near. Hysteresis (wake closer than sleep) stops it flapping at the boundary. Ideal for solo play:
+	// only the handful of phantoms around you actually compute.
+	private static final int WAKE_RANGE = 3500;
+	private static final int SLEEP_RANGE = 4500;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -148,6 +156,7 @@ public class PhantomManager implements IXmlReader
 		final Location home;
 		final Population population; // null for ad-hoc (admin) spawns
 		long deadSince; // 0 while alive
+		boolean dormant; // auto-hunt paused because no real player is near
 
 		PhantomData(Player player, Location home, Population population)
 		{
@@ -347,6 +356,10 @@ public class PhantomManager implements IXmlReader
 	 */
 	private Player createAndSpawn(Location location, int level, Population population)
 	{
+		if (_phantoms.size() >= MAX_PHANTOMS)
+		{
+			return null; // safety ceiling reached
+		}
 		try
 		{
 			// Random race/body type from the melee-fighter pool; fall back to Human Fighter if a template
@@ -778,6 +791,7 @@ public class PhantomManager implements IXmlReader
 	private void supervise()
 	{
 		final long now = System.currentTimeMillis();
+		final List<Player> observers = onlineObservers();
 		for (PhantomData data : new ArrayList<>(_phantoms.values()))
 		{
 			final Player phantom = data.player;
@@ -814,12 +828,79 @@ public class PhantomManager implements IXmlReader
 
 				// Alive again / still alive: clear the death stamp.
 				data.deadSince = 0;
+
+				// Proximity dormancy: only compute the auto-hunt while a real player is near (hysteresis).
+				final double nearest = nearestObserverDistance(phantom, observers);
+				if (data.dormant)
+				{
+					if (nearest <= WAKE_RANGE)
+					{
+						wake(phantom);
+						data.dormant = false;
+					}
+				}
+				else if (nearest > SLEEP_RANGE)
+				{
+					sleep(phantom);
+					data.dormant = true;
+				}
 			}
 			catch (Exception e)
 			{
 				LOGGER.warning(getClass().getSimpleName() + ": Supervise error for " + phantom.getName() + ": " + e.getMessage());
 			}
 		}
+	}
+
+	/** Genuine, client-connected players (excludes phantoms and offline shops, which have no client). */
+	private static List<Player> onlineObservers()
+	{
+		final List<Player> observers = new ArrayList<>();
+		for (Player player : World.getInstance().getPlayers())
+		{
+			if (!player.isInOfflineMode() && !player.isDead())
+			{
+				observers.add(player);
+			}
+		}
+		return observers;
+	}
+
+	/** Distance to the closest observer, or {@code MAX_VALUE} if there are none. */
+	private static double nearestObserverDistance(Player phantom, List<Player> observers)
+	{
+		double best = Double.MAX_VALUE;
+		for (Player observer : observers)
+		{
+			final double distance = phantom.calculateDistance2D(observer);
+			if (distance < best)
+			{
+				best = distance;
+			}
+		}
+		return best;
+	}
+
+	/** Resumes the native auto-hunt for a phantom a real player has approached. */
+	private void wake(Player phantom)
+	{
+		phantom.setRunning();
+		if (!phantom.isAutoPlaying())
+		{
+			AutoPlayTaskManager.getInstance().startAutoPlay(phantom);
+			AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
+		}
+	}
+
+	/** Pauses the auto-hunt and freezes a phantom that no real player is near (saves the per-tick cost). */
+	private void sleep(Player phantom)
+	{
+		if (phantom.isAutoPlaying())
+		{
+			AutoPlayTaskManager.getInstance().stopAutoPlay(phantom);
+			AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
+		}
+		phantom.getAI().setIntention(Intention.IDLE); // stop any in-progress movement so it parks
 	}
 
 	/** Brings a dead phantom back to full health at its home spot and resumes the auto-hunt. */
