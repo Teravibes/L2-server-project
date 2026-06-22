@@ -273,6 +273,10 @@ it off, phantoms spawn but stand still (the manager logs a warning).
   (data-driven, no hard-coded weapon ids). `gradeForLevel()` maps level→grade aligned with Expertise
   (NONE<20, D<40, C<52, B<61, A<76, S≥76); `soulshotIdFor()` maps grade→shot id (1835/1463/1464/1465/
   1466/1467). Called after `rewardSkills()` so the Expertise passive is known → no grade penalty.
+- **Spawn order matters for visuals:** level/skills/**gear run BEFORE `spawnMe()`** so the first
+  `CharInfo` nearby clients receive already shows the weapon. (Equipping after spawn worked
+  functionally — soulshots fired — but the blade didn't render because `broadcastCharInfo` is throttled
+  and the update was being coalesced/missed.)
 
 **Deliberately NOT done yet (next increments):** **armor** (survivability — currently weapon-only),
 runtime shot restock, 1st/2nd **class transfer** (base Fighter only has Power Strike/Mortal Blow/Power

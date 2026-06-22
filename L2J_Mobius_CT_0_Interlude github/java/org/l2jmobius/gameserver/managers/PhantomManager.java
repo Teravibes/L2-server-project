@@ -142,8 +142,13 @@ public class PhantomManager
 				return null;
 			}
 
-			bringOnline(phantom, location);
+			// Level, skill and gear the phantom BEFORE it enters the world, so the very first CharInfo
+			// nearby players receive already shows its weapon. (A post-spawn equip update can be throttled
+			// or coalesced by broadcastCharInfo, which left the weapon invisible even though it was equipped
+			// and working - soulshots fired but no blade rendered.)
+			phantom.setOnlineStatus(true, false);
 			outfit(phantom, level);
+			enterWorld(phantom, location);
 			enableAutoHunt(phantom);
 
 			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location));
@@ -159,13 +164,13 @@ public class PhantomManager
 	}
 
 	/**
-	 * Drops a clientless player into the world exactly the way offline-play characters are restored - no
-	 * GameClient is ever attached. {@code setOfflinePlay(true)} is required so the AutoPlay loop does not
-	 * treat the missing client as a plain offline-shop and stop the task.
+	 * Drops an already-leveled, already-geared clientless player into the world exactly the way
+	 * offline-play characters are restored - no GameClient is ever attached. {@code setOfflinePlay(true)}
+	 * is required so the AutoPlay loop does not treat the missing client as a plain offline-shop and stop
+	 * the task.
 	 */
-	private void bringOnline(Player phantom, Location location)
+	private void enterWorld(Player phantom, Location location)
 	{
-		phantom.setOnlineStatus(true, false);
 		phantom.setCurrentHp(phantom.getMaxHp());
 		phantom.setCurrentMp(phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
@@ -245,7 +250,8 @@ public class PhantomManager
 		final int shotId = soulshotIdFor(grade);
 		phantom.getInventory().addItem(ItemProcessType.REWARD, shotId, SHOT_COUNT, phantom, null);
 		phantom.addAutoSoulShot(shotId);
-		phantom.broadcastUserInfo();
+		// No broadcast here: gear() runs before the phantom enters the world, so the weapon is already in
+		// place for the spawn CharInfo (enterWorld broadcasts afterwards).
 	}
 
 	/** Highest weapon grade a phantom of this level may wield (aligned with when Expertise is learned). */
