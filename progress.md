@@ -293,12 +293,23 @@ it off, phantoms spawn but stand still (the manager logs a warning).
   file (documented example commented out) so nothing auto-deploys until configured — `//phantom spawn`
   testing is unaffected.
 
-**Deliberately NOT done yet (next increments):** **shared name/gear randomizer** (reuse
+**Done (increment 6 — fpc-editor phantom support):**
+- `tools/fpc-editor/index.html` now has an **NPC / Phantom mode switch** (two buttons atop the side
+  panel). NPC mode edits `FakePlayerBehavior.xml` (unchanged); Phantom mode edits
+  `PhantomPopulations.xml`.
+- Switching **hides the inactive set** and shows only the active one (phantoms drawn teal). **Map,
+  geodata and landmarks are shared** across modes for easy placement. The NPC-only form fields
+  (profile/race/store) are hidden in Phantom mode; the respawn label re-labels to "replace on death".
+- Each mode loads/saves its **own file** (separate handles); `+ Population`, double-click-add, drag,
+  polygon zones, show/hide all, and direct-write/download all work per-mode. Phantom save defaults to
+  `respawn="true"` (omits it) and only writes `respawn="false"` when unticked.
+
+**Deliberately NOT done yet (next increments):** **(7) shared name/gear randomizer** (reuse
 `FakePlayerAppearanceFactory`/`FakePlayerStoreFactory` *logic* to give each phantom a unique
-name/look/gear on spawn & respawn), **fpc-editor support** for the new population type (draw phantom
-zones like NPC ones), runtime shot restock, 1st/2nd **class transfer** (richer kits), hunting-zone
-relocate-when-empty, PvP target mode, persistence across restarts, DB cleanup of orphan phantom rows,
-config knobs, and **parties** (engine already supports auto-assist + offline-play party restore).
+name/look/gear on spawn & respawn), runtime shot restock, 1st/2nd **class transfer** (richer kits),
+hunting-zone relocate-when-empty, PvP target mode, persistence across restarts, DB cleanup of orphan
+phantom rows, config knobs, and **parties** (engine already supports auto-assist + offline-play party
+restore).
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.

@@ -1,7 +1,21 @@
 # FPC Editor
 
-A standalone visual editor for `data/FakePlayerBehavior.xml` (fake player populations).
-No install, no build, no server — it's a single HTML file that runs in your browser.
+A standalone visual editor for `data/FakePlayerBehavior.xml` (NPC fake-player populations) **and
+`data/PhantomPopulations.xml`** (real-Player phantom populations). No install, no build, no server —
+it's a single HTML file that runs in your browser.
+
+## NPC fake players vs Phantoms (mode switch)
+The two buttons at the top of the side panel switch what you're editing:
+
+- **NPC fake players** → `FakePlayerBehavior.xml` (the original NPC-rendered crowd: profiles, race,
+  store type, etc.).
+- **Phantoms** → `PhantomPopulations.xml` (real `Player` phantoms that farm via the engine's auto-hunt:
+  just count, level range and respawn — no profile/race/store).
+
+Switching modes **hides the other set** and shows only the active one (drawn in a distinct teal), so
+you place each cleanly. The **map, geodata and landmarks stay loaded** across both modes, so you can
+position phantom zones against the same world view. **Save** writes whichever mode you're in to its own
+file; switch and Save again to write the other.
 
 ## Run it
 Double-click `index.html` (or right-click → Open with → your browser).

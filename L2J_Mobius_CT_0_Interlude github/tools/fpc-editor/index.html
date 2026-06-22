@@ -36,6 +36,10 @@
 
 	.quickbar { display: flex; gap: 8px; align-items: center; padding: 10px 12px; border-bottom: 1px solid #34353b; }
 	.quickbar label { margin: 0; display: flex; align-items: center; gap: 5px; color: #cfd2da; }
+	#modebar { display: flex; gap: 0; padding: 10px 12px 0; }
+	#modebar button { flex: 1; border-radius: 0; }
+	#modebar button:first-child { border-radius: 5px 0 0 5px; }
+	#modebar button:last-child { border-radius: 0 5px 5px 0; }
 
 	.row { display: flex; gap: 8px; padding: 0 12px; }
 	.row > div { flex: 1; }
@@ -92,6 +96,11 @@
 			<div id="folderLine" hidden>folder: <span id="folderName"></span> <button id="changeFolder" class="link">change…</button></div>
 		</div>
 
+		<div id="modebar">
+			<button id="modeNpc">NPC fake players</button>
+			<button id="modePhantom" class="sec">Phantoms</button>
+		</div>
+
 		<div class="quickbar">
 			<button id="addBtn" class="sec">+ Population</button>
 			<label><input id="showMarks" type="checkbox" checked style="width:auto" /> landmarks</label>
@@ -117,17 +126,19 @@
 				<div><label>minLevel</label><input id="f_minLevel" type="number" /></div>
 				<div><label>maxLevel</label><input id="f_maxLevel" type="number" /></div>
 			</div>
-			<label>profile</label><input id="f_profile" list="profiles" />
-			<datalist id="profiles"></datalist>
-			<div class="row">
-				<div><label>race (optional)</label>
-					<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
-				</div>
-				<div><label>store (optional)</label>
-					<select id="f_store"><option value=""></option><option>SELL</option><option>BUY</option><option>CRAFT</option><option>PACKAGE</option></select>
+			<div id="npcOnly">
+				<label>profile</label><input id="f_profile" list="profiles" />
+				<datalist id="profiles"></datalist>
+				<div class="row">
+					<div><label>race (optional)</label>
+						<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
+					</div>
+					<div><label>store (optional)</label>
+						<select id="f_store"><option value=""></option><option>SELL</option><option>BUY</option><option>CRAFT</option><option>PACKAGE</option></select>
+					</div>
 				</div>
 			</div>
-			<label><input id="f_respawn" type="checkbox" style="width:auto;margin-right:6px" />respawn (field hunters)</label>
+			<label><input id="f_respawn" type="checkbox" style="width:auto;margin-right:6px" /><span id="respawnText">respawn (field hunters)</span></label>
 			<div class="row" style="margin-top:10px"><button id="zoneBtn" class="sec" style="flex:2">Draw zone</button><button id="clearZone" class="sec" style="flex:1">Clear zone</button></div>
 			<div class="row" style="margin-top:6px"><button id="del" style="flex:1">Delete population</button></div>
 			<div class="muted"><b>Draw zone:</b> click "Draw zone", then click points on the map to outline an area — bots spawn inside the shape instead of a circle. Drag vertices to adjust; double-click or Esc to finish. Drag a circle to move it, wheel to zoom, drag empty space to pan.</div>
@@ -169,10 +180,36 @@ const ctx = cv.getContext('2d');
 const wrap = document.getElementById('mapWrap');
 
 // ---- state ----
-let pops = [];            // editable population objects
-let preserved = { profiles: [], assigns: [], def: null }; // raw nodes re-emitted on save
+let pops = [];            // editable population objects (the ACTIVE mode's list)
+let preserved = { profiles: [], assigns: [], def: null }; // raw nodes re-emitted on save (NPC only)
 let profileNames = ['loiter','mill','stroller','visit_giran','farmer','hunter'];
 let selected = -1;
+
+// ---- mode: NPC fake players vs real-Player phantoms ----
+// Both modes share the same map / geodata / landmark layers; only the population set swaps. The active
+// mode lives in the globals above; the inactive mode is parked in its store and swapped back on switch.
+let mode = 'npc';
+const stores = {
+	npc:     { pops: [], preserved: { profiles: [], assigns: [], def: null }, profileNames: profileNames.slice(), fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false },
+	phantom: { pops: [], preserved: { profiles: [], assigns: [], def: null }, profileNames: [], fileName: 'PhantomPopulations.xml', handle: null, loaded: false }
+};
+function snapshot(){ const s = stores[mode]; s.pops = pops; s.preserved = preserved; s.profileNames = profileNames; s.handle = xmlFileHandle; s.fileName = xmlFileName; s.loaded = xmlLoaded; }
+function activate(m){ mode = m; const s = stores[m]; pops = s.pops; preserved = s.preserved; profileNames = s.profileNames; xmlFileHandle = s.handle; xmlFileName = s.fileName; xmlLoaded = s.loaded; }
+function applyModeUi(){
+	document.getElementById('modeNpc').classList.toggle('sec', mode !== 'npc');
+	document.getElementById('modePhantom').classList.toggle('sec', mode !== 'phantom');
+	document.getElementById('npcOnly').style.display = (mode === 'phantom') ? 'none' : '';
+	document.getElementById('respawnText').textContent = (mode === 'phantom') ? 'respawn (replace on death)' : 'respawn (field hunters)';
+	const head = document.querySelector('.sectionHead h2'); if (head) head.textContent = (mode === 'phantom') ? 'Phantom populations' : 'Populations';
+}
+function switchMode(m){
+	if (m === mode) return;
+	if (drawMode) setDrawMode(false);
+	snapshot();
+	activate(m);
+	selected = -1;
+	applyModeUi(); updateProfileList(); renderList(); syncForm(); updateStatus(); draw();
+}
 let mapImages = []; // { img, name, path, x1, y1, x2, y2 }
 let selectedImage = -1;
 let imageCatalog = { worldMap: null, cities: [], locations: [], layout: null };
@@ -209,6 +246,7 @@ const LANDMARKS = [
 
 // ---- colors ----
 function popColor(p){
+	if (mode === 'phantom') return '#46c6c0'; // real-Player phantom groups
 	if (p.store) return '#e8c24a';
 	if (p.profile === 'hunter' || p.profile === 'farmer') return '#e0563b';
 	if (p.profile === 'mill' || p.profile === 'stroller') return '#54c06e';
@@ -226,11 +264,12 @@ window.addEventListener('resize', resize);
 // ---- status chips ----
 function setChip(id, ok, text){ const el = document.getElementById(id); el.textContent = text; el.classList.toggle('ok', ok); }
 function updateStatus(){
-	setChip('st_xml', xmlLoaded, xmlLoaded ? 'XML ✓ ' + pops.length + ' pops' : 'XML —');
+	const unit = (mode === 'phantom') ? ' phantoms' : ' pops';
+	setChip('st_xml', xmlLoaded || pops.length > 0, (xmlLoaded || pops.length) ? 'XML ✓ ' + pops.length + unit : 'XML —');
 	setChip('st_geo', geoRegions.length > 0, geoRegions.length ? 'Geodata ✓ ' + geoRegions.length : 'Geodata —');
 	const catalogCount = (imageCatalog.worldMap ? 1 : 0) + imageCatalog.cities.length + imageCatalog.locations.length;
 	setChip('st_img', mapImages.length > 0 || catalogCount > 0, mapImages.length ? 'Images ✓ ' + mapImages.length : catalogCount ? 'Images catalog ' + catalogCount : 'Images —');
-	document.getElementById('saveXml').disabled = !xmlLoaded;
+	document.getElementById('saveXml').disabled = !(xmlLoaded || rememberedHandle);
 	const fl = document.getElementById('folderLine');
 	if (rememberedHandle){ fl.hidden = false; document.getElementById('folderName').textContent = rememberedHandle.name; }
 	else fl.hidden = true;
@@ -402,10 +441,15 @@ async function loadWorkspace(entries, label){
 	selectedImage = -1;
 	imageCatalog = { worldMap: null, cities: [], locations: [], layout: null };
 	renderImageLayerList();
+	// Fresh load: reset both mode stores and start on the NPC view.
+	stores.npc = { pops: [], preserved: { profiles: [], assigns: [], def: null }, profileNames: [], fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false };
+	stores.phantom = { pops: [], preserved: { profiles: [], assigns: [], def: null }, profileNames: [], fileName: 'PhantomPopulations.xml', handle: null, loaded: false };
+	activate('npc'); applyModeUi();
 	const geo = entries.filter(e => /(\d+)_(\d+)\.l2j$/i.test(e.name));
+	const phantomE = entries.find(e => e.name.toLowerCase() === 'phantompopulations.xml');
 	let xmlE = entries.find(e => e.name.toLowerCase() === 'fakeplayerbehavior.xml');
 	if (!xmlE){
-		for (const c of entries.filter(e => e.name.toLowerCase().endsWith('.xml'))){
+		for (const c of entries.filter(e => e.name.toLowerCase().endsWith('.xml') && e.name.toLowerCase() !== 'phantompopulations.xml')){
 			const t = await (await entryFile(c)).text();
 			if (/<population\b|FakePlayerBehavior/.test(t)){ xmlE = c; xmlE._text = t; break; }
 		}
@@ -428,6 +472,16 @@ async function loadWorkspace(entries, label){
 		await loadXmlText(xmlE._text || await file.text(), file.name, xmlE.handle || null);
 		loaded.push('XML');
 	}
+	// Phantom populations load into their own store (NPC view stays active).
+	if (phantomE){
+		const pf = await entryFile(phantomE);
+		stores.phantom.pops = parsePhantomText(await pf.text());
+		stores.phantom.handle = phantomE.handle || null;
+		stores.phantom.fileName = pf.name;
+		stores.phantom.loaded = true;
+		loaded.push('phantoms');
+	}
+	snapshot(); // mirror the freshly parsed NPC globals into stores.npc
 	if (geo.length){
 		const files = [];
 		for (const e of geo) files.push(await entryFile(e));
@@ -800,7 +854,9 @@ function setDrawMode(on){ drawMode = on; cv.style.cursor = on ? 'copy' : 'crossh
 
 // ---- model ops ----
 function addPop(x, y){
-	pops.push({ name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false, poly: [] });
+	pops.push((mode === 'phantom')
+		? { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, poly: [] }
+		: { name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false, poly: [] });
 	select(pops.length - 1); renderList(); draw(); updateStatus();
 }
 function select(i){ selected = i; selectedImage = -1; updateImageStatus(); syncForm(); renderList(); }
@@ -916,6 +972,38 @@ function parseXml(text){
 }
 function updateProfileList(){ const dl = document.getElementById('profiles'); dl.innerHTML = ''; (profileNames.length ? profileNames : ['loiter','mill','stroller','visit_giran','farmer','hunter']).forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); }); }
 
+// ---- phantom populations (PhantomPopulations.xml) ----
+function parsePhantomText(text){
+	const doc = new DOMParser().parseFromString(text, 'application/xml');
+	const list = doc.querySelector('list'); if (!list) return [];
+	const arr = [];
+	for (const node of list.children){
+		if (node.tagName !== 'population') continue;
+		const g = a => node.getAttribute(a);
+		const poly = [...node.children].filter(n => n.tagName === 'point').map(n => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y') }));
+		arr.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 800), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 1), respawn: g('respawn') !== 'false', poly });
+	}
+	return arr;
+}
+function buildPhantomXml(){
+	const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+	let out = '<?xml version="1.0" encoding="UTF-8"?>\n<list>\n';
+	pops.forEach(p => {
+		const hasPoly = p.poly && p.poly.length >= 3;
+		let ax = p.x, ay = p.y, ar = p.radius;
+		if (hasPoly){ const c = polyCentroid(p.poly); ax = c.x; ay = c.y; ar = polyRadius(p.poly, c); }
+		let a = `name="${esc(p.name)}" x="${ax}" y="${ay}" z="${p.z}" radius="${ar}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
+		if (!p.respawn) a += ` respawn="false"`; // respawn defaults to true server-side
+		if (hasPoly){
+			out += `\t<population ${a}>\n`;
+			p.poly.forEach(v => out += `\t\t<point x="${v.x}" y="${v.y}" z="${p.z}" />\n`);
+			out += `\t</population>\n`;
+		} else out += `\t<population ${a} />\n`;
+	});
+	out += '</list>\n';
+	return out;
+}
+
 function buildXml(){
 	const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 	let out = '<?xml version="1.0" encoding="UTF-8"?>\n';
@@ -966,15 +1054,19 @@ async function writeFileToFolder(name, text){
 	return true;
 }
 async function saveXml(){
-	if (!xmlLoaded){ alert('Open your data folder first.'); return; }
+	if (!(xmlLoaded || rememberedHandle || xmlFileHandle)){ alert('Open your data folder first.'); return; }
 	const saved = [];
 	let direct = false;
-	const out = buildXml();
+	const out = (mode === 'phantom') ? buildPhantomXml() : buildXml();
+	const name = (mode === 'phantom') ? 'PhantomPopulations.xml' : (xmlFileName || 'FakePlayerBehavior.xml');
 	if (xmlFileHandle && xmlFileHandle.createWritable){
-		try { const writable = await xmlFileHandle.createWritable(); await writable.write(out); await writable.close(); direct = true; saved.push(xmlFileName); }
-		catch (err){ alert('Could not overwrite the XML file directly. Downloading a copy instead.\n\n' + err.message); }
+		try { const writable = await xmlFileHandle.createWritable(); await writable.write(out); await writable.close(); direct = true; saved.push(name); }
+		catch (err){ /* fall through to folder write / download */ }
 	}
-	if (!direct){ downloadBlob(out, xmlFileName || 'FakePlayerBehavior.xml', 'application/xml'); saved.push((xmlFileName || 'FakePlayerBehavior.xml') + ' (downloaded)'); }
+	if (!direct){
+		try { if (await writeFileToFolder(name, out)){ direct = true; saved.push(name); } } catch (err){ /* ignore */ }
+	}
+	if (!direct){ downloadBlob(out, name, 'application/xml'); saved.push(name + ' (downloaded)'); }
 
 	// Persist image positions/sizes too, so they reload exactly as you left them.
 	if (mapImages.length){
@@ -992,6 +1084,7 @@ document.getElementById('saveXml').onclick = saveXml;
 
 // ---- startup: restore the remembered folder ----
 (async () => {
+	applyModeUi();
 	updateProfileList();
 	updateStatus();
 	resize();
