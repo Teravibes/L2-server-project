@@ -22,6 +22,7 @@ package org.l2jmobius.gameserver.managers;
 
 import java.io.File;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.List;
 import java.util.Map;
@@ -99,6 +100,19 @@ public class PhantomManager implements IXmlReader
 	private static final int SHOT_COUNT = 5000;
 	// Minimum spacing between phantoms at spawn, so a group does not stack on one tile.
 	private static final int MIN_SEPARATION = 250;
+	// First-occupation FIGHTER class ids per race (verified in FakePlayerAppearanceFactory), weighted by
+	// repetition so phantoms vary in race/body type. All are melee, so the sword + soulshot path is shared.
+	private static final int[] FIGHTER_CLASS_POOL =
+	{
+		0, 0, 0, // Human Fighter
+		18, 18, // Elven Fighter
+		31, 31, // Dark Fighter
+		44, // Orc Fighter
+		53 // Dwarven Fighter
+	};
+	// How many (cheapest) candidate items to keep per slot/grade, so phantoms vary their look without
+	// pulling in rare/expensive drops.
+	private static final int CANDIDATES_PER_SLOT = 6;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -110,9 +124,9 @@ public class PhantomManager implements IXmlReader
 		BodyPart.FEET,
 		BodyPart.HEAD
 	};
-	// Cheapest (i.e. most basic) tradeable item per grade for each slot, resolved once from the datapack
-	// so phantoms equip a coherent, level-appropriate set (data-driven - no hard-coded item ids).
-	private static final Map<BodyPart, EnumMap<CrystalType, ItemTemplate>> GEAR_BY_SLOT = new EnumMap<>(BodyPart.class);
+	// The cheapest few tradeable items per grade for each slot, resolved once from the datapack, so each
+	// phantom can roll a varied but level-appropriate look (data-driven - no hard-coded item ids).
+	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> GEAR_BY_SLOT = new EnumMap<>(BodyPart.class);
 	private static volatile boolean _gearBuilt = false;
 
 	/** A deployment group: where/how many phantoms spawn, their level range, and whether to respawn. */
@@ -335,14 +349,24 @@ public class PhantomManager implements IXmlReader
 	{
 		try
 		{
-			final PlayerTemplate template = PlayerTemplateData.getInstance().getTemplate(PlayerClass.FIGHTER);
+			// Random race/body type from the melee-fighter pool; fall back to Human Fighter if a template
+			// is missing. Orcs/dwarves skew male, like the NPC appearance factory.
+			final int classId = FIGHTER_CLASS_POOL[Rnd.get(FIGHTER_CLASS_POOL.length)];
+			PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
+			PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
+			if (template == null)
+			{
+				playerClass = PlayerClass.FIGHTER;
+				template = PlayerTemplateData.getInstance().getTemplate(playerClass);
+			}
 			if (template == null)
 			{
 				LOGGER.warning(getClass().getSimpleName() + ": No FIGHTER template available.");
 				return null;
 			}
 
-			final PlayerAppearance appearance = new PlayerAppearance((byte) 0, (byte) 0, (byte) 0, false);
+			final boolean female = ((classId == 44) || (classId == 53)) ? (Rnd.get(100) < 30) : Rnd.nextBoolean();
+			final PlayerAppearance appearance = new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
 			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance);
 			if (phantom == null)
 			{
@@ -460,10 +484,27 @@ public class PhantomManager implements IXmlReader
 			phantom.addAutoSoulShot(shotId);
 		}
 
-		// Armor pieces: best available at or below the level's grade for each slot.
+		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
+		// always, helmet/gloves often skipped) so a group is not a row of identical fully-armored clones.
 		for (BodyPart slot : GEAR_SLOTS)
 		{
 			if (slot == BodyPart.R_HAND)
+			{
+				continue;
+			}
+			if ((slot == BodyPart.HEAD) && (Rnd.get(100) >= 55))
+			{
+				continue;
+			}
+			if ((slot == BodyPart.GLOVES) && (Rnd.get(100) >= 60))
+			{
+				continue;
+			}
+			if ((slot == BodyPart.FEET) && (Rnd.get(100) >= 85))
+			{
+				continue;
+			}
+			if ((slot == BodyPart.LEGS) && (Rnd.get(100) >= 92))
 			{
 				continue;
 			}
@@ -487,20 +528,20 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
-	/** Best item for a slot at the desired grade, stepping down if a grade has no candidate. */
+	/** A random candidate item for a slot at the desired grade, stepping down if a grade has none. */
 	private static ItemTemplate pickForSlot(BodyPart slot, CrystalType desired)
 	{
-		final EnumMap<CrystalType, ItemTemplate> byGrade = GEAR_BY_SLOT.get(slot);
+		final EnumMap<CrystalType, List<ItemTemplate>> byGrade = GEAR_BY_SLOT.get(slot);
 		if (byGrade == null)
 		{
 			return null;
 		}
 		for (int ordinal = desired.ordinal(); ordinal >= 0; ordinal--)
 		{
-			final ItemTemplate item = byGrade.get(CrystalType.values()[ordinal]);
-			if (item != null)
+			final List<ItemTemplate> list = byGrade.get(CrystalType.values()[ordinal]);
+			if ((list != null) && !list.isEmpty())
 			{
-				return item;
+				return list.get(Rnd.get(list.size()));
 			}
 		}
 		return null;
@@ -583,16 +624,16 @@ public class PhantomManager implements IXmlReader
 			}
 			for (BodyPart slot : GEAR_SLOTS)
 			{
-				GEAR_BY_SLOT.put(slot, new EnumMap<>(CrystalType.class));
+				final EnumMap<CrystalType, List<ItemTemplate>> byGrade = new EnumMap<>(CrystalType.class);
+				for (CrystalType grade : CrystalType.values())
+				{
+					byGrade.put(grade, new ArrayList<>());
+				}
+				GEAR_BY_SLOT.put(slot, byGrade);
 			}
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
-				if ((item == null) || !item.isEquipable() || !item.isTradeable())
-				{
-					continue;
-				}
-				final int price = item.getReferencePrice();
-				if (price <= 0)
+				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0))
 				{
 					continue;
 				}
@@ -621,12 +662,18 @@ public class PhantomManager implements IXmlReader
 					continue;
 				}
 
-				final EnumMap<CrystalType, ItemTemplate> byGrade = GEAR_BY_SLOT.get(slot);
-				final CrystalType grade = item.getCrystalType();
-				final ItemTemplate current = byGrade.get(grade);
-				if ((current == null) || (price < current.getReferencePrice()))
+				GEAR_BY_SLOT.get(slot).get(item.getCrystalType()).add(item);
+			}
+			// Keep only the cheapest few per slot/grade, so phantoms roll basic gear, not rare drops.
+			for (EnumMap<CrystalType, List<ItemTemplate>> byGrade : GEAR_BY_SLOT.values())
+			{
+				for (List<ItemTemplate> list : byGrade.values())
 				{
-					byGrade.put(grade, item);
+					list.sort(Comparator.comparingInt(ItemTemplate::getReferencePrice));
+					if (list.size() > CANDIDATES_PER_SLOT)
+					{
+						list.subList(CANDIDATES_PER_SLOT, list.size()).clear();
+					}
 				}
 			}
 			_gearBuilt = true;
@@ -794,19 +841,25 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
-	/** Generates a unique character name not already taken in the DB (slice naming; identities come later). */
+	/** A unique, pronounceable character name (reuses the NPC name generator), checked against the DB. */
 	private String nextName()
 	{
 		for (int attempt = 0; attempt < 50; attempt++)
 		{
-			final String name = "Phantom" + Rnd.get(1000, 9999);
+			final String name = FakePlayerAppearanceFactory.generateName();
 			if (!CharInfoTable.getInstance().doesCharNameExist(name))
 			{
 				return name;
 			}
 		}
 		// Extremely unlikely fallback.
-		return "Phantom" + System.currentTimeMillis();
+		String name;
+		do
+		{
+			name = "Phantom" + Rnd.get(100000);
+		}
+		while (CharInfoTable.getInstance().doesCharNameExist(name));
+		return name;
 	}
 
 	public static PhantomManager getInstance()

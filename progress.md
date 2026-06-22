@@ -307,12 +307,27 @@ it off, phantoms spawn but stand still (the manager logs a warning).
   polygon zones, show/hide all, and direct-write/download all work per-mode. Phantom save defaults to
   `respawn="true"` (omits it) and only writes `respawn="false"` when unticked.
 
-**Deliberately NOT done yet (next increments):** **(7) shared name/gear randomizer** (reuse
-`FakePlayerAppearanceFactory`/`FakePlayerStoreFactory` *logic* to give each phantom a unique
-name/look/gear on spawn & respawn), runtime shot restock, 1st/2nd **class transfer** (richer kits),
-hunting-zone relocate-when-empty, PvP target mode, persistence across restarts, DB cleanup of orphan
-phantom rows, config knobs, and **parties** (engine already supports auto-assist + offline-play party
-restore).
+**Done (increment 7 — randomized identities):**
+- **Names** reuse `FakePlayerAppearanceFactory.generateName()` (pronounceable syllable pools), checked
+  unique against the DB.
+- **Race / body / gender / look:** each phantom rolls a random melee **fighter class across races**
+  (Human/Elf/Dark Elf/Orc/Dwarf — verified class ids 0/18/31/44/53, humans weighted common; orcs/dwarves
+  skew male) plus random face/hair/hair-colour. All are melee so the sword + soulshot combat path is
+  unchanged; falls back to Human Fighter if a template is missing.
+- **Gear variety:** `buildGear` now keeps the cheapest few candidates per slot/grade (not just one) and
+  `pickForSlot` rolls one at random; armor **completeness varies** (chest almost always; helmet/gloves
+  often skipped) so a group is not a row of identical clones. Applies to respawns too.
+
+**Performance note (discussed):** phantoms are full `Player` objects, far heavier than NPC fake players
+(700ms auto-hunt loop with geodata LOS/path checks, per-Player tasks, combat). Realistic scale is dozens
+to ~100-150, not the hundreds NPCs handle. Recommended next safeguard: **proximity dormancy** (pause a
+phantom's auto-hunt when no real player is near its region; resume on approach — ideal for solo play) +
+a **hard cap** + skipping phantom auto-save.
+
+**Deliberately NOT done yet (next increments):** **proximity dormancy + cap** (perf/scale), runtime shot
+restock, 1st/2nd **class transfer** (richer kits), hunting-zone relocate-when-empty, PvP target mode,
+persistence across restarts, DB cleanup of orphan phantom rows, config knobs, and **parties** (engine
+already supports auto-assist + offline-play party restore).
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.
