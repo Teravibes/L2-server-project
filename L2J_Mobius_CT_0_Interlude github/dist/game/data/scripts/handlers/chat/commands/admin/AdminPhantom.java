@@ -29,7 +29,8 @@ import org.l2jmobius.gameserver.model.actor.Player;
  * Admin control for the real-Player phantom slice.<br>
  * Usage:
  * <ul>
- * <li>{@code //phantom spawn [count]} - spawn N clientless phantom fighters at your position (default 1).</li>
+ * <li>{@code //phantom spawn [count] [level]} - spawn N clientless phantom fighters at your position
+ * (default 1) brought to the given level (default 1).</li>
  * <li>{@code //phantom clear} - despawn all phantoms.</li>
  * <li>{@code //phantom count} - report how many are active.</li>
  * </ul>
@@ -48,7 +49,7 @@ public class AdminPhantom implements IAdminCommandHandler
 		final String[] words = command.split(" ");
 		if (words.length < 2)
 		{
-			activeChar.sendSysMessage("Usage: //phantom spawn [count] | clear | count");
+			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | clear | count");
 			return false;
 		}
 
@@ -70,17 +71,31 @@ public class AdminPhantom implements IAdminCommandHandler
 					}
 				}
 
+				int level = 1;
+				if (words.length > 3)
+				{
+					try
+					{
+						level = Math.max(1, Math.min(80, Integer.parseInt(words[3])));
+					}
+					catch (NumberFormatException e)
+					{
+						activeChar.sendSysMessage("Level must be a number (1-80).");
+						return false;
+					}
+				}
+
 				int spawned = 0;
 				for (int i = 0; i < count; i++)
 				{
 					// Scatter slightly around the admin so they do not stack on one tile.
 					final Location location = new Location(activeChar.getX() + ((i % 5) * 40), activeChar.getY() + ((i / 5) * 40), activeChar.getZ());
-					if (PhantomManager.getInstance().spawnPhantom(location) != null)
+					if (PhantomManager.getInstance().spawnPhantom(location, level) != null)
 					{
 						spawned++;
 					}
 				}
-				activeChar.sendSysMessage("Spawned " + spawned + "/" + count + " phantom(s). Active: " + PhantomManager.getInstance().getCount());
+				activeChar.sendSysMessage("Spawned " + spawned + "/" + count + " phantom(s) at level " + level + ". Active: " + PhantomManager.getInstance().getCount());
 				break;
 			}
 			case "clear":
@@ -96,7 +111,7 @@ public class AdminPhantom implements IAdminCommandHandler
 			}
 			default:
 			{
-				activeChar.sendSysMessage("Usage: //phantom spawn [count] | clear | count");
+				activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | clear | count");
 				return false;
 			}
 		}

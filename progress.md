@@ -254,11 +254,22 @@ upstream. `PhantomManager` now owns only the **macro** layer.
 **REQUIRED config:** set `EnableAutoPlay = True` in `config/Custom/AutoPlay.ini` (default false). With
 it off, phantoms spawn but stand still (the manager logs a warning).
 
-**Deliberately NOT done yet (next increments):** leveling + learning class skills, gearing
-(weapon/armor) + registering soulshots/skills/buffs into `getAutoUseSettings()`, hunting-zone routing
-& relocate-when-area-empty, PvP target mode, procedural identities, persistence across restarts, DB
-cleanup, config knobs. miacodeweb's `PhantomFactory`/`PhantomEquipment`/`PhantomProgression` are the
-*blueprint* for the level/skill/gear step (reimplemented for Interlude IDs).
+**Done (increment 3 — leveling + skills):**
+- `//phantom spawn [count] [level]` — level arg added (1-80), e.g. `//phantom spawn 5 20`.
+- `PhantomManager.outfit(phantom, level)`: grants the exact experience for the level (same approach as
+  the admin level command — `addExpAndSp(getExpForLevel(level) - getExp())`, which rewards class skills
+  level-by-level), then `rewardSkills()` to be sure, tops up HP/MP/CP.
+- `registerAutoSkills(phantom)`: **data-driven, no hard-coded ids** — scans the phantom's learned
+  skills and registers self-buffs (`isContinuous() && !isDebuff() && effectPoint>=0 && target==SELF`)
+  into `getAutoBuffs()` and offensive actives (`isActive() && !isContinuous() && effectPoint<0`) into
+  `getAutoSkills()`, so the native AutoUse system buffs and casts in combat.
+
+**Deliberately NOT done yet (next increments):** gearing (weapon/armor) + registering soulshots into
+`getAutoUseSettings()` (needs a grade/level item table — miacodeweb's `PhantomEquipment` is the
+blueprint), hunting-zone routing & relocate-when-area-empty, PvP target mode, procedural identities,
+persistence across restarts, DB cleanup, config knobs, and **data-driven spawning from the fpc-editor
+web app** (mirror the `FakePlayerBehavior.xml` populations + editor pattern so phantoms deploy on boot
+like the NPC fake players).
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.

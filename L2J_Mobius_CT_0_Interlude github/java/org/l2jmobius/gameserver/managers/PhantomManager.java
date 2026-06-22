@@ -29,6 +29,7 @@ import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.config.custom.AutoPlayConfig;
 import org.l2jmobius.gameserver.data.sql.CharInfoTable;
+import org.l2jmobius.gameserver.data.xml.ExperienceData;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.World;
@@ -36,7 +37,10 @@ import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
+import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
+import org.l2jmobius.gameserver.model.skill.Skill;
+import org.l2jmobius.gameserver.model.skill.targets.TargetType;
 import org.l2jmobius.gameserver.taskmanagers.AutoPlayTaskManager;
 import org.l2jmobius.gameserver.taskmanagers.AutoUseTaskManager;
 
@@ -93,12 +97,13 @@ public class PhantomManager
 	}
 
 	/**
-	 * Creates a brand-new clientless fighter phantom, spawns it, and hands it to the native auto-hunt so
-	 * it seeks and fights monsters on its own.
+	 * Creates a brand-new clientless fighter phantom, spawns it, levels/skills it, and hands it to the
+	 * native auto-hunt so it seeks and fights monsters on its own.
 	 * @param location where to spawn (also its revive home)
+	 * @param level the level to bring the phantom to (1 = a raw fighter)
 	 * @return the spawned phantom, or {@code null} on failure
 	 */
-	public Player spawnPhantom(Location location)
+	public Player spawnPhantom(Location location, int level)
 	{
 		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
 		{
@@ -123,6 +128,7 @@ public class PhantomManager
 			}
 
 			bringOnline(phantom, location);
+			outfit(phantom, level);
 			enableAutoHunt(phantom);
 
 			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location));
@@ -156,9 +162,63 @@ public class PhantomManager
 	}
 
 	/**
-	 * Configures the auto-hunt preferences and starts the native AutoPlay + AutoUse tasks. Skills, buffs
-	 * and soulshots would be registered here too (via {@code getAutoUseSettings()}) once phantoms are
-	 * leveled and geared - the basic melee action is enough for the current fighter.
+	 * Brings a phantom to the requested level (by granting the exact experience for it, the same way the
+	 * admin level command does), learns its class skills, tops up its bars, and registers those skills
+	 * with the auto-use system so the engine casts them in combat. Gear (weapon/armor) and soulshots are
+	 * a later increment.
+	 * @param phantom the phantom to outfit
+	 * @param level the target level
+	 */
+	private void outfit(Player phantom, int level)
+	{
+		if (level > 1)
+		{
+			final long currentExp = phantom.getExp();
+			final long targetExp = ExperienceData.getInstance().getExpForLevel(level);
+			if (targetExp > currentExp)
+			{
+				// Leveling up through addExpAndSp rewards the class skills for each level along the way.
+				phantom.addExpAndSp(targetExp - currentExp, 0);
+			}
+		}
+		// Belt and braces: make sure every auto-get class skill for the final level is learned.
+		phantom.rewardSkills();
+		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
+		phantom.setCurrentCp(phantom.getMaxCp());
+		registerAutoSkills(phantom);
+	}
+
+	/**
+	 * Registers the phantom's own learned skills with the native auto-use system: self-buffs go to the
+	 * auto-buff list (recast when they drop), offensive actives go to the auto-skill list (cast on the
+	 * current target in combat). Classification is by skill metadata, so it is Interlude-data-driven and
+	 * needs no hard-coded skill ids.
+	 */
+	private void registerAutoSkills(Player phantom)
+	{
+		final AutoUseSettingsHolder autoUse = phantom.getAutoUseSettings();
+		for (Skill skill : phantom.getAllSkills())
+		{
+			if (skill.isPassive() || skill.isToggle())
+			{
+				continue;
+			}
+			// Self-buffs: lasting, beneficial, cast on self.
+			if (skill.isContinuous() && !skill.isDebuff() && (skill.getEffectPoint() >= 0) && (skill.getTargetType() == TargetType.SELF))
+			{
+				autoUse.getAutoBuffs().add(skill.getId());
+			}
+			// Offensive actives: instant (non-continuous) harmful skills used on the target.
+			else if (skill.isActive() && !skill.isContinuous() && (skill.getEffectPoint() < 0))
+			{
+				autoUse.getAutoSkills().add(skill.getId());
+			}
+		}
+	}
+
+	/**
+	 * Configures the auto-hunt preferences and starts the native AutoPlay + AutoUse tasks. Soulshots
+	 * would be registered here too (via {@code addAutoSoulShot}) once phantoms are geared with a weapon.
 	 */
 	private void enableAutoHunt(Player phantom)
 	{
