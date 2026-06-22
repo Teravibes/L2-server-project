@@ -69,7 +69,16 @@ def chat():
     message = request.get_data(as_text=True)
     reply = ""
     try:
-        if mode == "OFFER":
+        if mode == "ITEM":
+            # Translate trade-chat shorthand/slang into a plain item name for a datapack search.
+            system = ("You convert Lineage 2 Interlude trade-chat shorthand into the plain English item name. "
+                      "Reply with ONLY the item name, nothing else, no quotes, no extra words. "
+                      "Expand grade letters (d/c/b/a/s) as '<name> <grade>-grade'. Ignore quantities, prices and filler. "
+                      "Examples: 'ssd' -> Soulshot D-grade; 'ss c' -> Soulshot C-grade; 'bsps' -> Blessed Spiritshot; "
+                      "'spsd' -> Spiritshot D-grade; 'soe' -> Scroll of Escape; 'ewd' -> Enchant Weapon D-grade; "
+                      "'gemstone d' -> Gemstone D; 'iron ore' -> Iron Ore. If there is no clear item, reply: NONE")
+            reply = call_llm(system, [{"role": "user", "content": message}], 20)
+        elif mode == "OFFER":
             # The bot is proactively PMing the player about their trade post to set up a real deal.
             player = request.headers.get("X-Player", "someone")
             deal = request.headers.get("X-Deal", "").strip()

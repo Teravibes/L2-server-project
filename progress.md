@@ -202,8 +202,10 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
   `cancelMeet`), or you go quiet — after ~5 min it whispers "still coming?" and leaves if no reply within
   3 min (any whisper resets the timer via `noteMeetInteraction`). Same-town only — long cross-town
   pathfinding is unreliable.
-- **Trade-ad → roaming trade (Phase 2, done):** `overheardTradeChat` runs `tryTradeResponder` first —
-  it parses WTS/WTB + the item phrase (`FakePlayerStoreFactory.findItemByName`), picks a nearby roaming
+- **Trade-ad → roaming trade (Phase 2, done):** `overheardTradeChat` schedules `respondToTradeAd`
+  off-thread. It parses WTS/WTB, asks the brain (`ITEM` mode) to translate slang like "ssd" into a
+  plain item name, then grounds it to a real item via `FakePlayerStoreFactory.findItemByName` (token
+  matcher; raw words are the offline fallback), picks a nearby roaming
   bot (`pickTradeResponder`), arms it with a one-item BUY/SELL deal (`setupDeal` + `dealBuy/SellStock`),
   sends it to its gatekeeper (`requestMeet`) and PMs the player (brain `OFFER` mode). On arrival the FSM
   activates the store (it becomes a clickable vendor); selling out (or the meet ending) tears the store

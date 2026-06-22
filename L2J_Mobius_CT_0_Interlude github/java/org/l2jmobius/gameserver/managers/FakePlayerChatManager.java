@@ -240,13 +240,17 @@ public class FakePlayerChatManager implements IXmlReader
 	{
 		if (SOCIAL_ENABLED && (speaker != null) && (text != null) && !text.isEmpty())
 		{
-			// A WTS/WTB ad may make one relevant bot PM the player to set up a real trade; otherwise the
-			// usual nearby-bot trade banter applies.
-			if (tryTradeResponder(speaker, text))
+			// A WTS/WTB ad may make one relevant bot PM the player to set up a real trade. The responder
+			// calls the LLM (to read slang) so it runs off-thread; plain banter handles everything else.
+			if (TRADE_AD.matcher(text).find())
 			{
-				return;
+				final Player who = speaker;
+				ThreadPool.schedule(() -> respondToTradeAd(who, text), Rnd.get(MIN_DELAY, MAX_DELAY));
 			}
-			reactToChat(speaker, speaker.getName(), text, false, "TRADE");
+			else
+			{
+				reactToChat(speaker, speaker.getName(), text, false, "TRADE");
+			}
 		}
 	}
 
@@ -254,35 +258,44 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final Pattern TRADE_AD = Pattern.compile("(wts|selling|s>|wtb|buying|b>)\\s*(.*)", Pattern.CASE_INSENSITIVE);
 
 	/**
-	 * If the player posted a WTS/WTB for a recognisable item, arms a nearby roaming bot as the
-	 * counterparty: it PMs the player, walks to a meet spot, and opens a real store on arrival.
-	 * @return {@code true} if a responder was set up (so we skip the generic banter)
+	 * Handles a WTS/WTB ad (off the network thread): the AI translates the slang to an item name, we
+	 * ground it to a real item, then arm a nearby roaming bot to PM the player, walk to a meet spot, and
+	 * open a real store on arrival. Falls back to plain trade banter if nothing usable matched.
 	 */
-	private boolean tryTradeResponder(Player player, String text)
+	private void respondToTradeAd(Player player, String text)
 	{
-		if (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE)
+		if ((player == null) || (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE))
 		{
-			return false;
+			return;
 		}
 		final Matcher matcher = TRADE_AD.matcher(text);
 		if (!matcher.find())
 		{
-			return false;
+			return;
 		}
 		final String token = matcher.group(1).toLowerCase();
 		final boolean playerSelling = token.startsWith("wts") || token.startsWith("selling") || token.equals("s>");
-		// Strip quantities/punctuation from the item phrase.
-		final String phrase = matcher.group(2).replaceAll("[0-9]+(k|kk)?", " ").replaceAll("[^a-zA-Z ]", " ").trim();
-		final ItemTemplate item = FakePlayerStoreFactory.findItemByName(phrase);
+
+		// Stage 1: ask the AI to turn shorthand ("ssd") into a plain item name; fall back to the raw words.
+		final String rawPhrase = matcher.group(2).replaceAll("[0-9]+(k|kk)?", " ").replaceAll("[^a-zA-Z ]", " ").trim();
+		final String aiName = askBrainItem(text);
+		// Stage 2: ground whatever we got to a real datapack item (deterministic search).
+		ItemTemplate item = aiName == null ? null : FakePlayerStoreFactory.findItemByName(aiName);
 		if (item == null)
 		{
-			return false;
+			item = FakePlayerStoreFactory.findItemByName(rawPhrase);
+		}
+		if (item == null)
+		{
+			reactToChat(player, player.getName(), text, false, "TRADE"); // nothing recognisable -> banter
+			return;
 		}
 
 		final Npc bot = FakePlayerBehaviorManager.getInstance().pickTradeResponder(player);
 		if (bot == null)
 		{
-			return false;
+			reactToChat(player, player.getName(), text, false, "TRADE"); // no roaming bot around -> banter
+			return;
 		}
 
 		// Player selling -> bot buys it; player buying -> bot sells it.
@@ -290,7 +303,7 @@ public class FakePlayerChatManager implements IXmlReader
 		final List<FakePlayerStoreItem> stock = playerSelling ? FakePlayerStoreFactory.dealBuyStock(item.getId()) : FakePlayerStoreFactory.dealSellStock(item.getId());
 		if (stock.isEmpty())
 		{
-			return false;
+			return;
 		}
 		final String title = FakePlayerStoreFactory.title(playerSelling ? "BUY" : "SELL", stock);
 		FakePlayerBehaviorManager.getInstance().setupDeal(bot, storeType, stock, title);
@@ -299,19 +312,29 @@ public class FakePlayerChatManager implements IXmlReader
 		if (!FakePlayerBehaviorManager.getInstance().requestMeet(bot, "gatekeeper", player))
 		{
 			FakePlayerBehaviorManager.getInstance().setupDeal(bot, 0, null, null);
-			return false;
+			reactToChat(player, player.getName(), text, false, "TRADE");
+			return;
 		}
 
 		final int unit = stock.get(0).getPrice();
-		final String deal = (playerSelling ? "buy their " : "sell ") + item.getName() + " at " + unit + " adena each; tell them to meet you at the " + nearestLocation(bot).replace("in ", "").replace("near ", "") + " gatekeeper";
+		final String spot = nearestLocation(bot).replace("in ", "").replace("near ", "");
+		final String deal = (playerSelling ? "buy their " : "sell ") + item.getName() + " at " + unit + " adena each; tell them to meet you at the " + spot + " gatekeeper";
 		final String fpcName = bot.getName();
-		ThreadPool.schedule(() ->
-		{
-			final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal);
-			sendChat(player, fpcName, (line == null) || line.isEmpty() ? ("saw ur post, lets deal - meet me at the " + nearestLocation(bot).replace("in ", "").replace("near ", "") + " gatekeeper") : line);
-		}, Rnd.get(MIN_DELAY, MAX_DELAY));
+		final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal);
+		sendChat(player, fpcName, (line == null) || line.isEmpty() ? ("saw ur post, lets deal - meet me at the " + spot + " gatekeeper") : line);
 		MESSAGES_THIS_MINUTE.incrementAndGet();
-		return true;
+	}
+
+	/** Asks the brain to translate trade-chat shorthand into a plain item name; {@code null} if unclear. */
+	private String askBrainItem(String adText)
+	{
+		final String reply = callBridge("", "ITEM", "", "", adText, "", "");
+		if (reply == null)
+		{
+			return null;
+		}
+		final String name = reply.trim();
+		return (name.isEmpty() || name.equalsIgnoreCase("none")) ? null : name;
 	}
 	
 	// Called from ChatGeneral when a real player uses normal (say) chat.
