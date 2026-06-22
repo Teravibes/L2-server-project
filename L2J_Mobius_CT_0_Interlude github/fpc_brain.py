@@ -31,7 +31,13 @@ def whisper_persona(fpc):
             "(pick the closest match to where they want to meet). "
             "If they call it off / say they are not coming / tell you to forget it, end your reply with "
             "[[MEET:cancel]] instead. If you are waiting and they say they are still coming, just reply "
-            "normally with no tag. Only add a tag when it truly fits. Never mention, explain or read out the tag.")
+            "normally with no tag. "
+            "When you actually agree to trade a SPECIFIC item at an agreed price, also add a shop tag: "
+            "[[SHOP:SELL:<item>:<price>]] if YOU are selling that item to them, or "
+            "[[SHOP:BUY:<item>:<price>]] if you are buying it from them. <item> is the plain item name "
+            "(e.g. Soulshot D-grade), <price> is the adena per unit you agreed (a number). Add it when you "
+            "set up the meeting (with the meet tag) or when they ask you to open the shop. "
+            "Only add a tag when it truly fits. Never mention, explain or read out any tag.")
 
 def trade_persona(fpc):
     return (f"You are {fpc}, a real player in Lineage 2 (Interlude) reading the PUBLIC trade channel. "

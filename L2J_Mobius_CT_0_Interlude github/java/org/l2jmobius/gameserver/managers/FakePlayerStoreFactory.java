@@ -365,6 +365,24 @@ public class FakePlayerStoreFactory
 	}
 
 	/**
+	 * Sell stock at an explicit agreed price per unit (from a whisper-negotiated deal).
+	 * @param itemId the item to sell
+	 * @param unitPrice the agreed adena per unit
+	 * @return a one-entry sell stock
+	 */
+	public static List<FakePlayerStoreItem> dealSellStock(int itemId, int unitPrice)
+	{
+		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
+		if (item != null)
+		{
+			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
+			stock.add(line(item, 0, count, Math.max(1, unitPrice)));
+		}
+		return stock;
+	}
+
+	/**
 	 * One-line stock for a bot that is BUYING a specific item from the player (a WTS responder).
 	 * @param itemId the item to buy
 	 * @return a one-entry buy stock, or empty if the item is unknown
@@ -377,6 +395,24 @@ public class FakePlayerStoreFactory
 		{
 			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
 			stock.add(line(item, 0, count, priced(item.getReferencePrice(), 0.5, 0.85)));
+		}
+		return stock;
+	}
+
+	/**
+	 * Buy stock at an explicit agreed price per unit (from a whisper-negotiated deal).
+	 * @param itemId the item to buy
+	 * @param unitPrice the agreed adena per unit
+	 * @return a one-entry buy stock
+	 */
+	public static List<FakePlayerStoreItem> dealBuyStock(int itemId, int unitPrice)
+	{
+		final List<FakePlayerStoreItem> stock = new ArrayList<>();
+		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
+		if (item != null)
+		{
+			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
+			stock.add(line(item, 0, count, Math.max(1, unitPrice)));
 		}
 		return stock;
 	}

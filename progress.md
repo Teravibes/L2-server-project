@@ -153,8 +153,12 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
   their generated name and know their nearest town; seated AFK vendors stay silent.
 - ✅ Trade-ad matchmaking + roaming trade (Phase 2): a WTS/WTB in trade chat can make one relevant
   same-town bot PM you, walk to its gatekeeper, and open a real one-item store there so you actually
-  buy/sell. Item is resolved from your message text; the deal store tears down when sold out / the
-  meet ends, and the bot resumes roaming.
+  buy/sell. **Or** negotiate it entirely in whispers: when the bot agrees to a specific item + price it
+  emits a hidden `[[SHOP:SELL|BUY:item:price]]` tag; the chat manager arms/opens the store
+  (`openDealNow` if it is already waiting, else `setupDeal` + walk). Item is resolved from text; trades
+  reset the wait timer so it won't leave mid-deal; the store tears down when sold out / the meet ends,
+  and the bot resumes roaming. (Caveat: while its store is open the bot is treated as an AFK vendor and
+  stops whispering until the deal ends.)
 - ✅ Procedural identities: hundreds of unique names/races/genders/classes/hair/gear from one template.
 - ✅ Town life: idler clusters around NPCs, purposeful VISIT movers, racial villages, Giran market.
 - ✅ Private shops (**functional**): seated SELL/BUY/CRAFT/PACKAGE vendors with item-accurate signs;

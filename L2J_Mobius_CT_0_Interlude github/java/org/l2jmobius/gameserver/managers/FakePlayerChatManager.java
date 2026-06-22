@@ -73,6 +73,8 @@ public class FakePlayerChatManager implements IXmlReader
 
 	// The brain appends [[MEET:spot]] to a whisper when it agrees to walk over; we act on it then strip it.
 	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	// [[SHOP:SELL|BUY:<item>:<price>]] - the bot commits to actually trading a specific item at a price.
+	private static final Pattern SHOP_TAG = Pattern.compile("\\[\\[\\s*SHOP\\s*:\\s*(SELL|BUY)\\s*:\\s*([^:\\]]+?)\\s*:\\s*(\\d+)\\s*(kk|k)?\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 
 	// Datapack-verified town centres, so a bot can truthfully say where it is when asked.
 	private static final String[] TOWN_NAMES =
@@ -579,31 +581,76 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return "";
 		}
-		final Matcher matcher = MEET_TAG.matcher(reply);
-		final boolean tagged = matcher.find();
 		boolean cancelled = false;
+		boolean handledShop = false;
 		if ((bot != null) && !isStoreVendor(bot))
 		{
-			if (tagged)
+			// SHOP tag: the bot commits to a real store for a specific item/price. Open it now if it is
+			// already waiting with the player, otherwise arm it and make sure it walks over to meet.
+			final Matcher shop = SHOP_TAG.matcher(reply);
+			if (shop.find())
 			{
-				final String spot = matcher.group(1);
-				if ("cancel".equalsIgnoreCase(spot))
+				final boolean botSells = "SELL".equalsIgnoreCase(shop.group(1));
+				final ItemTemplate item = FakePlayerStoreFactory.findItemByName(shop.group(2));
+				if (item != null)
 				{
-					FakePlayerBehaviorManager.getInstance().cancelMeet(bot);
-					cancelled = true;
+					int price = Integer.parseInt(shop.group(3));
+					final String mult = shop.group(4);
+					if ("k".equalsIgnoreCase(mult))
+					{
+						price *= 1000;
+					}
+					else if ("kk".equalsIgnoreCase(mult))
+					{
+						price *= 1000000;
+					}
+					final int storeType = botSells ? PrivateStoreType.SELL.getId() : PrivateStoreType.BUY.getId();
+					final List<FakePlayerStoreItem> stock = botSells ? FakePlayerStoreFactory.dealSellStock(item.getId(), price) : FakePlayerStoreFactory.dealBuyStock(item.getId(), price);
+					if (!stock.isEmpty())
+					{
+						final String title = FakePlayerStoreFactory.title(botSells ? "SELL" : "BUY", stock);
+						final FakePlayerBehaviorManager behavior = FakePlayerBehaviorManager.getInstance();
+						handledShop = true;
+						if (behavior.isWaitingAtMeet(bot))
+						{
+							behavior.openDealNow(bot, storeType, stock, title); // already here -> open immediately
+						}
+						else
+						{
+							behavior.setupDeal(bot, storeType, stock, title);
+							final Matcher m = MEET_TAG.matcher(reply);
+							final String spot = (m.find() && !"cancel".equalsIgnoreCase(m.group(1))) ? m.group(1) : "gatekeeper";
+							behavior.requestMeet(bot, spot, player);
+						}
+					}
+				}
+			}
+
+			if (!handledShop)
+			{
+				// Plain MEET handling (no shop committed this line).
+				final Matcher meet = MEET_TAG.matcher(reply);
+				if (meet.find())
+				{
+					final String spot = meet.group(1);
+					if ("cancel".equalsIgnoreCase(spot))
+					{
+						FakePlayerBehaviorManager.getInstance().cancelMeet(bot);
+						cancelled = true;
+					}
+					else
+					{
+						FakePlayerBehaviorManager.getInstance().requestMeet(bot, spot, player);
+					}
 				}
 				else
 				{
-					FakePlayerBehaviorManager.getInstance().requestMeet(bot, spot, player);
+					// No tag: if already waiting for this player, they are still engaged -> keep waiting.
+					FakePlayerBehaviorManager.getInstance().noteMeetInteraction(bot, player);
 				}
 			}
-			else
-			{
-				// No movement tag: if it is already waiting for this player, they are still engaged -> keep waiting.
-				FakePlayerBehaviorManager.getInstance().noteMeetInteraction(bot, player);
-			}
 		}
-		final String cleaned = matcher.replaceAll("").trim();
+		final String cleaned = MEET_TAG.matcher(SHOP_TAG.matcher(reply).replaceAll("")).replaceAll("").trim();
 		if (!cleaned.isEmpty())
 		{
 			return cleaned;

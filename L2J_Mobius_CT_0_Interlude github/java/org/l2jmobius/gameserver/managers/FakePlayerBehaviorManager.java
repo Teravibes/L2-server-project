@@ -648,7 +648,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 					state.waitingSince = now; // start the grace countdown
 					if (who != null)
 					{
-						FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), Rnd.nextBoolean() ? "u still coming?" : "still waiting, u coming or not?");
+						final String nudge = state.dealActive ? (Rnd.nextBoolean() ? "u buying or what?" : "anything else? bout to close up") : (Rnd.nextBoolean() ? "u still coming?" : "still waiting, u coming or not?");
+						FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), nudge);
 					}
 					return;
 				}
@@ -656,7 +657,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				{
 					if (who != null)
 					{
-						FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), Rnd.nextBoolean() ? "guess not, im off" : "k im leaving, hit me up later");
+						final String bye = state.dealActive ? (Rnd.nextBoolean() ? "closing up, hit me later" : "im done, cya") : (Rnd.nextBoolean() ? "guess not, im off" : "k im leaving, hit me up later");
+						FakePlayerChatManager.getInstance().sendChat(who, npc.getName(), bye);
 					}
 					endMeet(npc, state); // fall through to normal behavior
 				}
@@ -977,6 +979,47 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		state.pendingStoreType = storeType;
 		state.pendingStock = stock;
 		state.pendingTitle = title;
+		return true;
+	}
+
+	/** @return {@code true} if the bot is parked at a meet spot waiting for the player. */
+	public boolean isWaitingAtMeet(Npc bot)
+	{
+		if (bot == null)
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		return (state != null) && state.summonArrived;
+	}
+
+	/**
+	 * Opens a deal store on a bot that is already waiting at a meet spot (player asked it to "open shop"
+	 * once it arrived). Keeps it pinned and resets the wait so it does not time out mid-trade.
+	 */
+	public boolean openDealNow(Npc bot, int storeType, List<FakePlayerStoreItem> stock, String title)
+	{
+		if (bot == null)
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		final FakePlayerAppearance look = bot.getFakePlayerAppearance();
+		if ((state == null) || !state.summonArrived || (look == null))
+		{
+			return false;
+		}
+		look.setStoreItems(stock);
+		look.setStore(storeType, title);
+		state.dealActive = true;
+		state.pendingStoreType = 0;
+		state.pendingStock = null;
+		state.pendingTitle = null;
+		state.waitingSince = System.currentTimeMillis();
+		state.summonNudged = false;
+		bot.disableCoreAI(true);
+		bot.setImmobilized(true);
+		bot.updateAbnormalEffect(); // show the store sign
 		return true;
 	}
 

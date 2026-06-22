@@ -228,6 +228,7 @@ public class FakePlayerStoreManager
 			entry.decrease(bought.getValue());
 		}
 
+		FakePlayerBehaviorManager.getInstance().noteMeetInteraction(npc, player); // active trade -> don't time out
 		settle(npc, look);
 		player.sendPacket(new FakePlayerStoreListSell(player, npc));
 	}
@@ -300,6 +301,7 @@ public class FakePlayerStoreManager
 		}
 		player.addAdena(ItemProcessType.SELL, (int) total, npc, true);
 
+		FakePlayerBehaviorManager.getInstance().noteMeetInteraction(npc, player); // active trade -> don't time out
 		settle(npc, look);
 		player.sendPacket(new FakePlayerStoreListBuy(player, npc));
 	}
