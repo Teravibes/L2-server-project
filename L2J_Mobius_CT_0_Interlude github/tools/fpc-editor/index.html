@@ -210,6 +210,9 @@ function switchMode(m){
 	selected = -1;
 	applyModeUi(); updateProfileList(); renderList(); syncForm(); updateStatus(); draw();
 }
+document.getElementById('modeNpc').onclick = () => switchMode('npc');
+document.getElementById('modePhantom').onclick = () => switchMode('phantom');
+
 let mapImages = []; // { img, name, path, x1, y1, x2, y2 }
 let selectedImage = -1;
 let imageCatalog = { worldMap: null, cities: [], locations: [], layout: null };
