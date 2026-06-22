@@ -21,6 +21,7 @@
 package org.l2jmobius.gameserver.managers;
 
 import java.util.ArrayList;
+import java.util.EnumMap;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
@@ -30,6 +31,7 @@ import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.config.custom.AutoPlayConfig;
 import org.l2jmobius.gameserver.data.sql.CharInfoTable;
 import org.l2jmobius.gameserver.data.xml.ExperienceData;
+import org.l2jmobius.gameserver.data.xml.ItemData;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.World;
@@ -39,6 +41,12 @@ import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
+import org.l2jmobius.gameserver.model.item.ItemTemplate;
+import org.l2jmobius.gameserver.model.item.Weapon;
+import org.l2jmobius.gameserver.model.item.enums.ItemProcessType;
+import org.l2jmobius.gameserver.model.item.instance.Item;
+import org.l2jmobius.gameserver.model.item.type.CrystalType;
+import org.l2jmobius.gameserver.model.item.type.WeaponType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
 import org.l2jmobius.gameserver.taskmanagers.AutoPlayTaskManager;
@@ -75,6 +83,13 @@ public class PhantomManager
 	// AutoPlay auto-action id for the basic melee attack. Without it, AutoPlay treats the character as a
 	// mage caster that never auto-hits (see AutoPlayTaskManager.isMageCaster).
 	private static final int AUTO_ATTACK_ACTION = 2;
+	// How many soulshots to hand a freshly geared phantom (no runtime restock yet).
+	private static final int SHOT_COUNT = 5000;
+
+	// Cheapest (i.e. most basic) one-handed-capable SWORD per grade, resolved once from the datapack so
+	// phantoms equip a weapon Power Strike / Mortal Blow can actually be used with.
+	private static final EnumMap<CrystalType, ItemTemplate> SWORD_BY_GRADE = new EnumMap<>(CrystalType.class);
+	private static volatile boolean _swordsBuilt = false;
 
 	private static class PhantomData
 	{
@@ -181,11 +196,153 @@ public class PhantomManager
 				phantom.addExpAndSp(targetExp - currentExp, 0);
 			}
 		}
-		// Belt and braces: make sure every auto-get class skill for the final level is learned.
+		// Belt and braces: make sure every auto-get class skill for the final level is learned. This must
+		// happen before gear() so the matching Expertise passive is known and the weapon has no grade
+		// penalty (which would also disable soulshots).
 		phantom.rewardSkills();
+		gear(phantom, level);
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
+	}
+
+	/**
+	 * Equips a grade-appropriate sword and hands over matching soulshots (auto-enabled). The sword is
+	 * what lets the base-fighter attack skills (Power Strike / Mortal Blow) actually fire - without a
+	 * weapon those skills cannot be cast, so a naked phantom only throws punches. Armor is a later step.
+	 * @param phantom the phantom to gear
+	 * @param level its level (decides the grade tier)
+	 */
+	private void gear(Player phantom, int level)
+	{
+		buildSwords();
+
+		// Pick the sword for this level's grade, stepping down if a grade has no candidate.
+		CrystalType grade = gradeForLevel(level);
+		ItemTemplate sword = null;
+		for (int ordinal = grade.ordinal(); (ordinal >= 0) && (sword == null); ordinal--)
+		{
+			final CrystalType candidateGrade = CrystalType.values()[ordinal];
+			sword = SWORD_BY_GRADE.get(candidateGrade);
+			if (sword != null)
+			{
+				grade = candidateGrade;
+			}
+		}
+		if (sword == null)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": No sword found in the datapack - phantom stays unarmed.");
+			return;
+		}
+
+		final Item weapon = phantom.getInventory().addItem(ItemProcessType.REWARD, sword.getId(), 1, phantom, null);
+		if (weapon != null)
+		{
+			phantom.getInventory().equipItem(weapon);
+		}
+
+		// Soulshots must match the equipped weapon's grade exactly.
+		final int shotId = soulshotIdFor(grade);
+		phantom.getInventory().addItem(ItemProcessType.REWARD, shotId, SHOT_COUNT, phantom, null);
+		phantom.addAutoSoulShot(shotId);
+		phantom.broadcastUserInfo();
+	}
+
+	/** Highest weapon grade a phantom of this level may wield (aligned with when Expertise is learned). */
+	private static CrystalType gradeForLevel(int level)
+	{
+		if (level < 20)
+		{
+			return CrystalType.NONE;
+		}
+		if (level < 40)
+		{
+			return CrystalType.D;
+		}
+		if (level < 52)
+		{
+			return CrystalType.C;
+		}
+		if (level < 61)
+		{
+			return CrystalType.B;
+		}
+		if (level < 76)
+		{
+			return CrystalType.A;
+		}
+		return CrystalType.S;
+	}
+
+	/** Soulshot item id matching a weapon grade. */
+	private static int soulshotIdFor(CrystalType grade)
+	{
+		switch (grade)
+		{
+			case D:
+			{
+				return 1463;
+			}
+			case C:
+			{
+				return 1464;
+			}
+			case B:
+			{
+				return 1465;
+			}
+			case A:
+			{
+				return 1466;
+			}
+			case S:
+			{
+				return 1467;
+			}
+			default:
+			{
+				return 1835; // No Grade
+			}
+		}
+	}
+
+	/** Resolves the cheapest (most basic) tradeable SWORD per grade from the datapack, once. */
+	private static void buildSwords()
+	{
+		if (_swordsBuilt)
+		{
+			return;
+		}
+		synchronized (SWORD_BY_GRADE)
+		{
+			if (_swordsBuilt)
+			{
+				return;
+			}
+			for (ItemTemplate item : ItemData.getInstance().getAllItems())
+			{
+				if (!(item instanceof Weapon) || (((Weapon) item).getItemType() != WeaponType.SWORD))
+				{
+					continue;
+				}
+				if (!item.isEquipable() || !item.isTradeable())
+				{
+					continue;
+				}
+				final int price = item.getReferencePrice();
+				if (price <= 0)
+				{
+					continue;
+				}
+				final CrystalType grade = item.getCrystalType();
+				final ItemTemplate current = SWORD_BY_GRADE.get(grade);
+				if ((current == null) || (price < current.getReferencePrice()))
+				{
+					SWORD_BY_GRADE.put(grade, item);
+				}
+			}
+			_swordsBuilt = true;
+		}
 	}
 
 	/**

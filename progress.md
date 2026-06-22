@@ -264,12 +264,22 @@ it off, phantoms spawn but stand still (the manager logs a warning).
   into `getAutoBuffs()` and offensive actives (`isActive() && !isContinuous() && effectPoint<0`) into
   `getAutoSkills()`, so the native AutoUse system buffs and casts in combat.
 
-**Deliberately NOT done yet (next increments):** gearing (weapon/armor) + registering soulshots into
-`getAutoUseSettings()` (needs a grade/level item table — miacodeweb's `PhantomEquipment` is the
-blueprint), hunting-zone routing & relocate-when-area-empty, PvP target mode, procedural identities,
-persistence across restarts, DB cleanup, config knobs, and **data-driven spawning from the fpc-editor
-web app** (mirror the `FakePlayerBehavior.xml` populations + editor pattern so phantoms deploy on boot
-like the NPC fake players).
+**Done (increment 4 — weapon + soulshots):**
+- `PhantomManager.gear(phantom, level)`: equips a grade-appropriate **sword** and hands over matching
+  **soulshots** (auto-enabled via `addAutoSoulShot`). The weapon is what makes the base-fighter attack
+  skills (Power Strike / Mortal Blow) usable — diagnosed cause of "no skills" was a naked phantom
+  (physical skills can't be cast without a weapon).
+- `buildSwords()`: resolves the cheapest (most basic) tradeable SWORD per grade from `ItemData` once
+  (data-driven, no hard-coded weapon ids). `gradeForLevel()` maps level→grade aligned with Expertise
+  (NONE<20, D<40, C<52, B<61, A<76, S≥76); `soulshotIdFor()` maps grade→shot id (1835/1463/1464/1465/
+  1466/1467). Called after `rewardSkills()` so the Expertise passive is known → no grade penalty.
+
+**Deliberately NOT done yet (next increments):** **armor** (survivability — currently weapon-only),
+runtime shot restock, 1st/2nd **class transfer** (base Fighter only has Power Strike/Mortal Blow/Power
+Shot; transferred classes have far richer kits), hunting-zone routing & relocate-when-area-empty, PvP
+target mode, procedural identities, persistence across restarts, DB cleanup, config knobs, and
+**data-driven spawning from the fpc-editor web app** (mirror the `FakePlayerBehavior.xml` populations +
+editor pattern so phantoms deploy on boot like the NPC fake players).
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.
