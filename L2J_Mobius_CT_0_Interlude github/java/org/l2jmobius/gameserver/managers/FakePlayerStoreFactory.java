@@ -77,6 +77,14 @@ public class FakePlayerStoreFactory
 	private static final int ADENA_ID = 57;
 	private static final int ANCIENT_ADENA_ID = 5575;
 
+	// Filler words to ignore when matching a trade-ad phrase to an item name.
+	private static final Set<String> MATCH_STOPWORDS = Set.of("grade", "gr", "the", "a", "an", "of", "for", "pls", "plz", "pm", "cheap", "each", "ea", "some", "any", "my", "g", "lvl");
+	// Variant prefixes that should lose to the plain item when the rest matches (e.g. prefer "Soulshot: D-grade" over "Beast Soulshot").
+	private static final String[] MATCH_NOISE =
+	{
+		"beast", "compressed", "package", "greater", "box", "event", "blessed"
+	};
+
 	private static volatile boolean _built = false;
 	private static final EnumMap<CrystalType, List<ItemTemplate>> EQUIP = new EnumMap<>(CrystalType.class);
 	private static final List<ItemTemplate> BULK = new ArrayList<>();
@@ -263,19 +271,16 @@ public class FakePlayerStoreFactory
 	}
 
 	/**
-	 * Best-effort resolve of a free-text item phrase from a trade-chat ad (e.g. "soulshots", "iron ore")
-	 * to a real tradeable item, so a responding bot can offer/want the actual thing.
+	 * Best-effort resolve of a free-text item phrase from a trade-chat ad (e.g. "soulshots d grade",
+	 * "iron ore") to a real tradeable item. Token-based: punctuation is ignored, plurals are folded and
+	 * filler words ("grade", "cheap"…) dropped, so messy phrasing still finds "Soulshot: D-grade".
 	 * @param phrase the words after WTS/WTB
 	 * @return the closest matching item, or {@code null} if nothing reasonable matched
 	 */
 	public static ItemTemplate findItemByName(String phrase)
 	{
-		if (phrase == null)
-		{
-			return null;
-		}
-		final String p = phrase.toLowerCase().trim();
-		if (p.length() < 3)
+		final List<String> wanted = matchTokens(phrase);
+		if (wanted.isEmpty())
 		{
 			return null;
 		}
@@ -297,22 +302,49 @@ public class FakePlayerStoreFactory
 			{
 				continue;
 			}
-			final String n = name.toLowerCase();
-			if (n.contains(p) || p.contains(n))
+			final List<String> have = matchTokens(name);
+			if (!have.containsAll(wanted))
 			{
-				int score = Math.abs(n.length() - p.length());
-				if (n.startsWith(p))
+				continue; // every meaningful word the player typed must be in the item name
+			}
+			int score = have.size() - wanted.size(); // fewer extra words = closer match
+			for (String noise : MATCH_NOISE)
+			{
+				if (have.contains(noise))
 				{
-					score -= 5;
+					score += 5; // a plain item beats a Beast/Compressed/… variant
 				}
-				if (score < bestScore)
-				{
-					bestScore = score;
-					best = item;
-				}
+			}
+			if (score < bestScore)
+			{
+				bestScore = score;
+				best = item;
 			}
 		}
 		return best;
+	}
+
+	/** Normalises a name/phrase to lowercase word tokens: strips punctuation, drops filler, folds plurals. */
+	private static List<String> matchTokens(String text)
+	{
+		final List<String> tokens = new ArrayList<>();
+		if (text == null)
+		{
+			return tokens;
+		}
+		for (String word : text.toLowerCase().replaceAll("[^a-z0-9]+", " ").trim().split(" "))
+		{
+			if (word.isEmpty() || MATCH_STOPWORDS.contains(word))
+			{
+				continue;
+			}
+			if ((word.length() > 3) && word.endsWith("s"))
+			{
+				word = word.substring(0, word.length() - 1); // crude singularize: soulshots -> soulshot
+			}
+			tokens.add(word);
+		}
+		return tokens;
 	}
 
 	/**
