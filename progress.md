@@ -292,6 +292,9 @@ it off, phantoms spawn but stand still (the manager logs a warning).
 - Booted in `GameServer.java` after `FakePlayerBehaviorManager`. Ships with an **empty** populations
   file (documented example commented out) so nothing auto-deploys until configured — `//phantom spawn`
   testing is unaffected.
+- **Anti-clump tuning:** spawn scatter is area-uniform (sqrt) with a `MIN_SEPARATION` (250) retry so a
+  group doesn't stack on one tile; auto-hunt uses **short-range + respectful** so each phantom works its
+  own pocket and two don't pile on one mob (was long-range, which funneled the whole group together).
 
 **Done (increment 6 — fpc-editor phantom support):**
 - `tools/fpc-editor/index.html` now has an **NPC / Phantom mode switch** (two buttons atop the side

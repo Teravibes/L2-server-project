@@ -97,6 +97,8 @@ public class PhantomManager implements IXmlReader
 	private static final int AUTO_ATTACK_ACTION = 2;
 	// How many soulshots to hand a freshly geared phantom (no runtime restock yet).
 	private static final int SHOT_COUNT = 5000;
+	// Minimum spacing between phantoms at spawn, so a group does not stack on one tile.
+	private static final int MIN_SEPARATION = 250;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -233,24 +235,55 @@ public class PhantomManager implements IXmlReader
 	/** Picks a geodata-valid, ground-snapped spawn point inside a population's circle or polygon. */
 	private Location rollLocation(Population population)
 	{
-		final int x;
-		final int y;
-		if (population.polygon.size() >= 3)
+		Location fallback = null;
+		for (int attempt = 0; attempt < 15; attempt++)
 		{
-			final Location point = randomPointInPolygon(population);
-			x = point.getX();
-			y = point.getY();
+			final int x;
+			final int y;
+			if (population.polygon.size() >= 3)
+			{
+				final Location point = randomPointInPolygon(population);
+				x = point.getX();
+				y = point.getY();
+			}
+			else
+			{
+				// sqrt() spreads points evenly across the disc area instead of bunching them near the center.
+				final double angle = Rnd.nextDouble() * 2 * Math.PI;
+				final int distance = (int) (population.radius * Math.sqrt(Rnd.nextDouble()));
+				x = population.center.getX() + (int) (Math.cos(angle) * distance);
+				y = population.center.getY() + (int) (Math.sin(angle) * distance);
+			}
+			final Location valid = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
+			final int groundZ = GeoEngine.getInstance().getHeight(valid.getX(), valid.getY(), valid.getZ());
+			final Location candidate = new Location(valid.getX(), valid.getY(), groundZ);
+			fallback = candidate;
+			if (isClearOfOtherPhantoms(candidate))
+			{
+				return candidate;
+			}
 		}
-		else
+		return fallback; // gave up finding a clear spot; place anyway
+	}
+
+	/** @return {@code true} if no live phantom is within {@link #MIN_SEPARATION} of the spot. */
+	private boolean isClearOfOtherPhantoms(Location loc)
+	{
+		for (PhantomData data : _phantoms.values())
 		{
-			final double angle = Rnd.nextDouble() * 2 * Math.PI;
-			final int distance = Rnd.get(population.radius + 1);
-			x = population.center.getX() + (int) (Math.cos(angle) * distance);
-			y = population.center.getY() + (int) (Math.sin(angle) * distance);
+			final Player other = data.player;
+			if ((other == null) || other.isDead())
+			{
+				continue;
+			}
+			final double dx = other.getX() - loc.getX();
+			final double dy = other.getY() - loc.getY();
+			if (((dx * dx) + (dy * dy)) < (MIN_SEPARATION * MIN_SEPARATION))
+			{
+				return false;
+			}
 		}
-		final Location valid = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
-		final int groundZ = GeoEngine.getInstance().getHeight(valid.getX(), valid.getY(), valid.getZ());
-		return new Location(valid.getX(), valid.getY(), groundZ);
+		return true;
 	}
 
 	private static Location randomPointInPolygon(Population population)
@@ -636,8 +669,11 @@ public class PhantomManager implements IXmlReader
 	{
 		final AutoPlaySettingsHolder settings = phantom.getAutoPlaySettings();
 		settings.setNextTargetMode(TARGET_MODE_MONSTER);
-		settings.setShortRange(false); // search the long range so it actually goes looking for mobs
-		settings.setRespectfulHunting(false); // do not skip mobs already targeting something
+		// Short-range hunting keeps each phantom in its own pocket of the zone instead of the whole group
+		// funneling toward the same mob-dense spot (which looked like a clump). Combined with spaced spawns
+		// this spreads them out. Dense zones (where phantoms belong) always have mobs in short range.
+		settings.setShortRange(true);
+		settings.setRespectfulHunting(true); // skip mobs already being fought, so two phantoms don't share one
 		settings.setPickup(true);
 
 		// Melee auto-attack; without this AutoPlay assumes a non-hitting mage caster.
