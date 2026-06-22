@@ -216,6 +216,43 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
   down via `endMeet` and the bot roams again. Reuses all the existing store packets/transactions.
   Cross-town and exact-item matching are best-effort; relies on a roaming bot being near the player.
 
+## 7b. Real-Player phantoms (NEW — parallel system, vertical slice)
+
+A **second, independent** bot system alongside the NPC fake players above. Where FPCs are NPCs
+*rendered* to look like players, a **phantom is a genuine `Player` database object with no client
+attached** — the same clientless-Player pattern Mobius already ships for **offline traders**
+(`OfflineTraderTable.restoreOfflineTraders`: `Player.load` → `setOnlineStatus` → `spawnMe` →
+`broadcastUserInfo`, no `GameClient`). This unlocks real skills/inventory/stats/leveling/PvP that an
+NPC structurally can't have. Intended split: **towns = NPC FPCs** (chat/shops/crowd), **field =
+real-Player phantoms** (combat/leveling).
+
+**Why this is safe in our tree (verified):** `Player.sendPacket` is null-client guarded
+(`if (_client != null)`), the `gameserver/ai` package has **zero** direct `getClient().` derefs, and
+offline traders already prove clientless Players live in the World loop and are visible to others.
+
+**Slice scope (done):** create/spawn a clientless `FIGHTER` phantom and tick it (every 4s) to seek and
+**melee** the nearest monster, sitting to rest when nothing is in range. A clientless Player's AI is
+event-driven, so the tick **re-issues `Intention.ATTACK`** each cycle to keep combat moving.
+
+- `managers/PhantomManager.java` — lifecycle (`spawnPhantom`/`clear`/`count`) + hunting tick.
+- `handlers/chat/commands/admin/AdminPhantom.java` — `//phantom spawn [count] | clear | count`
+  (registered in `MasterHandler.java`).
+
+**Deliberately NOT done yet (next increments):** skills/buffs/shots, PvP/PK, MP-flee + town rest,
+relocate-after-N-failed-searches, gearing, procedural identities, persistence/respawn, config knobs.
+These follow miacodeweb/L2-Phantom-AI's `PhantomAI` heuristics as a *blueprint*, reimplemented for
+Interlude (its Essence skill/class IDs don't port).
+
+**Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
+- `clear()` despawns via `Player.deleteMe()` but does **not** delete the DB row, so repeated
+  spawn/clear cycles leave orphan `phantom`-account characters. Fine for a slice; add cleanup later.
+- Confirm the clientless Player's `PlayerAI` actually carries out `ATTACK` between ticks (re-issuing
+  every 4s is the safety net). If it stalls, drive `doAttack`/movement more directly.
+- Watch for any **unguarded** `getClient().x()` outside the AI package triggered during combat/skill
+  effects; add null-checks reactively (offline traders suggest the common paths are already safe).
+
+---
+
 ## 8. Suggested next steps
 
 1. **Vendors permanent / market polish** (mostly done — verify after rebuild).
