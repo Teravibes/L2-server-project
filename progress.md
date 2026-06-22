@@ -279,12 +279,26 @@ it off, phantoms spawn but stand still (the manager logs a warning).
   functionally — soulshots fired — but the blade didn't render because `broadcastCharInfo` is throttled
   and the update was being coalesced/missed.)
 
-**Deliberately NOT done yet (next increments):** **armor** (survivability — currently weapon-only),
-runtime shot restock, 1st/2nd **class transfer** (base Fighter only has Power Strike/Mortal Blow/Power
-Shot; transferred classes have far richer kits), hunting-zone routing & relocate-when-area-empty, PvP
-target mode, procedural identities, persistence across restarts, DB cleanup, config knobs, and
-**data-driven spawning from the fpc-editor web app** (mirror the `FakePlayerBehavior.xml` populations +
-editor pattern so phantoms deploy on boot like the NPC fake players).
+**Done (increment 5 — data-driven deployment + death/respawn):**
+- `PhantomManager` is now an `IXmlReader` that loads **`data/PhantomPopulations.xml`** on boot (its own
+  file, separate from the NPC `FakePlayerBehavior.xml`) and **deploys** ~20s after start.
+- `<population>`: `name`, `x/y/z`, `radius`, `count`, `minLevel`, `maxLevel`, `respawn`, and optional
+  `<point>` **polygon** (spawn inside the shape instead of a circle). Phantoms are scattered within the
+  group and **Z-snapped to ground via geodata** (reuses the behavior-manager's scatter/polygon/Z-snap
+  idioms) so they spread out and don't stack.
+- **Death → despawn → respawn:** population phantoms that die are removed and a **fresh** phantom is
+  spawned into the same group after `RESPAWN_DELAY` (15s). Ad-hoc admin-spawned phantoms still revive in
+  place (stable test count).
+- Booted in `GameServer.java` after `FakePlayerBehaviorManager`. Ships with an **empty** populations
+  file (documented example commented out) so nothing auto-deploys until configured — `//phantom spawn`
+  testing is unaffected.
+
+**Deliberately NOT done yet (next increments):** **shared name/gear randomizer** (reuse
+`FakePlayerAppearanceFactory`/`FakePlayerStoreFactory` *logic* to give each phantom a unique
+name/look/gear on spawn & respawn), **fpc-editor support** for the new population type (draw phantom
+zones like NPC ones), runtime shot restock, 1st/2nd **class transfer** (richer kits), hunting-zone
+relocate-when-empty, PvP target mode, persistence across restarts, DB cleanup of orphan phantom rows,
+config knobs, and **parties** (engine already supports auto-assist + offline-play party restore).
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.

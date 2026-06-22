@@ -20,6 +20,7 @@
  */
 package org.l2jmobius.gameserver.managers;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
@@ -27,14 +28,19 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
+import org.w3c.dom.Document;
+
 import org.l2jmobius.commons.threads.ThreadPool;
+import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.config.custom.AutoPlayConfig;
 import org.l2jmobius.gameserver.data.sql.CharInfoTable;
 import org.l2jmobius.gameserver.data.xml.ExperienceData;
 import org.l2jmobius.gameserver.data.xml.ItemData;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
+import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.model.Location;
+import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
@@ -67,21 +73,23 @@ import org.l2jmobius.gameserver.taskmanagers.AutoUseTaskManager;
  * <b>Combat is delegated to the engine's native auto-hunt</b> ({@link AutoPlayTaskManager} +
  * {@link AutoUseTaskManager}) - the exact systems {@code OfflinePlayTable.restoreOfflinePlayers}
  * uses to make a clientless player farm. They handle target selection, movement (geodata
- * pathfinding), attacking, and - once a phantom has them - skills, buffs, soulshots and potions. This
- * manager only owns the <b>macro</b> layer: spawning, supervision and reviving. Hunting-zone routing
- * and procedural identities/gear are later increments.
+ * pathfinding), attacking, skills, buffs, soulshots and potions. This manager owns the <b>macro</b>
+ * layer: data-driven deployment from {@code data/PhantomPopulations.xml}, gearing, supervision and
+ * death-respawn.
  * @author Claude
  */
-public class PhantomManager
+public class PhantomManager implements IXmlReader
 {
 	private static final Logger LOGGER = Logger.getLogger(PhantomManager.class.getName());
 
 	private static final String ACCOUNT_NAME = "phantom";
-	// Supervisor cadence: cleanup gone phantoms and revive dead ones. Combat runs on AutoPlay's own
-	// 700ms loop, so this can be lazy.
+	// Supervisor cadence: cleanup gone phantoms and revive/respawn dead ones. Combat runs on AutoPlay's
+	// own 700ms loop, so this can be lazy.
 	private static final long SUPERVISE_INTERVAL = 5000;
-	// How long a dead phantom stays down before it is revived at its home spot and resumes hunting.
-	private static final long REVIVE_DELAY = 15000;
+	// How long a dead phantom stays down before it is replaced (population) or revived (ad-hoc).
+	private static final long RESPAWN_DELAY = 15000;
+	// Delay before the boot deployment runs, to let the world and geodata finish loading.
+	private static final long DEPLOY_DELAY = 20000;
 	// AutoPlay "next target" modes (mirrors the client toggle): 1 = monsters only.
 	private static final int TARGET_MODE_MONSTER = 1;
 	// AutoPlay auto-action id for the basic melee attack. Without it, AutoPlay treats the character as a
@@ -105,40 +113,193 @@ public class PhantomManager
 	private static final Map<BodyPart, EnumMap<CrystalType, ItemTemplate>> GEAR_BY_SLOT = new EnumMap<>(BodyPart.class);
 	private static volatile boolean _gearBuilt = false;
 
+	/** A deployment group: where/how many phantoms spawn, their level range, and whether to respawn. */
+	private static class Population
+	{
+		String name = "unnamed";
+		Location center;
+		int radius = 800;
+		int count;
+		int minLevel = 1;
+		int maxLevel = 1;
+		boolean respawn = true;
+		final List<Location> polygon = new ArrayList<>(); // optional area; spawn inside it instead of a circle
+	}
+
 	private static class PhantomData
 	{
 		final Player player;
 		final Location home;
+		final Population population; // null for ad-hoc (admin) spawns
 		long deadSince; // 0 while alive
 
-		PhantomData(Player player, Location home)
+		PhantomData(Player player, Location home, Population population)
 		{
 			this.player = player;
 			this.home = home;
+			this.population = population;
 		}
 	}
 
 	private final ConcurrentHashMap<Integer, PhantomData> _phantoms = new ConcurrentHashMap<>();
+	private final List<Population> _populations = new ArrayList<>();
 	private boolean _supervising = false;
 
 	protected PhantomManager()
 	{
+		load();
+	}
+
+	@Override
+	public void load()
+	{
+		_populations.clear();
+		parseDatapackFile("data/PhantomPopulations.xml");
+		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _populations.size() + " phantom population(s).");
+		if (!_populations.isEmpty())
+		{
+			ThreadPool.schedule(this::deploy, DEPLOY_DELAY);
+			startSupervising();
+		}
+	}
+
+	@Override
+	public void parseDocument(Document document, File file)
+	{
+		forEach(document, "list", listNode -> forEach(listNode, "population", populationNode ->
+		{
+			final StatSet set = new StatSet(parseAttributes(populationNode));
+			final Population population = new Population();
+			population.name = set.getString("name", "unnamed");
+			population.center = new Location(set.getInt("x"), set.getInt("y"), set.getInt("z"));
+			population.radius = set.getInt("radius", 800);
+			population.count = set.getInt("count", 0);
+			population.minLevel = set.getInt("minLevel", 1);
+			population.maxLevel = set.getInt("maxLevel", population.minLevel);
+			population.respawn = set.getBoolean("respawn", true);
+			forEach(populationNode, "point", pointNode ->
+			{
+				final StatSet p = new StatSet(parseAttributes(pointNode));
+				population.polygon.add(new Location(p.getInt("x"), p.getInt("y"), p.getInt("z", population.center.getZ())));
+			});
+			_populations.add(population);
+		}));
 	}
 
 	/**
-	 * Creates a brand-new clientless fighter phantom, spawns it, levels/skills it, and hands it to the
-	 * native auto-hunt so it seeks and fights monsters on its own.
-	 * @param location where to spawn (also its revive home)
-	 * @param level the level to bring the phantom to (1 = a raw fighter)
-	 * @return the spawned phantom, or {@code null} on failure
+	 * Deploys every configured population (called once, a short while after boot). Each phantom is
+	 * scattered within its group's circle/polygon and Z-snapped to the ground via geodata, so they spread
+	 * out instead of stacking on one tile.
 	 */
-	public Player spawnPhantom(Location location, int level)
+	private void deploy()
 	{
 		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
 		{
-			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - phantoms will spawn but not hunt.");
+			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - deployed phantoms will not hunt.");
 		}
+		int deployed = 0;
+		for (Population population : _populations)
+		{
+			int groupDeployed = 0;
+			for (int i = 0; i < population.count; i++)
+			{
+				if (deployOne(population))
+				{
+					groupDeployed++;
+				}
+			}
+			deployed += groupDeployed;
+			if (groupDeployed < population.count)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Population '" + population.name + "' deployed " + groupDeployed + "/" + population.count + " (bad anchor/geodata?).");
+			}
+		}
+		LOGGER.info("===== " + deployed + " PHANTOMS DEPLOYED =====");
+	}
 
+	/** Spawns one phantom into a population: rolls a scattered location and a level in the group's range. */
+	private boolean deployOne(Population population)
+	{
+		final Location location = rollLocation(population);
+		if (location == null)
+		{
+			return false;
+		}
+		// Rnd.get(origin, bound) is inclusive on both ends.
+		final int level = Rnd.get(population.minLevel, population.maxLevel);
+		return createAndSpawn(location, level, population) != null;
+	}
+
+	/** Picks a geodata-valid, ground-snapped spawn point inside a population's circle or polygon. */
+	private Location rollLocation(Population population)
+	{
+		final int x;
+		final int y;
+		if (population.polygon.size() >= 3)
+		{
+			final Location point = randomPointInPolygon(population);
+			x = point.getX();
+			y = point.getY();
+		}
+		else
+		{
+			final double angle = Rnd.nextDouble() * 2 * Math.PI;
+			final int distance = Rnd.get(population.radius + 1);
+			x = population.center.getX() + (int) (Math.cos(angle) * distance);
+			y = population.center.getY() + (int) (Math.sin(angle) * distance);
+		}
+		final Location valid = GeoEngine.getInstance().getValidLocation(population.center, new Location(x, y, population.center.getZ()));
+		final int groundZ = GeoEngine.getInstance().getHeight(valid.getX(), valid.getY(), valid.getZ());
+		return new Location(valid.getX(), valid.getY(), groundZ);
+	}
+
+	private static Location randomPointInPolygon(Population population)
+	{
+		int minX = Integer.MAX_VALUE, minY = Integer.MAX_VALUE, maxX = Integer.MIN_VALUE, maxY = Integer.MIN_VALUE;
+		for (Location v : population.polygon)
+		{
+			minX = Math.min(minX, v.getX());
+			maxX = Math.max(maxX, v.getX());
+			minY = Math.min(minY, v.getY());
+			maxY = Math.max(maxY, v.getY());
+		}
+		for (int i = 0; i < 30; i++)
+		{
+			final int rx = Rnd.get(minX, maxX);
+			final int ry = Rnd.get(minY, maxY);
+			if (isInPolygon(rx, ry, population.polygon))
+			{
+				return new Location(rx, ry, population.center.getZ());
+			}
+		}
+		return population.center;
+	}
+
+	private static boolean isInPolygon(int px, int py, List<Location> poly)
+	{
+		boolean inside = false;
+		for (int i = 0, j = poly.size() - 1; i < poly.size(); j = i++)
+		{
+			final int xi = poly.get(i).getX(), yi = poly.get(i).getY();
+			final int xj = poly.get(j).getX(), yj = poly.get(j).getY();
+			if (((yi > py) != (yj > py)) && (px < ((double) (xj - xi) * (py - yi) / (yj - yi)) + xi))
+			{
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
+	/**
+	 * Creates a brand-new clientless fighter phantom, levels/skills/gears it, spawns it, and hands it to
+	 * the native auto-hunt so it seeks and fights monsters on its own.
+	 * @param location where to spawn (also its home)
+	 * @param level the level to bring the phantom to
+	 * @param population the owning group (null for ad-hoc admin spawns)
+	 * @return the spawned phantom, or {@code null} on failure
+	 */
+	private Player createAndSpawn(Location location, int level, Population population)
+	{
 		try
 		{
 			final PlayerTemplate template = PlayerTemplateData.getInstance().getTemplate(PlayerClass.FIGHTER);
@@ -157,17 +318,16 @@ public class PhantomManager
 			}
 
 			// Level, skill and gear the phantom BEFORE it enters the world, so the very first CharInfo
-			// nearby players receive already shows its weapon. (A post-spawn equip update can be throttled
-			// or coalesced by broadcastCharInfo, which left the weapon invisible even though it was equipped
-			// and working - soulshots fired but no blade rendered.)
+			// nearby players receive already shows its full set. (A post-spawn equip update can be throttled
+			// or coalesced by broadcastCharInfo, leaving gear invisible even though it was equipped.)
 			phantom.setOnlineStatus(true, false);
 			outfit(phantom, level);
 			enterWorld(phantom, location);
 			enableAutoHunt(phantom);
 
-			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location));
+			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location, population));
 			startSupervising();
-			LOGGER.info(getClass().getSimpleName() + ": Spawned phantom '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ").");
+			LOGGER.info(getClass().getSimpleName() + ": Spawned phantom '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
 			return phantom;
 		}
 		catch (Exception e)
@@ -175,6 +335,22 @@ public class PhantomManager
 			LOGGER.warning(getClass().getSimpleName() + ": Failed to spawn phantom: " + e.getMessage());
 			return null;
 		}
+	}
+
+	/**
+	 * Spawns a single ad-hoc phantom (admin testing path). Population-driven deployment uses
+	 * {@link #deployOne(Population)} instead.
+	 * @param location where to spawn
+	 * @param level the level to bring it to
+	 * @return the spawned phantom, or {@code null} on failure
+	 */
+	public Player spawnPhantom(Location location, int level)
+	{
+		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - phantoms will spawn but not hunt.");
+		}
+		return createAndSpawn(location, level, null);
 	}
 
 	/**
@@ -477,20 +653,27 @@ public class PhantomManager
 		int removed = 0;
 		for (PhantomData data : new ArrayList<>(_phantoms.values()))
 		{
-			try
-			{
-				AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
-				AutoUseTaskManager.getInstance().stopAutoUseTask(data.player);
-				data.player.deleteMe();
-				removed++;
-			}
-			catch (Exception e)
-			{
-				LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + data.player.getObjectId() + ": " + e.getMessage());
-			}
+			despawn(data);
+			removed++;
 		}
 		_phantoms.clear();
 		return removed;
+	}
+
+	/** Stops the auto-hunt, removes the phantom from the world, and forgets it. */
+	private void despawn(PhantomData data)
+	{
+		try
+		{
+			AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
+			AutoUseTaskManager.getInstance().stopAutoUseTask(data.player);
+			data.player.deleteMe();
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + data.player.getObjectId() + ": " + e.getMessage());
+		}
+		_phantoms.remove(data.player.getObjectId());
 	}
 
 	public int getCount()
@@ -529,9 +712,18 @@ public class PhantomManager
 					if (data.deadSince == 0)
 					{
 						data.deadSince = now;
+						// Population phantoms: despawn the corpse now and replace it with a fresh identity
+						// shortly after, so the zone stays populated and gear/name rotate on each death.
+						if ((data.population != null) && data.population.respawn)
+						{
+							final Population population = data.population;
+							despawn(data);
+							ThreadPool.schedule(() -> deployOne(population), RESPAWN_DELAY);
+						}
 					}
-					else if ((now - data.deadSince) >= REVIVE_DELAY)
+					else if ((now - data.deadSince) >= RESPAWN_DELAY)
 					{
+						// Ad-hoc (admin test) phantom: revive it in place so the test count stays stable.
 						revive(data);
 					}
 					continue;

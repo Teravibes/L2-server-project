@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+	Real-Player phantom deployment groups (read by PhantomManager on boot).
+
+	Each <population> spawns clientless real-Player phantoms into a hunting zone. Phantoms are
+	scattered within the group's circle (center + radius) or, if a polygon is drawn, inside that
+	shape; each spawn point is Z-snapped to the ground via geodata so they do not stack or float.
+
+	Attributes:
+	  name      - label for logs (optional).
+	  x, y, z   - group center / anchor (required).
+	  radius    - circular scatter radius around the center (default 800). Ignored if a polygon
+	              of 3+ <point> children is given.
+	  count     - how many phantoms to deploy (default 0 = nothing).
+	  minLevel  - lowest level rolled (default 1).
+	  maxLevel  - highest level rolled (default = minLevel). Each phantom rolls a level in the range.
+	  respawn   - true (default): when a phantom dies it is despawned and a fresh one is spawned
+	              into the same group a short while later. false: dead phantoms are not replaced.
+
+	Optional area instead of a circle - draw a polygon with <point> children:
+	  <population name="..." x="..." y="..." z="..." count="10" minLevel="20" maxLevel="30">
+	    <point x="..." y="..." />
+	    <point x="..." y="..." />
+	    <point x="..." y="..." />
+	  </population>
+
+	NOTE: phantoms only hunt when EnableAutoPlay = True in config/Custom/AutoPlay.ini.
+	With no populations defined here, nothing auto-deploys (admin //phantom spawn still works).
+
+	Example (commented out - edit/uncomment or manage via the fpc-editor tool):
+
+	<population name="Giran Field" x="83400" y="147600" z="-3400" radius="1500" count="10" minLevel="20" maxLevel="30" respawn="true" />
+-->
+<list>
+</list>
