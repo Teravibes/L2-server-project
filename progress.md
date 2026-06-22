@@ -265,14 +265,15 @@ it off, phantoms spawn but stand still (the manager logs a warning).
   `getAutoSkills()`, so the native AutoUse system buffs and casts in combat.
 
 **Done (increment 4 — weapon + soulshots):**
-- `PhantomManager.gear(phantom, level)`: equips a grade-appropriate **sword** and hands over matching
-  **soulshots** (auto-enabled via `addAutoSoulShot`). The weapon is what makes the base-fighter attack
-  skills (Power Strike / Mortal Blow) usable — diagnosed cause of "no skills" was a naked phantom
-  (physical skills can't be cast without a weapon).
-- `buildSwords()`: resolves the cheapest (most basic) tradeable SWORD per grade from `ItemData` once
-  (data-driven, no hard-coded weapon ids). `gradeForLevel()` maps level→grade aligned with Expertise
-  (NONE<20, D<40, C<52, B<61, A<76, S≥76); `soulshotIdFor()` maps grade→shot id (1835/1463/1464/1465/
-  1466/1467). Called after `rewardSkills()` so the Expertise passive is known → no grade penalty.
+- `PhantomManager.gear(phantom, level)`: equips a grade-appropriate **set** — a **sword** plus
+  **LIGHT/HEAVY armor** (chest, legs, gloves, boots, helmet) — and hands over matching **soulshots**
+  (auto-enabled via `addAutoSoulShot`). The weapon makes the base-fighter attack skills (Power Strike /
+  Mortal Blow) usable (diagnosed cause of "no skills" was a naked phantom); the armor keeps it alive.
+- `buildGear()`: resolves the cheapest (most basic) tradeable item per grade **per slot** from
+  `ItemData` once — data-driven, no hard-coded ids; `pickForSlot()` steps down grades if a slot has no
+  candidate; FULL_ARMOR is skipped so it never conflicts with the separate legs piece; robes/shields/
+  sigils are excluded (phantoms are fighters). `gradeForLevel()` maps level→grade aligned with
+  Expertise (NONE<20, D<40, C<52, B<61, A<76, S≥76); `soulshotIdFor()` maps grade→shot id.
 - **Spawn order matters for visuals:** level/skills/**gear run BEFORE `spawnMe()`** so the first
   `CharInfo` nearby clients receive already shows the weapon. (Equipping after spawn worked
   functionally — soulshots fired — but the blade didn't render because `broadcastCharInfo` is throttled

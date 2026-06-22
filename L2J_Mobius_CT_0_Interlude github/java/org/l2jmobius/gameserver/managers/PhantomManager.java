@@ -23,6 +23,7 @@ package org.l2jmobius.gameserver.managers;
 import java.util.ArrayList;
 import java.util.EnumMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
@@ -41,10 +42,13 @@ import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
+import org.l2jmobius.gameserver.model.item.Armor;
 import org.l2jmobius.gameserver.model.item.ItemTemplate;
 import org.l2jmobius.gameserver.model.item.Weapon;
+import org.l2jmobius.gameserver.model.item.enums.BodyPart;
 import org.l2jmobius.gameserver.model.item.enums.ItemProcessType;
 import org.l2jmobius.gameserver.model.item.instance.Item;
+import org.l2jmobius.gameserver.model.item.type.ArmorType;
 import org.l2jmobius.gameserver.model.item.type.CrystalType;
 import org.l2jmobius.gameserver.model.item.type.WeaponType;
 import org.l2jmobius.gameserver.model.skill.Skill;
@@ -86,10 +90,20 @@ public class PhantomManager
 	// How many soulshots to hand a freshly geared phantom (no runtime restock yet).
 	private static final int SHOT_COUNT = 5000;
 
-	// Cheapest (i.e. most basic) one-handed-capable SWORD per grade, resolved once from the datapack so
-	// phantoms equip a weapon Power Strike / Mortal Blow can actually be used with.
-	private static final EnumMap<CrystalType, ItemTemplate> SWORD_BY_GRADE = new EnumMap<>(CrystalType.class);
-	private static volatile boolean _swordsBuilt = false;
+	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
+	private static final BodyPart[] GEAR_SLOTS =
+	{
+		BodyPart.R_HAND,
+		BodyPart.CHEST,
+		BodyPart.LEGS,
+		BodyPart.GLOVES,
+		BodyPart.FEET,
+		BodyPart.HEAD
+	};
+	// Cheapest (i.e. most basic) tradeable item per grade for each slot, resolved once from the datapack
+	// so phantoms equip a coherent, level-appropriate set (data-driven - no hard-coded item ids).
+	private static final Map<BodyPart, EnumMap<CrystalType, ItemTemplate>> GEAR_BY_SLOT = new EnumMap<>(BodyPart.class);
+	private static volatile boolean _gearBuilt = false;
 
 	private static class PhantomData
 	{
@@ -212,46 +226,75 @@ public class PhantomManager
 	}
 
 	/**
-	 * Equips a grade-appropriate sword and hands over matching soulshots (auto-enabled). The sword is
-	 * what lets the base-fighter attack skills (Power Strike / Mortal Blow) actually fire - without a
-	 * weapon those skills cannot be cast, so a naked phantom only throws punches. Armor is a later step.
+	 * Equips a grade-appropriate set (sword + light/heavy armor) and hands over matching soulshots
+	 * (auto-enabled). The weapon is what lets the base-fighter attack skills (Power Strike / Mortal Blow)
+	 * actually fire; the armor keeps the phantom alive long enough to hunt.
 	 * @param phantom the phantom to gear
 	 * @param level its level (decides the grade tier)
 	 */
 	private void gear(Player phantom, int level)
 	{
-		buildSwords();
+		buildGear();
+		final CrystalType desired = gradeForLevel(level);
 
-		// Pick the sword for this level's grade, stepping down if a grade has no candidate.
-		CrystalType grade = gradeForLevel(level);
-		ItemTemplate sword = null;
-		for (int ordinal = grade.ordinal(); (ordinal >= 0) && (sword == null); ordinal--)
-		{
-			final CrystalType candidateGrade = CrystalType.values()[ordinal];
-			sword = SWORD_BY_GRADE.get(candidateGrade);
-			if (sword != null)
-			{
-				grade = candidateGrade;
-			}
-		}
+		// Weapon first, so we know the grade actually equipped (soulshots must match it exactly).
+		final ItemTemplate sword = pickForSlot(BodyPart.R_HAND, desired);
 		if (sword == null)
 		{
 			LOGGER.warning(getClass().getSimpleName() + ": No sword found in the datapack - phantom stays unarmed.");
-			return;
 		}
-
-		final Item weapon = phantom.getInventory().addItem(ItemProcessType.REWARD, sword.getId(), 1, phantom, null);
-		if (weapon != null)
+		else
 		{
-			phantom.getInventory().equipItem(weapon);
+			equip(phantom, sword);
+			final int shotId = soulshotIdFor(sword.getCrystalType());
+			phantom.getInventory().addItem(ItemProcessType.REWARD, shotId, SHOT_COUNT, phantom, null);
+			phantom.addAutoSoulShot(shotId);
 		}
 
-		// Soulshots must match the equipped weapon's grade exactly.
-		final int shotId = soulshotIdFor(grade);
-		phantom.getInventory().addItem(ItemProcessType.REWARD, shotId, SHOT_COUNT, phantom, null);
-		phantom.addAutoSoulShot(shotId);
-		// No broadcast here: gear() runs before the phantom enters the world, so the weapon is already in
-		// place for the spawn CharInfo (enterWorld broadcasts afterwards).
+		// Armor pieces: best available at or below the level's grade for each slot.
+		for (BodyPart slot : GEAR_SLOTS)
+		{
+			if (slot == BodyPart.R_HAND)
+			{
+				continue;
+			}
+			final ItemTemplate piece = pickForSlot(slot, desired);
+			if (piece != null)
+			{
+				equip(phantom, piece);
+			}
+		}
+		// No broadcast here: gear() runs before the phantom enters the world, so the whole set is in place
+		// for the spawn CharInfo (enterWorld broadcasts afterwards).
+	}
+
+	/** Adds a single template to the phantom's inventory and equips it. */
+	private void equip(Player phantom, ItemTemplate template)
+	{
+		final Item item = phantom.getInventory().addItem(ItemProcessType.REWARD, template.getId(), 1, phantom, null);
+		if (item != null)
+		{
+			phantom.getInventory().equipItem(item);
+		}
+	}
+
+	/** Best item for a slot at the desired grade, stepping down if a grade has no candidate. */
+	private static ItemTemplate pickForSlot(BodyPart slot, CrystalType desired)
+	{
+		final EnumMap<CrystalType, ItemTemplate> byGrade = GEAR_BY_SLOT.get(slot);
+		if (byGrade == null)
+		{
+			return null;
+		}
+		for (int ordinal = desired.ordinal(); ordinal >= 0; ordinal--)
+		{
+			final ItemTemplate item = byGrade.get(CrystalType.values()[ordinal]);
+			if (item != null)
+			{
+				return item;
+			}
+		}
+		return null;
 	}
 
 	/** Highest weapon grade a phantom of this level may wield (aligned with when Expertise is learned). */
@@ -312,26 +355,30 @@ public class PhantomManager
 		}
 	}
 
-	/** Resolves the cheapest (most basic) tradeable SWORD per grade from the datapack, once. */
-	private static void buildSwords()
+	/**
+	 * Resolves the cheapest (most basic) tradeable item per grade for each gear slot from the datapack,
+	 * once. Weapons are limited to swords; armor to LIGHT/HEAVY pieces in the standard slots (FULL_ARMOR
+	 * is skipped so it never conflicts with the separate legs piece).
+	 */
+	private static void buildGear()
 	{
-		if (_swordsBuilt)
+		if (_gearBuilt)
 		{
 			return;
 		}
-		synchronized (SWORD_BY_GRADE)
+		synchronized (GEAR_BY_SLOT)
 		{
-			if (_swordsBuilt)
+			if (_gearBuilt)
 			{
 				return;
 			}
+			for (BodyPart slot : GEAR_SLOTS)
+			{
+				GEAR_BY_SLOT.put(slot, new EnumMap<>(CrystalType.class));
+			}
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
-				if (!(item instanceof Weapon) || (((Weapon) item).getItemType() != WeaponType.SWORD))
-				{
-					continue;
-				}
-				if (!item.isEquipable() || !item.isTradeable())
+				if ((item == null) || !item.isEquipable() || !item.isTradeable())
 				{
 					continue;
 				}
@@ -340,14 +387,40 @@ public class PhantomManager
 				{
 					continue;
 				}
+
+				final BodyPart slot;
+				if ((item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.SWORD))
+				{
+					slot = BodyPart.R_HAND;
+				}
+				else if (item instanceof Armor)
+				{
+					final ArmorType type = ((Armor) item).getItemType();
+					if ((type != ArmorType.LIGHT) && (type != ArmorType.HEAVY))
+					{
+						continue; // robes / shields / sigils - phantoms are fighters
+					}
+					final BodyPart part = item.getBodyPart();
+					if ((part != BodyPart.CHEST) && (part != BodyPart.LEGS) && (part != BodyPart.GLOVES) && (part != BodyPart.FEET) && (part != BodyPart.HEAD))
+					{
+						continue; // skip FULL_ARMOR (conflicts with separate legs) and non-armor slots
+					}
+					slot = part;
+				}
+				else
+				{
+					continue;
+				}
+
+				final EnumMap<CrystalType, ItemTemplate> byGrade = GEAR_BY_SLOT.get(slot);
 				final CrystalType grade = item.getCrystalType();
-				final ItemTemplate current = SWORD_BY_GRADE.get(grade);
+				final ItemTemplate current = byGrade.get(grade);
 				if ((current == null) || (price < current.getReferencePrice()))
 				{
-					SWORD_BY_GRADE.put(grade, item);
+					byGrade.put(grade, item);
 				}
 			}
-			_swordsBuilt = true;
+			_gearBuilt = true;
 		}
 	}
 
