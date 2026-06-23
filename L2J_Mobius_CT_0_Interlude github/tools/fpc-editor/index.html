@@ -261,27 +261,92 @@ const IMAGE_HANDLE_SIZE = 9;
 // Town centers plus a few key NPC spots (real Interlude coords) so you can drop route
 // waypoints straight onto landmarks. Sub-spots are drawn small and labelled when zoomed in.
 const LANDMARKS = [
-	{ n: 'Talking Island', x: -84318, y: 244294, spots: [ { n: 'Gatekeeper', x: -83990, y: 243336 } ] },
-	{ n: 'Gludin', x: -80684, y: 149770, spots: [ { n: 'Gatekeeper', x: -83520, y: 150560 } ] },
-	{ n: 'Gludio', x: -14053, y: 123808, spots: [ { n: 'Gatekeeper', x: -12764, y: 122682 } ] },
-	{ n: 'Dion', x: 15670, y: 142983, spots: [] },
+	{ n: 'Talking Island', x: -84318, y: 244294, spots: [
+		{ n: 'Gatekeeper', x: -84108, y: 244604 },
+		{ n: 'Warehouse', x: -81895, y: 243917 },
+		{ n: 'Blacksmith', x: -85026, y: 242689 }
+	] },
+	{ n: 'Gludin', x: -80684, y: 149770, spots: [
+		{ n: 'Gatekeeper', x: -80752, y: 149776 },
+		{ n: 'Warehouse', x: -81857, y: 153545 },
+		{ n: 'Blacksmith', x: -83172, y: 155483 },
+		{ n: 'Mammon', x: -84745, y: 151732 }
+	] },
+	{ n: 'Gludio', x: -14053, y: 123808, spots: [
+		{ n: 'Gatekeeper', x: -12736, y: 122816 },
+		{ n: 'Warehouse', x: -13049, y: 124737 },
+		{ n: 'Blacksmith', x: -15190, y: 124756 },
+		{ n: 'Mammon', x: -12345, y: 121695 }
+	] },
+	{ n: 'Dion', x: 15670, y: 142983, spots: [
+		{ n: 'Gatekeeper', x: 15631, y: 142885 },
+		{ n: 'Warehouse', x: 20750, y: 144432 },
+		{ n: 'Blacksmith', x: 19737, y: 143122 },
+		{ n: 'Mammon', x: 16393, y: 144916 }
+	] },
 	{ n: 'Giran', x: 83400, y: 147943, spots: [
-		{ n: 'Gatekeeper', x: 83384, y: 148145 },
-		{ n: 'Warehouse', x: 83192, y: 146680 },
-		{ n: 'Blacksmith', x: 85055, y: 146560 },
-		{ n: 'Grocer', x: 85467, y: 146349 },
+		{ n: 'Gatekeeper', x: 83396, y: 147904 },
+		{ n: 'Warehouse', x: 83264, y: 146602 },
+		{ n: 'Blacksmith', x: 77458, y: 148169 },
+		{ n: 'Grocer', x: 80518, y: 147873 },
 		{ n: 'Mammon', x: 81360, y: 150016 }
 	] },
-	{ n: 'Oren', x: 82309, y: 53122, spots: [] },
-	{ n: 'Aden', x: 146783, y: 25808, spots: [] },
-	{ n: 'Heine', x: 111409, y: 219364, spots: [] },
-	{ n: 'Goddard', x: 147945, y: -55280, spots: [] },
-	{ n: 'Rune', x: 43835, y: -47749, spots: [] },
-	{ n: 'Schuttgart', x: 87383, y: -143246, spots: [] },
-	{ n: 'Elven Village', x: 46934, y: 51467, spots: [ { n: 'Gatekeeper', x: 46926, y: 51511 } ] },
-	{ n: 'Dark Elf Village', x: 11258, y: 14431, spots: [ { n: 'Gatekeeper', x: 12501, y: 16768 } ] },
-	{ n: 'Dwarven Village', x: 115113, y: -178224, spots: [ { n: 'Gatekeeper', x: 115072, y: -178176 } ] },
-	{ n: 'Orc Village', x: -45186, y: -112459, spots: [ { n: 'Gatekeeper', x: -44316, y: -113136 } ] }
+	{ n: 'Oren', x: 82309, y: 53122, spots: [
+		{ n: 'Gatekeeper', x: 82992, y: 53171 },
+		{ n: 'Warehouse', x: 81777, y: 55123 },
+		{ n: 'Blacksmith', x: 83741, y: 55410 },
+		{ n: 'Mammon', x: 80129, y: 56947 }
+	] },
+	{ n: 'Aden', x: 146783, y: 25808, spots: [
+		{ n: 'Gatekeeper', x: 146737, y: 25807 },
+		{ n: 'Warehouse', x: 148859, y: 27258 },
+		{ n: 'Blacksmith', x: 150608, y: 28510 },
+		{ n: 'Mammon', x: 146986, y: 29566 }
+	] },
+	{ n: 'Heine', x: 111409, y: 219364, spots: [
+		{ n: 'Gatekeeper', x: 111386, y: 219413 },
+		{ n: 'Warehouse', x: 109623, y: 220091 },
+		{ n: 'Blacksmith', x: 108003, y: 218963 },
+		{ n: 'Mammon', x: 113481, y: 218450 }
+	] },
+	{ n: 'Goddard', x: 147945, y: -55280, spots: [
+		{ n: 'Gatekeeper', x: 147966, y: -55228 },
+		{ n: 'Warehouse', x: 146440, y: -57500 },
+		{ n: 'Blacksmith', x: 146428, y: -58880 },
+		{ n: 'Mammon', x: 144400, y: -54048 }
+	] },
+	{ n: 'Rune', x: 43835, y: -47749, spots: [
+		{ n: 'Gatekeeper', x: 43824, y: -47664 },
+		{ n: 'Warehouse', x: 43556, y: -48640 },
+		{ n: 'Blacksmith', x: 45072, y: -48784 },
+		{ n: 'Mammon', x: 42924, y: -41424 }
+	] },
+	{ n: 'Schuttgart', x: 87383, y: -143246, spots: [
+		{ n: 'Gatekeeper', x: 87048, y: -143448 },
+		{ n: 'Warehouse', x: 88626, y: -141206 },
+		{ n: 'Blacksmith', x: 88447, y: -139675 },
+		{ n: 'Mammon', x: 89894, y: -143791 }
+	] },
+	{ n: 'Elven Village', x: 46934, y: 51467, spots: [
+		{ n: 'Gatekeeper', x: 46926, y: 51511 },
+		{ n: 'Warehouse', x: 47868, y: 50167 },
+		{ n: 'Blacksmith', x: 44476, y: 47153 }
+	] },
+	{ n: 'Dark Elf Village', x: 11258, y: 14431, spots: [
+		{ n: 'Gatekeeper', x: 9670, y: 15537 },
+		{ n: 'Warehouse', x: 13464, y: 17751 },
+		{ n: 'Blacksmith', x: 10580, y: 17574 }
+	] },
+	{ n: 'Dwarven Village', x: 115113, y: -178224, spots: [
+		{ n: 'Gatekeeper', x: 115072, y: -178176 },
+		{ n: 'Warehouse', x: 114716, y: -180018 },
+		{ n: 'Blacksmith', x: 115271, y: -182692 }
+	] },
+	{ n: 'Orc Village', x: -45186, y: -112459, spots: [
+		{ n: 'Gatekeeper', x: -45264, y: -112512 },
+		{ n: 'Warehouse', x: -43114, y: -113404 },
+		{ n: 'Blacksmith', x: -43264, y: -112532 }
+	] }
 ];
 
 // ---- behaviors ----
