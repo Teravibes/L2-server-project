@@ -379,6 +379,25 @@ ever runs dry the engine clears the auto-potion item until respawn — bump `HP_
   - Note: the earlier "frozen" character was a **melee** that didn't even react to hits — treated as a
     one-off glitch, not addressed.
 
+**Fixes (post-test 2 — "only one of a deployed group moves"):** symptom: deploy ~10 into a zone (e.g.
+Ruins of Agony), one melee hunts/spoils normally, the rest stand still; one is in combat stance taking
+hits but only drinking potions, never attacking. Root causes (not a spawn-coordinate bug — the deploy
+path already Z-snaps and validates reachability from the population center):
+- **Idle phantoms never roamed.** Native AutoPlay never moves a phantom beyond its search radius — with no
+  mob in range it does *nothing*. In a spread zone the first mover claims the local mobs (respectful
+  hunting makes the rest skip them), so everyone else finds nothing reachable and **freezes forever**. Fix:
+  the supervisor now **roams** an awake, idle (no target, not in combat, no mob within `REST_DANGER_RANGE`)
+  phantom to a fresh reachable spot inside its home area (`ROAM_MIN_DISTANCE`..population radius, or
+  `ROAM_RADIUS` for ad-hoc), so the next AutoPlay scan picks up new monsters. This is what keeps a group
+  active instead of stalling where the local mobs ran out.
+- **Out-of-MP mages were the "combat stance, not attacking, just potions" case.** A pure caster has no
+  auto-attack action, so when it runs dry it can neither nuke nor melee and just stands drinking HP
+  potions (auto-potion is its own AutoUse task, hence the "drinking but not fighting" look). Fix:
+  `positionMage` now **melees the target** with its weapon while MP is below `MAGE_CAST_MP_PERCENT`, then
+  resumes casting once MP recovers. Removed the kite-while-OOM behavior (and `MAGE_KITE_RANGE`).
+- **Defensive:** `createAndSpawn` now Z-snaps the spawn location for *all* paths (the admin `//phantom
+  spawn` path previously kept the caller's raw Z; idempotent for the already-snapped deploy path).
+
 **Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
 so they arrive **with the parties increment** — standalone they'd have nothing to do.
 

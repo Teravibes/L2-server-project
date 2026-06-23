@@ -144,13 +144,18 @@ public class PhantomManager implements IXmlReader
 	// Share of phantoms that roll a (DD) mage instead of a fighter.
 	private static final int MAGE_CHANCE = 30;
 	// Mage combat: casters don't move under AutoPlay, so a faster tick positions them. They hold at
-	// CAST_RANGE to nuke; when MP drops below CAST_MP_PERCENT they back off to KITE_RANGE and wait for it
-	// to recover, then close back in. TOLERANCE stops constant micro-repositioning.
+	// CAST_RANGE to nuke; when MP drops below CAST_MP_PERCENT they melee the target until MP recovers
+	// (a pure caster is otherwise passive with no MP). TOLERANCE stops constant micro-repositioning.
 	private static final long MAGE_TICK_INTERVAL = 1000;
 	private static final int MAGE_CAST_RANGE = 650;
-	private static final int MAGE_KITE_RANGE = 850;
 	private static final int MAGE_RANGE_TOLERANCE = 150;
 	private static final int MAGE_CAST_MP_PERCENT = 20;
+	// Idle roaming: the native AutoPlay never moves a phantom past its search radius, so once no monster is
+	// in range it stands still forever. When an awake phantom has nothing to fight, the supervisor walks it
+	// to a fresh spot inside its home area so the next AutoPlay scan finds new mobs - this is what keeps a
+	// spread-out zone active instead of phantoms freezing wherever the local mobs ran out.
+	private static final int ROAM_RADIUS = 1200;
+	private static final int ROAM_MIN_DISTANCE = 400;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -395,6 +400,13 @@ public class PhantomManager implements IXmlReader
 		{
 			return null; // safety ceiling reached
 		}
+		// Snap the spawn point to the geodata ground. The population deploy path already snaps via
+		// rollLocation, but the ad-hoc/admin path keeps the caller's raw Z (e.g. the admin's feet Z) at an
+		// offset (x,y) whose real ground sits higher/lower, so the phantom ends up embedded in or floating
+		// over the terrain and its pathfinding raycasts from a bad Z. Snapping here makes every path safe;
+		// it is idempotent for the already-snapped deploy locations.
+		final int groundZ = GeoEngine.getInstance().getHeight(location.getX(), location.getY(), location.getZ());
+		final Location spawnLocation = new Location(location.getX(), location.getY(), groundZ);
 		try
 		{
 			// Random race/body type. Most phantoms are melee fighters; a share are DD mages. Fall back to
@@ -429,10 +441,10 @@ public class PhantomManager implements IXmlReader
 			// or coalesced by broadcastCharInfo, leaving gear invisible even though it was equipped.)
 			phantom.setOnlineStatus(true, false);
 			outfit(phantom, level, mage);
-			enterWorld(phantom, location);
+			enterWorld(phantom, spawnLocation);
 			enableAutoHunt(phantom, mage);
 
-			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location, population, mage));
+			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, spawnLocation, population, mage));
 			startSupervising();
 			LOGGER.info(getClass().getSimpleName() + ": Spawned phantom '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
 			return phantom;
@@ -978,15 +990,25 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
-	/** Moves a mage to its desired stand-off distance from the target (closer to nuke, further to kite). */
+	/** Holds a mage at casting range to nuke; when out of MP it melees the target instead of standing idle. */
 	private void positionMage(Player mage, Monster target)
 	{
+		// Out of MP to nuke: a pure caster has no auto-attack action, so AutoPlay leaves it passive and it
+		// would just stand in combat range drinking potions. Melee the target with its weapon until MP comes
+		// back, then casting resumes (the canCast branch below repositions and AutoUse nukes again).
+		if (mage.getCurrentMpPercent() < MAGE_CAST_MP_PERCENT)
+		{
+			if (mage.getAI().getIntention() != Intention.ATTACK)
+			{
+				mage.setRunning();
+				mage.getAI().setIntention(Intention.ATTACK, target);
+			}
+			return;
+		}
 		double dx = mage.getX() - target.getX();
 		double dy = mage.getY() - target.getY();
 		double distance = Math.hypot(dx, dy);
-		final boolean canCast = mage.getCurrentMpPercent() >= MAGE_CAST_MP_PERCENT;
-		final int desired = canCast ? MAGE_CAST_RANGE : MAGE_KITE_RANGE;
-		if (Math.abs(distance - desired) <= MAGE_RANGE_TOLERANCE)
+		if (Math.abs(distance - MAGE_CAST_RANGE) <= MAGE_RANGE_TOLERANCE)
 		{
 			return; // already in position - stand still so AutoUse can cast
 		}
@@ -994,10 +1016,10 @@ public class PhantomManager implements IXmlReader
 		{
 			distance = 1;
 		}
-		// A point 'desired' units from the target, on the line toward the mage: walks in when too far, backs
-		// off when too close (or out of MP).
-		final int standX = target.getX() + (int) ((dx / distance) * desired);
-		final int standY = target.getY() + (int) ((dy / distance) * desired);
+		// A point MAGE_CAST_RANGE units from the target, on the line toward the mage: walks in when too far,
+		// backs off when too close.
+		final int standX = target.getX() + (int) ((dx / distance) * MAGE_CAST_RANGE);
+		final int standY = target.getY() + (int) ((dy / distance) * MAGE_CAST_RANGE);
 		final Location destination = GeoEngine.getInstance().getValidLocation(mage, new Location(standX, standY, mage.getZ()));
 		mage.setRunning();
 		mage.getAI().setIntention(Intention.MOVE_TO, destination);
@@ -1079,6 +1101,12 @@ public class PhantomManager implements IXmlReader
 					startRest(phantom);
 					data.resting = true;
 				}
+				// Roam when idle: nothing to fight, not already walking and not resting. Relocating it lets the
+				// next AutoPlay scan pick up monsters it could not previously reach, so it stops standing still.
+				else if (!data.resting && !danger && !phantom.isMoving() && !phantom.isCastingNow() && (phantom.getTarget() == null))
+				{
+					roam(phantom, data);
+				}
 			}
 			catch (Exception e)
 			{
@@ -1092,6 +1120,30 @@ public class PhantomManager implements IXmlReader
 	{
 		final WorldObject target = phantom.getTarget();
 		return (target instanceof Monster) && !((Monster) target).isDead();
+	}
+
+	/**
+	 * Walks an idle phantom to a random reachable spot inside its home area, so the next native AutoPlay
+	 * scan can find monsters it could not previously reach. Without this a phantom that runs out of nearby
+	 * mobs just stands still, because AutoPlay never roams beyond its own search radius.
+	 */
+	private void roam(Player phantom, PhantomData data)
+	{
+		final int radius = (data.population != null) ? Math.max(ROAM_MIN_DISTANCE + 100, data.population.radius) : ROAM_RADIUS;
+		for (int attempt = 0; attempt < 6; attempt++)
+		{
+			final double angle = Rnd.nextDouble() * 2 * Math.PI;
+			final int distance = Rnd.get(ROAM_MIN_DISTANCE, radius);
+			final int x = data.home.getX() + (int) (Math.cos(angle) * distance);
+			final int y = data.home.getY() + (int) (Math.sin(angle) * distance);
+			final Location destination = GeoEngine.getInstance().getValidLocation(phantom, new Location(x, y, data.home.getZ()));
+			if (GeoEngine.getInstance().canMoveToTarget(phantom.getX(), phantom.getY(), phantom.getZ(), destination.getX(), destination.getY(), destination.getZ(), phantom.getInstanceId()))
+			{
+				phantom.setRunning();
+				phantom.getAI().setIntention(Intention.MOVE_TO, destination);
+				return;
+			}
+		}
 	}
 
 	/** @return {@code true} if a live monster is close enough that the phantom should not sit to rest. */
