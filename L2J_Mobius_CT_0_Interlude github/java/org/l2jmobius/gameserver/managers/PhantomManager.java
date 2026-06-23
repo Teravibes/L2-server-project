@@ -439,11 +439,19 @@ public class PhantomManager implements IXmlReader
 				return null;
 			}
 
+			// Ignore the weight penalty. Phantoms carry a large stack of healing potions (+ soulshots), which
+			// easily exceeds a non-Dwarf's max load - at >=100% load the engine applies Weight Penalty (skill
+			// 4270) level 4, whose runSpd multiplier is 0, so the phantom is fully immobilized. Dwarves have a
+			// far higher carry capacity, which is why only they moved before this. Diet mode zeroes the penalty
+			// regardless of load (set before items are added so the inventory weight never pins them).
+			phantom.setDietMode(true);
+
 			// Level, skill and gear the phantom BEFORE it enters the world, so the very first CharInfo
 			// nearby players receive already shows its full set. (A post-spawn equip update can be throttled
 			// or coalesced by broadcastCharInfo, leaving gear invisible even though it was equipped.)
 			phantom.setOnlineStatus(true, false);
 			outfit(phantom, level, mage);
+			phantom.refreshOverloaded();
 			enterWorld(phantom, spawnLocation);
 			enableAutoHunt(phantom, mage);
 

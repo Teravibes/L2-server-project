@@ -398,6 +398,17 @@ path already Z-snaps and validates reachability from the population center):
 - **Defensive:** `createAndSpawn` now Z-snaps the spawn location for *all* paths (the admin `//phantom
   spawn` path previously kept the caller's raw Z; idempotent for the already-snapped deploy path).
 
+**Fixes (post-test 3 — THE real "they won't move, only dwarves do" bug):** every phantom cast skills and
+mages even attacked, but **none moved except Dwarves**, in every test. Root cause: **overweight
+immobilization.** Each phantom is handed 20000 Greater Healing Potions (weight 5 each = 100,000) plus
+5000 soulshots. That blows past a non-Dwarf's max load; at >=100% load the engine applies **Weight
+Penalty (skill 4270) level 4**, whose `runSpd` multiplier is **0** — total immobilization. Skills and
+attacks don't need movement, so they still worked (and masked it). **Dwarves have a far larger carry
+capacity**, so they stayed under the cap and moved — hence "only dwarves work". This also masked the
+post-test-2 roam/mage-position fixes (they issue move intentions, but speed 0 = no actual movement).
+Fix: `createAndSpawn` now calls **`phantom.setDietMode(true)`** (engine's "ignore weight penalty") before
+gearing, plus a `refreshOverloaded()` after — so load never pins a phantom regardless of race.
+
 **Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
 so they arrive **with the parties increment** — standalone they'd have nothing to do.
 
