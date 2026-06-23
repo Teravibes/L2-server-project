@@ -24,6 +24,7 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -92,6 +93,9 @@ public class PhantomManager implements IXmlReader
 	// Supervisor cadence: cleanup gone phantoms and revive/respawn dead ones. Combat runs on AutoPlay's
 	// own 700ms loop, so this can be lazy.
 	private static final long SUPERVISE_INTERVAL = 5000;
+	// How often phantoms drop a monster another phantom or a real player is already fighting, so they
+	// spread over the mobs instead of ganging one. Fast tick - this should feel responsive.
+	private static final long DECONFLICT_INTERVAL = 1000;
 	// How long a dead phantom stays down before it is replaced (population) or revived (ad-hoc).
 	private static final long RESPAWN_DELAY = 15000;
 	// On-demand activation: a population's phantoms exist only while a real player is near its anchor, and
@@ -1053,6 +1057,7 @@ public class PhantomManager implements IXmlReader
 		_supervising = true;
 		ThreadPool.scheduleAtFixedRate(this::supervise, SUPERVISE_INTERVAL, SUPERVISE_INTERVAL);
 		ThreadPool.scheduleAtFixedRate(this::mageCombat, MAGE_TICK_INTERVAL, MAGE_TICK_INTERVAL);
+		ThreadPool.scheduleAtFixedRate(this::deconflictTargets, DECONFLICT_INTERVAL, DECONFLICT_INTERVAL);
 		LOGGER.info(getClass().getSimpleName() + ": Phantom supervisor started.");
 	}
 
@@ -1129,6 +1134,80 @@ public class PhantomManager implements IXmlReader
 		final Location destination = GeoEngine.getInstance().getValidLocation(mage, new Location(standX, standY, mage.getZ()));
 		mage.setRunning();
 		mage.getAI().setIntention(Intention.MOVE_TO, destination);
+	}
+
+	/**
+	 * Spreads phantoms over the available monsters instead of letting them gang one. Each tick, for every
+	 * phantom engaged on a monster: if a real (client) player is fighting that monster the phantom yields;
+	 * if two phantoms share a monster the farther one yields. A yielded phantom drops its target so the
+	 * native AutoPlay (with respectful hunting on) re-picks a free monster on its next pass. This closes the
+	 * gap in respectful hunting, which only filters at selection time (two phantoms can lock the same mob
+	 * before either aggros it, and a phantom never drops a mob a player engages after it locked on).
+	 */
+	private void deconflictTargets()
+	{
+		final Map<Integer, Player> claims = new HashMap<>();
+		for (PhantomData data : _phantoms.values())
+		{
+			final Player phantom = data.player;
+			try
+			{
+				if (data.dormant || phantom.isDead())
+				{
+					continue;
+				}
+				final WorldObject target = phantom.getTarget();
+				if (!(target instanceof Monster) || ((Monster) target).isDead())
+				{
+					continue;
+				}
+				final Monster monster = (Monster) target;
+				// Always defer to a real player fighting this monster.
+				if (isContestedByPlayer(monster))
+				{
+					yieldTarget(phantom);
+					continue;
+				}
+				// Otherwise the first (closest) phantom keeps it; later ones yield.
+				final int id = monster.getObjectId();
+				final Player owner = claims.get(id);
+				if (owner == null)
+				{
+					claims.put(id, phantom);
+				}
+				else if (phantom.calculateDistance2D(monster) < owner.calculateDistance2D(monster))
+				{
+					yieldTarget(owner);
+					claims.put(id, phantom);
+				}
+				else
+				{
+					yieldTarget(phantom);
+				}
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Deconflict error for " + phantom.getName() + ": " + e.getMessage());
+			}
+		}
+	}
+
+	/** @return {@code true} if a real, client-connected player is fighting this monster (phantoms must defer). */
+	private static boolean isContestedByPlayer(Monster monster)
+	{
+		final WorldObject monsterTarget = monster.getTarget();
+		// Phantoms/offline players have no client; only a genuine player counts as "the player is hitting it".
+		return (monsterTarget instanceof Player) && !((Player) monsterTarget).isInOfflineMode();
+	}
+
+	/** Drops a phantom's current target and stops its attack so AutoPlay re-selects a free monster. */
+	private void yieldTarget(Player phantom)
+	{
+		if (phantom.getAI().getIntention() == Intention.ATTACK)
+		{
+			phantom.getAI().setIntention(Intention.IDLE);
+		}
+		phantom.setTarget(null);
 	}
 
 	private void supervise()

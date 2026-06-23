@@ -421,6 +421,18 @@ fixing the long-standing orphan-`phantom`-row leak — required now that spawn/d
 still active. (Travel companions / road ambiance: deferred; will be pure-ambiance and likely lightweight
 NPC FPCs rather than full Player phantoms.)
 
+**Target deconfliction (NEW):** native `respectfulHunting` only filters at *selection* time (two phantoms
+can lock the same mob before either aggros, and a phantom never drops a mob a player engages after it
+locked on). A 1s `deconflictTargets` tick now fixes both: for each engaged phantom, if a real client
+player is fighting its monster it **yields**; if two phantoms share a monster the **farther one yields**.
+A yielded phantom drops its target (Intention.IDLE + setTarget null) so AutoPlay re-picks a free mob next
+pass (respectful hunting then steers it off the claimed one, so no thrash). Net: phantoms spread over the
+mobs and never gang the one you're hitting.
+
+**Cleanup:** removed the stale `<assign name="Theron">` / `<assign name="Lytheris">` entries from
+`FakePlayerBehavior.xml` (leftover behavior assignments for default Mobius fake players spawned during
+early testing; the bots no longer exist, and the `<default>` profile covers any discovered bot anyway).
+
 **Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
 so they arrive **with the parties increment** — standalone they'd have nothing to do.
 

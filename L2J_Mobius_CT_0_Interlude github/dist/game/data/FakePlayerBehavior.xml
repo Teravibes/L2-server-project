@@ -116,8 +116,6 @@
 	<population name="field_blazing_swamp" count="7" x="143434" y="-25858" z="-4200" radius="2200" minLevel="58" maxLevel="65" profile="hunter" respawn="true" />
 
 	<!-- ===== Per-bot assignments for hand-placed fake players (discovered in the world) ===== -->
-	<assign name="Theron" profile="farmer" />
-	<assign name="Lytheris" profile="loiter" />
 
 	<!-- Fallback profile for any discovered fake player without an explicit assignment. -->
 	<default profile="loiter" />
