@@ -365,6 +365,15 @@ Potion (id 1539, ×20000, refreshed every spawn) with native **auto-potion** set
 cover HP *during* fights (sitting can't); resting still covers MP (mages) and HP when safe. If a stack
 ever runs dry the engine clears the auto-potion item until respawn — bump `HP_POTION_COUNT` if needed.
 
+**Fixes (post-test):**
+- **They didn't move / didn't pick up:** short-range hunting (set during anti-clump tuning) left phantoms
+  idle unless a mob aggroed them — AutoPlay doesn't roam beyond its search radius, so they never walked to
+  mobs or to dropped adena. Reverted to **long-range** search; clumping is held down by spaced spawns +
+  respectful hunting. Pickup works again once they move (AutoPlay walks to items within ~200).
+- **"Frozen" mage that pots but won't fight:** a pure caster neither melees nor moves to its target, and
+  when out of MP it can't cast either — so it just stood there. Gave **all phantoms the auto-attack
+  action**: mages now walk in and melee as a fallback while AutoUse still casts their nukes when MP allows.
+
 **Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
 so they arrive **with the parties increment** — standalone they'd have nothing to do.
 

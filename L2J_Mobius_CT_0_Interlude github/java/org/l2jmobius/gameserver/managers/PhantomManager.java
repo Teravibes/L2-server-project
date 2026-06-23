@@ -419,7 +419,7 @@ public class PhantomManager implements IXmlReader
 			phantom.setOnlineStatus(true, false);
 			outfit(phantom, level, mage);
 			enterWorld(phantom, location);
-			enableAutoHunt(phantom, mage);
+			enableAutoHunt(phantom);
 
 			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location, population));
 			startSupervising();
@@ -865,23 +865,22 @@ public class PhantomManager implements IXmlReader
 	 * Configures the auto-hunt preferences and starts the native AutoPlay + AutoUse tasks. Soulshots
 	 * would be registered here too (via {@code addAutoSoulShot}) once phantoms are geared with a weapon.
 	 */
-	private void enableAutoHunt(Player phantom, boolean mage)
+	private void enableAutoHunt(Player phantom)
 	{
 		final AutoPlaySettingsHolder settings = phantom.getAutoPlaySettings();
 		settings.setNextTargetMode(TARGET_MODE_MONSTER);
-		// Short-range hunting keeps each phantom in its own pocket of the zone instead of the whole group
-		// funneling toward the same mob-dense spot (which looked like a clump). Combined with spaced spawns
-		// this spreads them out. Dense zones (where phantoms belong) always have mobs in short range.
-		settings.setShortRange(true);
-		settings.setRespectfulHunting(true); // skip mobs already being fought, so two phantoms don't share one
+		// Long-range search so they actively seek and walk to mobs across the zone (short range left them
+		// standing idle unless a mob aggroed them - AutoPlay doesn't roam beyond its search radius).
+		// Clumping is instead held down by spaced spawns + respectful hunting (below).
+		settings.setShortRange(false);
+		settings.setRespectfulHunting(true); // skip mobs already being fought, so phantoms don't converge on one
 		settings.setPickup(true);
 
-		// Fighters auto-attack (action id 2). Mages must NOT have it: AutoPlay then treats them as casters
-		// that target but don't melee, leaving AutoUse to cast their nukes (the auto-skills) on the target.
-		if (!mage)
-		{
-			phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
-		}
+		// Everyone gets the auto-attack action. For fighters it's their main damage; for mages it's a
+		// fallback so they still move to and engage a target (and aren't frozen when out of MP) - AutoUse
+		// keeps casting their nukes on top whenever MP allows. Without it a pure caster neither melees nor
+		// walks to its target, so it just stands there.
+		phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
 
 		AutoPlayTaskManager.getInstance().startAutoPlay(phantom);
 		AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
