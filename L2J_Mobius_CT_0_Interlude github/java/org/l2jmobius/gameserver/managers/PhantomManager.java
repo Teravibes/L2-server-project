@@ -49,6 +49,8 @@ import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
+import org.l2jmobius.gameserver.model.actor.holders.player.ClassType;
+import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
 import org.l2jmobius.gameserver.model.item.Armor;
 import org.l2jmobius.gameserver.model.item.ItemTemplate;
@@ -111,6 +113,13 @@ public class PhantomManager implements IXmlReader
 		44, // Orc Fighter
 		53 // Dwarven Fighter
 	};
+	// First-occupation MYSTIC (DD) base classes; orcs/dwarves excluded (no nuker line).
+	private static final int[] MAGE_CLASS_POOL =
+	{
+		10, 10, // Human Mage
+		25, // Elven Mystic
+		38 // Dark Mystic
+	};
 	// How many (cheapest) candidate items to keep per slot/grade, so phantoms vary their look without
 	// pulling in rare/expensive drops.
 	private static final int CANDIDATES_PER_SLOT = 6;
@@ -121,6 +130,13 @@ public class PhantomManager implements IXmlReader
 	// only the handful of phantoms around you actually compute.
 	private static final int WAKE_RANGE = 3500;
 	private static final int SLEEP_RANGE = 4500;
+	// Resting: when safe (no mob near, not in combat) and low on HP/MP, a phantom sits to regen, then
+	// stands when recovered or threatened. This is what sustains mages (MP) and wounded fighters (HP).
+	private static final int REST_SIT_PERCENT = 35;
+	private static final int REST_STAND_PERCENT = 85;
+	private static final int REST_DANGER_RANGE = 700;
+	// Share of phantoms that roll a (DD) mage instead of a fighter.
+	private static final int MAGE_CHANCE = 30;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -133,8 +149,10 @@ public class PhantomManager implements IXmlReader
 		BodyPart.HEAD
 	};
 	// The cheapest few tradeable items per grade for each slot, resolved once from the datapack, so each
-	// phantom can roll a varied but level-appropriate look (data-driven - no hard-coded item ids).
-	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> GEAR_BY_SLOT = new EnumMap<>(BodyPart.class);
+	// phantom can roll a varied but level-appropriate look (data-driven - no hard-coded item ids). Two
+	// loadouts: fighters (sword + light/heavy armor) and mages (magic weapon + robe).
+	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> FIGHTER_GEAR = new EnumMap<>(BodyPart.class);
+	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> MAGE_GEAR = new EnumMap<>(BodyPart.class);
 	private static volatile boolean _gearBuilt = false;
 
 	/** A deployment group: where/how many phantoms spawn, their level range, and whether to respawn. */
@@ -157,6 +175,7 @@ public class PhantomManager implements IXmlReader
 		final Population population; // null for ad-hoc (admin) spawns
 		long deadSince; // 0 while alive
 		boolean dormant; // auto-hunt paused because no real player is near
+		boolean resting; // sitting to regenerate HP/MP
 
 		PhantomData(Player player, Location home, Population population)
 		{
@@ -362,9 +381,11 @@ public class PhantomManager implements IXmlReader
 		}
 		try
 		{
-			// Random race/body type from the melee-fighter pool; fall back to Human Fighter if a template
-			// is missing. Orcs/dwarves skew male, like the NPC appearance factory.
-			final int classId = FIGHTER_CLASS_POOL[Rnd.get(FIGHTER_CLASS_POOL.length)];
+			// Random race/body type. Most phantoms are melee fighters; a share are DD mages. Fall back to
+			// Human Fighter if a template is missing. Orcs/dwarves skew male, like the NPC appearance factory.
+			final boolean mage = Rnd.get(100) < MAGE_CHANCE;
+			final int[] pool = mage ? MAGE_CLASS_POOL : FIGHTER_CLASS_POOL;
+			final int classId = pool[Rnd.get(pool.length)];
 			PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
 			PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
 			if (template == null)
@@ -391,9 +412,9 @@ public class PhantomManager implements IXmlReader
 			// nearby players receive already shows its full set. (A post-spawn equip update can be throttled
 			// or coalesced by broadcastCharInfo, leaving gear invisible even though it was equipped.)
 			phantom.setOnlineStatus(true, false);
-			outfit(phantom, level);
+			outfit(phantom, level, mage);
 			enterWorld(phantom, location);
-			enableAutoHunt(phantom);
+			enableAutoHunt(phantom, mage);
 
 			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location, population));
 			startSupervising();
@@ -448,7 +469,7 @@ public class PhantomManager implements IXmlReader
 	 * @param phantom the phantom to outfit
 	 * @param level the target level
 	 */
-	private void outfit(Player phantom, int level)
+	private void outfit(Player phantom, int level, boolean mage)
 	{
 		if (level > 1)
 		{
@@ -459,37 +480,39 @@ public class PhantomManager implements IXmlReader
 				phantom.addExpAndSp(targetExp - currentExp, 0);
 			}
 		}
-		// Advance through the class transfers a real character of this level would have done (melee branch),
-		// then learn everything that class can learn by now - so a level-40 phantom is a proper 2nd-class
-		// fighter with a real kit, not a bare base Fighter. Learning is looped so chained skills resolve.
-		transferClass(phantom, level);
+		// Advance through the class transfers a real character of this level would have done (fighters down
+		// a melee branch, mages down a DD/nuker branch), then learn everything that class can learn by now -
+		// so a level-40 phantom is a proper 2nd-class character with a real kit. Learning is looped so
+		// chained skills resolve.
+		transferClass(phantom, level, mage);
 		learnAllSkills(phantom);
-		gear(phantom, level);
+		gear(phantom, level, mage);
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
 	}
 
 	/**
-	 * Advances a phantom from its base fighter class to the occupation its level warrants by walking the
-	 * class tree, choosing a random non-mage branch at each transfer: 1st at 20+, 2nd at 40+, 3rd at 76+.
-	 * @param phantom the phantom (created as a base fighter)
+	 * Advances a phantom from its base class to the occupation its level warrants by walking the class
+	 * tree, choosing a random in-archetype branch at each transfer: 1st at 20+, 2nd at 40+, 3rd at 76+.
+	 * @param phantom the phantom (created as a base fighter or mage)
 	 * @param level its level
+	 * @param mage {@code true} to follow the DD/nuker line, {@code false} for the melee line
 	 */
-	private void transferClass(Player phantom, int level)
+	private void transferClass(Player phantom, int level, boolean mage)
 	{
 		final int targetTier = (level < 20) ? 0 : (level < 40) ? 1 : (level < 76) ? 2 : 3;
 		if (targetTier == 0)
 		{
-			return; // base fighter is correct below level 20
+			return; // base class is correct below level 20
 		}
 		PlayerClass current = phantom.getPlayerClass();
 		for (int step = 0; step < targetTier; step++)
 		{
-			final PlayerClass next = randomMeleeChild(current);
+			final PlayerClass next = randomChild(current, mage);
 			if (next == null)
 			{
-				break; // no further transfer available (e.g. a 2nd-class with no melee 3rd)
+				break; // no further transfer available
 			}
 			current = next;
 		}
@@ -500,13 +523,17 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
-	/** A random non-mage class transfer from the given class, or {@code null} if there are none. */
-	private static PlayerClass randomMeleeChild(PlayerClass parent)
+	/**
+	 * A random class transfer from the given class within the wanted archetype: melee fighters, or DD
+	 * mages (mystic but not priest/summoner). Returns {@code null} if there are none.
+	 */
+	private static PlayerClass randomChild(PlayerClass parent, boolean mage)
 	{
 		final List<PlayerClass> options = new ArrayList<>();
 		for (PlayerClass child : parent.getNextClasses())
 		{
-			if (!child.isMage())
+			final boolean wanted = mage ? (child.isOfType(ClassType.MYSTIC) && !child.isSummoner()) : !child.isMage();
+			if (wanted)
 			{
 				options.add(child);
 			}
@@ -525,29 +552,31 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
-	 * Equips a grade-appropriate set (sword + light/heavy armor) and hands over matching soulshots
-	 * (auto-enabled). The weapon is what lets the base-fighter attack skills (Power Strike / Mortal Blow)
-	 * actually fire; the armor keeps the phantom alive long enough to hunt.
+	 * Equips a grade-appropriate set and hands over matching shots (auto-enabled): fighters get a sword +
+	 * light/heavy armor + soulshots; mages get a magic weapon + robe + spiritshots. The weapon is what
+	 * makes their attack skills / nukes usable; the armor keeps them alive long enough to hunt.
 	 * @param phantom the phantom to gear
 	 * @param level its level (decides the grade tier)
+	 * @param mage {@code true} for a caster loadout
 	 */
-	private void gear(Player phantom, int level)
+	private void gear(Player phantom, int level, boolean mage)
 	{
 		buildGear();
+		final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> set = mage ? MAGE_GEAR : FIGHTER_GEAR;
 		final CrystalType desired = gradeForLevel(level);
 
-		// Weapon first, so we know the grade actually equipped (soulshots must match it exactly).
-		final ItemTemplate sword = pickForSlot(BodyPart.R_HAND, desired);
-		if (sword == null)
+		// Weapon first, so we know the grade actually equipped (shots must match it exactly).
+		final ItemTemplate weapon = pickForSlot(set, BodyPart.R_HAND, desired);
+		if (weapon == null)
 		{
-			LOGGER.warning(getClass().getSimpleName() + ": No sword found in the datapack - phantom stays unarmed.");
+			LOGGER.warning(getClass().getSimpleName() + ": No " + (mage ? "magic weapon" : "sword") + " found in the datapack - phantom stays unarmed.");
 		}
 		else
 		{
-			equip(phantom, sword);
-			final int shotId = soulshotIdFor(sword.getCrystalType());
+			equip(phantom, weapon);
+			final int shotId = mage ? spiritshotIdFor(weapon.getCrystalType()) : soulshotIdFor(weapon.getCrystalType());
 			phantom.getInventory().addItem(ItemProcessType.REWARD, shotId, SHOT_COUNT, phantom, null);
-			phantom.addAutoSoulShot(shotId);
+			phantom.addAutoSoulShot(shotId); // registers both soulshots and spiritshots for auto-use
 		}
 
 		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
@@ -574,7 +603,7 @@ public class PhantomManager implements IXmlReader
 			{
 				continue;
 			}
-			final ItemTemplate piece = pickForSlot(slot, desired);
+			final ItemTemplate piece = pickForSlot(set, slot, desired);
 			if (piece != null)
 			{
 				equip(phantom, piece);
@@ -595,9 +624,9 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/** A random candidate item for a slot at the desired grade, stepping down if a grade has none. */
-	private static ItemTemplate pickForSlot(BodyPart slot, CrystalType desired)
+	private static ItemTemplate pickForSlot(Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> set, BodyPart slot, CrystalType desired)
 	{
-		final EnumMap<CrystalType, List<ItemTemplate>> byGrade = GEAR_BY_SLOT.get(slot);
+		final EnumMap<CrystalType, List<ItemTemplate>> byGrade = set.get(slot);
 		if (byGrade == null)
 		{
 			return null;
@@ -671,10 +700,42 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
+	/** Spiritshot item id matching a weapon grade. */
+	private static int spiritshotIdFor(CrystalType grade)
+	{
+		switch (grade)
+		{
+			case D:
+			{
+				return 2510;
+			}
+			case C:
+			{
+				return 2511;
+			}
+			case B:
+			{
+				return 2512;
+			}
+			case A:
+			{
+				return 2513;
+			}
+			case S:
+			{
+				return 2514;
+			}
+			default:
+			{
+				return 2509; // No Grade
+			}
+		}
+	}
+
 	/**
-	 * Resolves the cheapest (most basic) tradeable item per grade for each gear slot from the datapack,
-	 * once. Weapons are limited to swords; armor to LIGHT/HEAVY pieces in the standard slots (FULL_ARMOR
-	 * is skipped so it never conflicts with the separate legs piece).
+	 * Resolves the cheapest few tradeable items per grade for each gear slot from the datapack, once, into
+	 * two loadouts: fighters (sword + LIGHT/HEAVY armor) and mages (magic weapon + MAGIC robe). FULL_ARMOR
+	 * is skipped so it never conflicts with the separate legs piece.
 	 */
 	private static void buildGear()
 	{
@@ -682,21 +743,14 @@ public class PhantomManager implements IXmlReader
 		{
 			return;
 		}
-		synchronized (GEAR_BY_SLOT)
+		synchronized (FIGHTER_GEAR)
 		{
 			if (_gearBuilt)
 			{
 				return;
 			}
-			for (BodyPart slot : GEAR_SLOTS)
-			{
-				final EnumMap<CrystalType, List<ItemTemplate>> byGrade = new EnumMap<>(CrystalType.class);
-				for (CrystalType grade : CrystalType.values())
-				{
-					byGrade.put(grade, new ArrayList<>());
-				}
-				GEAR_BY_SLOT.put(slot, byGrade);
-			}
+			initGearMap(FIGHTER_GEAR);
+			initGearMap(MAGE_GEAR);
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
 			{
 				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0))
@@ -704,45 +758,67 @@ public class PhantomManager implements IXmlReader
 					continue;
 				}
 
-				final BodyPart slot;
-				if ((item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.SWORD))
+				if (item instanceof Weapon)
 				{
-					slot = BodyPart.R_HAND;
+					if (item.isMagicWeapon())
+					{
+						MAGE_GEAR.get(BodyPart.R_HAND).get(item.getCrystalType()).add(item);
+					}
+					else if (((Weapon) item).getItemType() == WeaponType.SWORD)
+					{
+						FIGHTER_GEAR.get(BodyPart.R_HAND).get(item.getCrystalType()).add(item);
+					}
 				}
 				else if (item instanceof Armor)
 				{
-					final ArmorType type = ((Armor) item).getItemType();
-					if ((type != ArmorType.LIGHT) && (type != ArmorType.HEAVY))
-					{
-						continue; // robes / shields / sigils - phantoms are fighters
-					}
 					final BodyPart part = item.getBodyPart();
 					if ((part != BodyPart.CHEST) && (part != BodyPart.LEGS) && (part != BodyPart.GLOVES) && (part != BodyPart.FEET) && (part != BodyPart.HEAD))
 					{
 						continue; // skip FULL_ARMOR (conflicts with separate legs) and non-armor slots
 					}
-					slot = part;
-				}
-				else
-				{
-					continue;
-				}
-
-				GEAR_BY_SLOT.get(slot).get(item.getCrystalType()).add(item);
-			}
-			// Keep only the cheapest few per slot/grade, so phantoms roll basic gear, not rare drops.
-			for (EnumMap<CrystalType, List<ItemTemplate>> byGrade : GEAR_BY_SLOT.values())
-			{
-				for (List<ItemTemplate> list : byGrade.values())
-				{
-					list.sort(Comparator.comparingInt(ItemTemplate::getReferencePrice));
-					if (list.size() > CANDIDATES_PER_SLOT)
+					final ArmorType type = ((Armor) item).getItemType();
+					if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
 					{
-						list.subList(CANDIDATES_PER_SLOT, list.size()).clear();
+						FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
+					}
+					else if (type == ArmorType.MAGIC)
+					{
+						MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
 					}
 				}
 			}
+			trimGear(FIGHTER_GEAR);
+			trimGear(MAGE_GEAR);
 			_gearBuilt = true;
+		}
+	}
+
+	private static void initGearMap(Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> set)
+	{
+		for (BodyPart slot : GEAR_SLOTS)
+		{
+			final EnumMap<CrystalType, List<ItemTemplate>> byGrade = new EnumMap<>(CrystalType.class);
+			for (CrystalType grade : CrystalType.values())
+			{
+				byGrade.put(grade, new ArrayList<>());
+			}
+			set.put(slot, byGrade);
+		}
+	}
+
+	/** Keeps only the cheapest few per slot/grade, so phantoms roll basic gear, not rare drops. */
+	private static void trimGear(Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> set)
+	{
+		for (EnumMap<CrystalType, List<ItemTemplate>> byGrade : set.values())
+		{
+			for (List<ItemTemplate> list : byGrade.values())
+			{
+				list.sort(Comparator.comparingInt(ItemTemplate::getReferencePrice));
+				if (list.size() > CANDIDATES_PER_SLOT)
+				{
+					list.subList(CANDIDATES_PER_SLOT, list.size()).clear();
+				}
+			}
 		}
 	}
 
@@ -778,7 +854,7 @@ public class PhantomManager implements IXmlReader
 	 * Configures the auto-hunt preferences and starts the native AutoPlay + AutoUse tasks. Soulshots
 	 * would be registered here too (via {@code addAutoSoulShot}) once phantoms are geared with a weapon.
 	 */
-	private void enableAutoHunt(Player phantom)
+	private void enableAutoHunt(Player phantom, boolean mage)
 	{
 		final AutoPlaySettingsHolder settings = phantom.getAutoPlaySettings();
 		settings.setNextTargetMode(TARGET_MODE_MONSTER);
@@ -789,8 +865,12 @@ public class PhantomManager implements IXmlReader
 		settings.setRespectfulHunting(true); // skip mobs already being fought, so two phantoms don't share one
 		settings.setPickup(true);
 
-		// Melee auto-attack; without this AutoPlay assumes a non-hitting mage caster.
-		phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
+		// Fighters auto-attack (action id 2). Mages must NOT have it: AutoPlay then treats them as casters
+		// that target but don't melee, leaving AutoUse to cast their nukes (the auto-skills) on the target.
+		if (!mage)
+		{
+			phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
+		}
 
 		AutoPlayTaskManager.getInstance().startAutoPlay(phantom);
 		AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
@@ -890,12 +970,32 @@ public class PhantomManager implements IXmlReader
 					{
 						wake(phantom);
 						data.dormant = false;
+						data.resting = false;
 					}
+					continue; // stay parked while no one is near
 				}
-				else if (nearest > SLEEP_RANGE)
+				if (nearest > SLEEP_RANGE)
 				{
 					sleep(phantom);
 					data.dormant = true;
+					data.resting = false;
+					continue;
+				}
+
+				// Resting: when safe and low on HP/MP, sit to regen; stand when recovered or threatened.
+				final boolean danger = phantom.isInCombat() || isMonsterNear(phantom);
+				if (data.resting)
+				{
+					if (danger || ((phantom.getCurrentHpPercent() >= REST_STAND_PERCENT) && (phantom.getCurrentMpPercent() >= REST_STAND_PERCENT)))
+					{
+						endRest(phantom);
+						data.resting = false;
+					}
+				}
+				else if (!danger && ((phantom.getCurrentHpPercent() < REST_SIT_PERCENT) || (phantom.getCurrentMpPercent() < REST_SIT_PERCENT)))
+				{
+					startRest(phantom);
+					data.resting = true;
 				}
 			}
 			catch (Exception e)
@@ -903,6 +1003,43 @@ public class PhantomManager implements IXmlReader
 				LOGGER.warning(getClass().getSimpleName() + ": Supervise error for " + phantom.getName() + ": " + e.getMessage());
 			}
 		}
+	}
+
+	/** @return {@code true} if a live monster is close enough that the phantom should not sit to rest. */
+	private static boolean isMonsterNear(Player phantom)
+	{
+		for (Monster monster : World.getInstance().getVisibleObjectsInRange(phantom, Monster.class, REST_DANGER_RANGE))
+		{
+			if (!monster.isDead())
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Sits the phantom down to regenerate, pausing the auto-hunt while it rests. */
+	private void startRest(Player phantom)
+	{
+		if (phantom.isAutoPlaying())
+		{
+			AutoPlayTaskManager.getInstance().stopAutoPlay(phantom);
+			AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
+		}
+		if (!phantom.isSitting())
+		{
+			phantom.sitDown();
+		}
+	}
+
+	/** Stands the phantom back up and resumes the auto-hunt after resting. */
+	private void endRest(Player phantom)
+	{
+		if (phantom.isSitting())
+		{
+			phantom.standUp();
+		}
+		wake(phantom);
 	}
 
 	/** Genuine, client-connected players (excludes phantoms and offline shops, which have no client). */
@@ -937,6 +1074,10 @@ public class PhantomManager implements IXmlReader
 	/** Resumes the native auto-hunt for a phantom a real player has approached. */
 	private void wake(Player phantom)
 	{
+		if (phantom.isSitting())
+		{
+			phantom.standUp();
+		}
 		phantom.setRunning();
 		if (!phantom.isAutoPlaying())
 		{

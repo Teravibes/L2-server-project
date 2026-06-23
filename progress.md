@@ -343,15 +343,29 @@ because only nearby phantoms are live.
   (Gladiator/Warlord/etc.) using its kit — not a 3-skill base Fighter.
 - All branches kept **melee** so the shared sword + soulshot path is unchanged.
 
-**Mages / buffers / healers — when:** deliberately fighters-only for now. Mage DDs are a near-term
-add-on (allow mage branches + give staff/spiritshots; the generic auto-skill registration already casts
-nukes). **Buffers/healers only make sense with parties** (they buff/heal allies), so they come **with the
-parties increment** — standalone they'd have nothing to do.
+**Done (increment 10 — mage DDs + resting):**
+- **Mage DDs:** `MAGE_CHANCE` (~30%) of phantoms roll a mystic base class (Human/Elf/Dark Elf nuker
+  lines; orcs/dwarves excluded). `transferClass` follows the DD branch (`isOfType(MYSTIC) && !isSummoner`,
+  so healers/summoners are skipped). Gear is a second loadout: **magic weapon + MAGIC robe + spiritshots**
+  (`MAGE_GEAR` vs `FIGHTER_GEAR`, built in `buildGear`). Mages get **no** auto-attack action, so AutoPlay
+  treats them as casters and AutoUse fires their nukes (the registered offensive skills) on the target.
+- **Resting (HP/MP sustain):** the supervisor sits a phantom to regenerate when it's safe (no monster
+  within `REST_DANGER_RANGE`, not in combat) and below `REST_SIT_PERCENT` HP **or** MP, and stands it back
+  up at `REST_STAND_PERCENT` or when threatened. This is what keeps mages going (MP) and wounded fighters
+  alive (HP) — Interlude-authentic (sitting boosts regen; no MP potions needed). Resting pauses the
+  auto-hunt while seated; dormancy/wake clears the rest state.
 
-**Deliberately NOT done yet (next increments):** **mage support** (staff/spiritshots + caster class
-branches), **parties** (then buffers/healers within them — engine already has auto-assist + offline-play
-party restore), skip phantom **auto-save**, runtime shot restock, hunting-zone relocate-when-empty, PvP
-target mode, persistence across restarts, DB cleanup of orphan phantom rows, config knobs.
+**Answer to "do phantoms rest?":** they do **now** (this increment). Before it they only regenerated
+passively while standing and never sat or drank potions; the native AutoPlay/AutoUse has no rest, and its
+auto-potion path is HP-only.
+
+**Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
+so they arrive **with the parties increment** — standalone they'd have nothing to do.
+
+**Deliberately NOT done yet (next increments):** **parties** (then buffers/healers within them — engine
+already has auto-assist + offline-play party restore), skip phantom **auto-save**, runtime shot restock,
+hunting-zone relocate-when-empty, PvP target mode, persistence across restarts, DB cleanup of orphan
+phantom rows, config knobs.
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.
