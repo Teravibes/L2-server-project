@@ -156,6 +156,8 @@ public class PhantomManager implements IXmlReader
 	// spread-out zone active instead of phantoms freezing wherever the local mobs ran out.
 	private static final int ROAM_RADIUS = 1200;
 	private static final int ROAM_MIN_DISTANCE = 400;
+	private static final int ROAM_ATTEMPTS = 10;
+	private static final int IDLE_TARGET_CLEAR_TICKS = 3;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -196,6 +198,7 @@ public class PhantomManager implements IXmlReader
 		long deadSince; // 0 while alive
 		boolean dormant; // auto-hunt paused because no real player is near
 		boolean resting; // sitting to regenerate HP/MP
+		int idleTargetTicks; // stuck with a target but no movement/attack/cast
 
 		PhantomData(Player player, Location home, Population population, boolean mage)
 		{
@@ -976,6 +979,13 @@ public class PhantomManager implements IXmlReader
 				{
 					continue; // don't interrupt a cast or fight a stun
 				}
+				if ((mage.getCurrentMpPercent() < MAGE_CAST_MP_PERCENT) && !mage.isInCombat() && !isMonsterNear(mage))
+				{
+					mage.setTarget(null);
+					startRest(mage);
+					data.resting = true;
+					continue;
+				}
 				final WorldObject target = mage.getTarget();
 				if (!(target instanceof Monster) || ((Monster) target).isDead())
 				{
@@ -1088,6 +1098,7 @@ public class PhantomManager implements IXmlReader
 
 				// Resting: when safe and low on HP/MP, sit to regen; stand when recovered or threatened.
 				final boolean danger = phantom.isInCombat() || hasLiveMonsterTarget(phantom) || isMonsterNear(phantom);
+				final boolean active = phantom.isMoving() || phantom.isCastingNow() || phantom.isAttackingNow();
 				if (data.resting)
 				{
 					if (danger || ((phantom.getCurrentHpPercent() >= REST_STAND_PERCENT) && (phantom.getCurrentMpPercent() >= REST_STAND_PERCENT)))
@@ -1101,10 +1112,33 @@ public class PhantomManager implements IXmlReader
 					startRest(phantom);
 					data.resting = true;
 				}
+				else if (active)
+				{
+					data.idleTargetTicks = 0;
+				}
+				else if (hasLiveMonsterTarget(phantom))
+				{
+					data.idleTargetTicks++;
+					if (data.idleTargetTicks >= IDLE_TARGET_CLEAR_TICKS)
+					{
+						phantom.setTarget(null);
+						data.idleTargetTicks = 0;
+						if (data.mage && (phantom.getCurrentMpPercent() < MAGE_CAST_MP_PERCENT) && !phantom.isInCombat() && !isMonsterNear(phantom))
+						{
+							startRest(phantom);
+							data.resting = true;
+						}
+						else
+						{
+							roam(phantom, data);
+						}
+					}
+				}
 				// Roam when idle: nothing to fight, not already walking and not resting. Relocating it lets the
 				// next AutoPlay scan pick up monsters it could not previously reach, so it stops standing still.
-				else if (!data.resting && !danger && !phantom.isMoving() && !phantom.isCastingNow() && (phantom.getTarget() == null))
+				else if (!data.resting && !danger && (phantom.getTarget() == null))
 				{
+					data.idleTargetTicks = 0;
 					roam(phantom, data);
 				}
 			}
@@ -1130,19 +1164,29 @@ public class PhantomManager implements IXmlReader
 	private void roam(Player phantom, PhantomData data)
 	{
 		final int radius = (data.population != null) ? Math.max(ROAM_MIN_DISTANCE + 100, data.population.radius) : ROAM_RADIUS;
-		for (int attempt = 0; attempt < 6; attempt++)
+		Location fallback = null;
+		for (int attempt = 0; attempt < ROAM_ATTEMPTS; attempt++)
 		{
 			final double angle = Rnd.nextDouble() * 2 * Math.PI;
 			final int distance = Rnd.get(ROAM_MIN_DISTANCE, radius);
 			final int x = data.home.getX() + (int) (Math.cos(angle) * distance);
 			final int y = data.home.getY() + (int) (Math.sin(angle) * distance);
 			final Location destination = GeoEngine.getInstance().getValidLocation(phantom, new Location(x, y, data.home.getZ()));
+			if (fallback == null)
+			{
+				fallback = destination;
+			}
 			if (GeoEngine.getInstance().canMoveToTarget(phantom.getX(), phantom.getY(), phantom.getZ(), destination.getX(), destination.getY(), destination.getZ(), phantom.getInstanceId()))
 			{
 				phantom.setRunning();
 				phantom.getAI().setIntention(Intention.MOVE_TO, destination);
 				return;
 			}
+		}
+		if (fallback != null)
+		{
+			phantom.setRunning();
+			phantom.getAI().setIntention(Intention.MOVE_TO, fallback);
 		}
 	}
 
