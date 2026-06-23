@@ -66,13 +66,42 @@ when you load that world map, city, or world-location image again. You can still
 loose image files onto the map for quick manual overlays. Loaded city/world-location images appear
 in a list with per-image show/hide toggles plus **Hide all / Show all**.
 
+## Movement profiles (what bots *do*)
+A **profile** is the behavior assigned to a population — it decides how those bots move. You can
+now create and edit profiles directly in the editor (the **Profiles** section below the population
+list), instead of hand-editing the XML.
+
+Profile types:
+- **WANDER** — bots drift around randomly within a **radius** of their spawn. Use for loiterers and
+  idlers standing around town.
+- **VISIT** — bots tour a set of **waypoints**, picking the next one at **random** each time, with
+  long idles on arrival so it looks purposeful. This is the "wander between landmarks" behavior.
+- **PATROL** — same waypoints, but walked **in order**, looping the route like guards/travellers.
+- **FARM** — bots seek out and fight nearby monsters within the radius (field hunters).
+
+Each profile also has **run/walk** and a **pause** range (seconds idled between moves).
+
+### Assigning a profile to a population
+Select a population and type (or pick) a profile name in its **profile** field. Every bot in that
+population will use it. Multiple populations can share one profile.
+
+### Drawing a route (waypoints)
+Two ways:
+1. **From a population** — select it and click **✦ Add / edit route**. The editor creates a VISIT
+   profile named `route_<population>`, assigns it, and drops you into waypoint mode. Click the map to
+   place each waypoint the bots should visit; drag a waypoint to move it. **Esc** or **Finish** ends.
+2. **From the Profiles section** — **+ Profile**, set type to VISIT or PATROL, then **✦ Add waypoints**.
+
+Routes are drawn on the map as numbered, dashed purple chains; the selected route is highlighted.
+Waypoint z is seeded from the population's elevation so the server snaps each point to the right
+ground layer.
+
 ## Colors
-- blue = town loiterers/default · green = movers (mill/stroller) · purple = visit
-- red = field hunters/farmers · gold = private-store vendors
+- blue = town loiterers/default (WANDER) · green = movers (mill/stroller) · purple = routes (VISIT/PATROL)
+- red = field hunters/farmers (FARM) · gold = private-store vendors · orange = the selected route
 
 ## Notes
-- The editor only edits **populations** (the spatial groups). Movement **profiles**,
-  per-bot **assigns** and the **default** are read and written back unchanged — edit those
-  by hand in the XML if needed.
+- Profiles, populations, **and** waypoints are all editable in-tool now. Per-bot **assigns** and the
+  **default** entry are still read and written back unchanged (edit those by hand if needed).
 - The exported file keeps the `xsd/FakePlayerBehavior.xsd` reference, so server-side schema
   validation stays clean.
