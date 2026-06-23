@@ -138,76 +138,45 @@
 				<div><label>maxLevel</label><input id="f_maxLevel" type="number" /></div>
 			</div>
 			<div id="npcOnly">
-				<label>profile</label><input id="f_profile" list="profiles" />
-				<datalist id="profiles"></datalist>
-				<div class="row">
-					<div><label>race (optional)</label>
-						<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
-					</div>
-					<div><label>store (optional)</label>
-						<select id="f_store"><option value=""></option><option>SELL</option><option>BUY</option><option>CRAFT</option><option>PACKAGE</option></select>
-					</div>
+				<label>behavior</label>
+				<select id="f_behavior">
+					<option value="IDLE">Idle / loiter — drift in an area</option>
+					<option value="RUNNER">Runner — roam a route (random)</option>
+					<option value="PATROL">Patrol — walk a route in order</option>
+					<option value="FARM">Farm — hunt monsters in an area</option>
+					<option value="SHOP">Shop — private-store vendors</option>
+				</select>
+				<div id="storeRow">
+					<label>store type</label>
+					<select id="f_store"><option>SELL</option><option>BUY</option><option>CRAFT</option><option>PACKAGE</option></select>
 				</div>
-				<div class="row" style="margin-top:8px">
-					<button id="addRouteBtn" class="sec" style="flex:1">✦ Add / edit route</button>
+				<label>race (optional)</label>
+				<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
+				<div id="routeRow" class="row" style="margin-top:8px">
+					<button id="routeBtn" class="sec" style="flex:2">✦ Draw route</button>
+					<button id="clearRouteBtn" class="sec" style="flex:1">Clear route</button>
 				</div>
+				<div id="routeCount" class="muted"></div>
+				<div id="behaviorHelp" class="muted"></div>
+				<details class="adv" style="border-top:0;margin-top:0">
+					<summary>Movement timing (advanced)</summary>
+					<label>run / walk</label>
+					<select id="f_run"><option value="false">walk</option><option value="true">run</option></select>
+					<div class="row">
+						<div><label>pause min (s)</label><input id="f_pauseMin" type="number" min="1" /></div>
+						<div><label>pause max (s)</label><input id="f_pauseMax" type="number" min="1" /></div>
+					</div>
+				</details>
 			</div>
 			<label><input id="f_respawn" type="checkbox" style="width:auto;margin-right:6px" /><span id="respawnText">respawn (field hunters)</span></label>
 			<div class="row" style="margin-top:10px"><button id="zoneBtn" class="sec" style="flex:2">Draw zone</button><button id="clearZone" class="sec" style="flex:1">Clear zone</button></div>
 			<div class="row" style="margin-top:6px"><button id="del" style="flex:1">Delete population</button></div>
-			<div class="muted"><b>Draw zone:</b> click "Draw zone", then click points on the map to outline a spawn area. Drag vertices to adjust; double-click or Esc to finish. <b>Add / edit route:</b> creates a VISIT profile for this population — bots will wander to each waypoint in a random order.</div>
-		</div>
-
-		<!-- ====== PROFILE FORM ====== -->
-		<div class="divider" id="profSectionWrap">
-			<h2 style="margin-top:14px">Selected profile</h2>
-			<div id="profFormHint">Select a profile below, or use "+ Profile" to create one.</div>
-			<div id="profForm" class="empty">
-				<label>name</label><input id="pf_name" />
-				<div class="row">
-					<div>
-						<label>type</label>
-						<select id="pf_type">
-							<option value="WANDER">WANDER — wander in radius</option>
-							<option value="VISIT">VISIT — waypoints (random)</option>
-							<option value="PATROL">PATROL — waypoints (in order)</option>
-							<option value="FARM">FARM — combat farming</option>
-						</select>
-					</div>
-					<div>
-						<label>run</label>
-						<select id="pf_run">
-							<option value="false">walk</option>
-							<option value="true">run</option>
-						</select>
-					</div>
-				</div>
-				<div class="row">
-					<div><label>pauseMin (s)</label><input id="pf_pauseMin" type="number" min="1" /></div>
-					<div><label>pauseMax (s)</label><input id="pf_pauseMax" type="number" min="1" /></div>
-				</div>
-				<div id="radiusControl">
-					<label>radius (WANDER/FARM roam distance)</label><input id="pf_radius" type="number" min="0" />
-				</div>
-				<div id="waypointControls">
-					<div class="row" style="margin-top:8px">
-						<button id="waypointBtn" class="sec" style="flex:2">✦ Add waypoints</button>
-						<button id="clearWaypointsBtn" class="sec" style="flex:1">Clear all</button>
-					</div>
-					<div id="waypointCount" class="muted"></div>
-				</div>
-				<div class="row" style="margin-top:10px">
-					<button id="delProfile" style="flex:1">Delete profile</button>
-				</div>
-				<div class="muted" id="profHelp"></div>
-			</div>
+			<div class="muted"><b>Draw zone:</b> outline a spawn area on the map (click points, Esc/double-click to finish). For Idle, bots drift inside it. <b>Draw route:</b> drop waypoints the Runner/Patrol bots will follow — drag a waypoint to move it, Esc to finish.</div>
 		</div>
 
 		<!-- ====== LISTS ====== -->
 		<div class="sectionHead" id="popSectionHead"><h2>Populations</h2><button id="toggleAll" class="sec">Hide all</button></div>
 		<div id="list"></div>
-		<div class="sectionHead" id="profSectionHead"><h2>Profiles</h2><button id="addProfileBtn" class="sec">+ Profile</button></div>
-		<div id="profList"></div>
 
 		<details class="adv" open>
 			<summary>Map image layers</summary>
@@ -243,16 +212,15 @@ const wrap = document.getElementById('mapWrap');
 
 // ---- state ----
 let pops = [];            // editable population objects (the ACTIVE mode's list)
-let preserved = { profiles: [], assigns: [], def: null }; // profiles are now objects, assigns/def are raw strings
+let preserved = { assigns: [], def: null }; // assign/default entries kept verbatim
 let selected = -1;
-let selectedProfile = -1;
-let waypointMode = false;
+let waypointMode = false;  // placing route waypoints for the selected population
 
 // ---- mode: NPC fake players vs real-Player phantoms ----
 let mode = 'npc';
 const stores = {
-	npc:     { pops: [], preserved: { profiles: [], assigns: [], def: null }, fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false },
-	phantom: { pops: [], preserved: { profiles: [], assigns: [], def: null }, fileName: 'PhantomPopulations.xml', handle: null, loaded: false }
+	npc:     { pops: [], preserved: { assigns: [], def: null }, fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false },
+	phantom: { pops: [], preserved: { assigns: [], def: null }, fileName: 'PhantomPopulations.xml', handle: null, loaded: false }
 };
 function snapshot(){ const s = stores[mode]; s.pops = pops; s.preserved = preserved; s.handle = xmlFileHandle; s.fileName = xmlFileName; s.loaded = xmlLoaded; }
 function activate(m){ mode = m; const s = stores[m]; pops = s.pops; preserved = s.preserved; xmlFileHandle = s.handle; xmlFileName = s.fileName; xmlLoaded = s.loaded; }
@@ -260,9 +228,6 @@ function applyModeUi(){
 	document.getElementById('modeNpc').classList.toggle('sec', mode !== 'npc');
 	document.getElementById('modePhantom').classList.toggle('sec', mode !== 'phantom');
 	document.getElementById('npcOnly').style.display = (mode === 'phantom') ? 'none' : '';
-	document.getElementById('profSectionWrap').style.display = (mode === 'phantom') ? 'none' : '';
-	document.getElementById('profSectionHead').style.display = (mode === 'phantom') ? 'none' : '';
-	document.getElementById('profList').style.display = (mode === 'phantom') ? 'none' : '';
 	document.getElementById('respawnText').textContent = (mode === 'phantom') ? 'respawn (replace on death)' : 'respawn (field hunters)';
 	document.getElementById('popSectionHead').querySelector('h2').textContent = (mode === 'phantom') ? 'Phantom populations' : 'Populations';
 }
@@ -273,8 +238,7 @@ function switchMode(m){
 	snapshot();
 	activate(m);
 	selected = -1;
-	selectedProfile = -1;
-	applyModeUi(); updateProfileList(); renderList(); renderProfList(); syncForm(); syncProfForm(); updateStatus(); draw();
+	applyModeUi(); renderList(); syncForm(); updateStatus(); draw();
 }
 document.getElementById('modeNpc').onclick = () => switchMode('npc');
 document.getElementById('modePhantom').onclick = () => switchMode('phantom');
@@ -294,53 +258,75 @@ const cam = { x: -135000, y: -135000, scale: 0.0035 };
 const WORLD_MIN_X = -655360, WORLD_MIN_Y = -589824, REGION_WORLD = 32768, REGION_BLOCKS = 256;
 const IMAGE_HANDLE_SIZE = 9;
 
+// Town centers plus a few key NPC spots (real Interlude coords) so you can drop route
+// waypoints straight onto landmarks. Sub-spots are drawn small and labelled when zoomed in.
 const LANDMARKS = [
-	{ n: 'Talking Island', x: -83990, y: 243336 },
-	{ n: 'Gludin', x: -83520, y: 150560 },
-	{ n: 'Gludio', x: -14288, y: 122752 },
-	{ n: 'Dion', x: 15670, y: 142980 },
-	{ n: 'Giran', x: 83400, y: 147600 },
-	{ n: 'Oren', x: 82200, y: 53500 },
-	{ n: 'Aden', x: 146680, y: 25800 },
-	{ n: 'Heine', x: 111360, y: 220890 },
-	{ n: 'Goddard', x: 147300, y: -56570 },
-	{ n: 'Rune', x: 43800, y: -47700 },
-	{ n: 'Schuttgart', x: 87386, y: -143246 },
-	{ n: 'Elven Village', x: 46926, y: 51511 },
-	{ n: 'Dark Elf Village', x: 12501, y: 16768 },
-	{ n: 'Dwarven Village', x: 115072, y: -178176 },
-	{ n: 'Orc Village', x: -44316, y: -113136 }
+	{ n: 'Talking Island', x: -84318, y: 244294, spots: [ { n: 'Gatekeeper', x: -83990, y: 243336 } ] },
+	{ n: 'Gludin', x: -80684, y: 149770, spots: [ { n: 'Gatekeeper', x: -83520, y: 150560 } ] },
+	{ n: 'Gludio', x: -14053, y: 123808, spots: [ { n: 'Gatekeeper', x: -12764, y: 122682 } ] },
+	{ n: 'Dion', x: 15670, y: 142983, spots: [] },
+	{ n: 'Giran', x: 83400, y: 147943, spots: [
+		{ n: 'Gatekeeper', x: 83384, y: 148145 },
+		{ n: 'Warehouse', x: 83192, y: 146680 },
+		{ n: 'Blacksmith', x: 85055, y: 146560 },
+		{ n: 'Grocer', x: 85467, y: 146349 },
+		{ n: 'Mammon', x: 81360, y: 150016 }
+	] },
+	{ n: 'Oren', x: 82309, y: 53122, spots: [] },
+	{ n: 'Aden', x: 146783, y: 25808, spots: [] },
+	{ n: 'Heine', x: 111409, y: 219364, spots: [] },
+	{ n: 'Goddard', x: 147945, y: -55280, spots: [] },
+	{ n: 'Rune', x: 43835, y: -47749, spots: [] },
+	{ n: 'Schuttgart', x: 87383, y: -143246, spots: [] },
+	{ n: 'Elven Village', x: 46934, y: 51467, spots: [ { n: 'Gatekeeper', x: 46926, y: 51511 } ] },
+	{ n: 'Dark Elf Village', x: 11258, y: 14431, spots: [ { n: 'Gatekeeper', x: 12501, y: 16768 } ] },
+	{ n: 'Dwarven Village', x: 115113, y: -178224, spots: [ { n: 'Gatekeeper', x: 115072, y: -178176 } ] },
+	{ n: 'Orc Village', x: -45186, y: -112459, spots: [ { n: 'Gatekeeper', x: -44316, y: -113136 } ] }
 ];
 
-// ---- colors ----
-// VISIT (random) and PATROL (in order) are both waypoint-route profiles drawn on the map.
-function hasWaypoints(type){ return type === 'VISIT' || type === 'PATROL'; }
-// A profile's waypoints have no z on a 2D map; borrow the z of a population that uses it (real town
-// elevation) so the server snaps to the right geodata layer. 0 if no population references it yet.
-function profileBaseZ(profName){
-	const pop = pops.find(p => p.profile === profName);
-	return pop ? (pop.z | 0) : 0;
-}
-function profileType(profName){
-	const prof = preserved.profiles.find(pr => pr.name === profName);
-	return prof ? prof.type : null;
+// ---- behaviors ----
+// Each population owns its behavior. Underneath, the editor writes a matching movement <profile>
+// per population on save and reads it back on load — the user never touches profiles directly.
+//   IDLE   -> WANDER  (drift within radius / drawn area)   blue
+//   RUNNER -> VISIT   (route, next waypoint chosen at random) purple
+//   PATROL -> PATROL  (route, walked in order)               purple
+//   FARM   -> FARM    (hunt monsters within radius)          red
+//   SHOP   -> WANDER  (private-store vendors, small drift)   gold
+const BEHAVIORS = ['IDLE','RUNNER','PATROL','FARM','SHOP'];
+const BEHAVIOR_DEFAULTS = {
+	IDLE:   { type: 'WANDER', run: false, pauseMin: 25, pauseMax: 80, roam: 'pop'  },
+	SHOP:   { type: 'WANDER', run: false, pauseMin: 25, pauseMax: 80, roam: 120    },
+	RUNNER: { type: 'VISIT',  run: false, pauseMin: 25, pauseMax: 70, roam: null   },
+	PATROL: { type: 'PATROL', run: false, pauseMin: 10, pauseMax: 30, roam: null   },
+	FARM:   { type: 'FARM',   run: true,  pauseMin: 2,  pauseMax: 6,  roam: 'pop'  }
+};
+const BEHAVIOR_HELP = {
+	IDLE:   'Bots drift around at random within the radius (or the drawn zone) — the standing-around-town crowd.',
+	RUNNER: 'Bots roam between the route waypoints you place, picking the next one at RANDOM. Use "Draw route".',
+	PATROL: 'Bots walk the route waypoints IN ORDER and loop, like guards or travellers. Use "Draw route".',
+	FARM:   'Bots seek out and fight monsters within the radius (field hunters).',
+	SHOP:   'Bots open private stores. Pick a store type; they barely move around the spawn.'
+};
+function isRouteBehavior(b){ return b === 'RUNNER' || b === 'PATROL'; }
+function behaviorFromProfile(prof, store){
+	if (store) return 'SHOP';
+	if (!prof) return 'IDLE';
+	switch (prof.type){
+		case 'VISIT':  return 'RUNNER';
+		case 'PATROL': return 'PATROL';
+		case 'FARM':   return 'FARM';
+		default:       return 'IDLE';
+	}
 }
 function popColor(p){
 	if (mode === 'phantom') return '#46c6c0';
-	if (p.store) return '#e8c24a';
-	if (p.profile === 'hunter' || p.profile === 'farmer') return '#e0563b';
-	const pt = profileType(p.profile);
-	if (hasWaypoints(pt)) return '#c06ee0';
-	if (pt === 'FARM') return '#e0563b';
-	if (p.profile === 'mill' || p.profile === 'stroller') return '#54c06e';
-	return '#4a8de8';
-}
-function profColor(prof, selected){
-	if (!prof) return '#c06ee0';
-	if (selected) return '#ff9944';
-	if (prof.type === 'FARM') return '#e0563b';
-	if (hasWaypoints(prof.type)) return '#c06ee0';
-	return '#4a8de8';
+	switch (p.behavior){
+		case 'SHOP':   return '#e8c24a';
+		case 'FARM':   return '#e0563b';
+		case 'RUNNER':
+		case 'PATROL': return '#c06ee0';
+		default:       return '#4a8de8'; // IDLE
+	}
 }
 
 // ---- transforms ----
@@ -527,8 +513,8 @@ async function loadWorkspace(entries, label){
 	selectedImage = -1;
 	imageCatalog = { worldMap: null, cities: [], locations: [], layout: null };
 	renderImageLayerList();
-	stores.npc = { pops: [], preserved: { profiles: [], assigns: [], def: null }, fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false };
-	stores.phantom = { pops: [], preserved: { profiles: [], assigns: [], def: null }, fileName: 'PhantomPopulations.xml', handle: null, loaded: false };
+	stores.npc = { pops: [], preserved: { assigns: [], def: null }, fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false };
+	stores.phantom = { pops: [], preserved: { assigns: [], def: null }, fileName: 'PhantomPopulations.xml', handle: null, loaded: false };
 	activate('npc'); applyModeUi();
 	const geo = entries.filter(e => /(\d+)_(\d+)\.l2j$/i.test(e.name));
 	const phantomE = entries.find(e => e.name.toLowerCase() === 'phantompopulations.xml');
@@ -640,14 +626,25 @@ function draw(){
 	const [w0x, w0y] = s2w(0, 0); const [w1x, w1y] = s2w(cv.width, cv.height);
 	for (let gx = Math.floor(w0x / step) * step; gx < w1x; gx += step){ const [sx] = w2s(gx, 0); ctx.beginPath(); ctx.moveTo(sx, 0); ctx.lineTo(sx, cv.height); ctx.stroke(); ctx.fillText(gx, sx + 2, 10); }
 	for (let gy = Math.floor(w0y / step) * step; gy < w1y; gy += step){ const [, sy] = w2s(0, gy); ctx.beginPath(); ctx.moveTo(0, sy); ctx.lineTo(cv.width, sy); ctx.stroke(); ctx.fillText(gy, 2, sy - 2); }
-	// landmarks
+	// landmarks (town centers + key NPC spots)
 	if (document.getElementById('showMarks').checked){
+		const showSpots = cam.scale > 0.006;
 		LANDMARKS.forEach(m => {
 			const [mx, my] = w2s(m.x, m.y);
-			if (mx < -40 || my < -10 || mx > cv.width + 40 || my > cv.height + 10) return;
-			ctx.fillStyle = '#d8a0ff'; ctx.strokeStyle = '#241a2e';
-			ctx.beginPath(); ctx.moveTo(mx, my - 6); ctx.lineTo(mx + 6, my); ctx.lineTo(mx, my + 6); ctx.lineTo(mx - 6, my); ctx.closePath(); ctx.fill(); ctx.stroke();
-			ctx.fillStyle = '#d8a0ff'; ctx.font = '11px sans-serif'; ctx.fillText(m.n, mx + 8, my + 4);
+			if (!(mx < -40 || my < -10 || mx > cv.width + 40 || my > cv.height + 10)){
+				ctx.fillStyle = '#d8a0ff'; ctx.strokeStyle = '#241a2e'; ctx.lineWidth = 1;
+				ctx.beginPath(); ctx.moveTo(mx, my - 6); ctx.lineTo(mx + 6, my); ctx.lineTo(mx, my + 6); ctx.lineTo(mx - 6, my); ctx.closePath(); ctx.fill(); ctx.stroke();
+				ctx.fillStyle = '#d8a0ff'; ctx.font = '11px sans-serif'; ctx.fillText(m.n, mx + 8, my + 4);
+			}
+			if (showSpots && m.spots){
+				m.spots.forEach(s => {
+					const [sx, sy] = w2s(s.x, s.y);
+					if (sx < -40 || sy < -10 || sx > cv.width + 40 || sy > cv.height + 10) return;
+					ctx.fillStyle = '#b98edd'; ctx.strokeStyle = '#241a2e'; ctx.lineWidth = 1;
+					ctx.beginPath(); ctx.arc(sx, sy, 3, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+					ctx.fillStyle = '#caa6e6'; ctx.font = '10px sans-serif'; ctx.fillText(s.n, sx + 5, sy + 3);
+				});
+			}
 		});
 	}
 	// populations
@@ -674,39 +671,34 @@ function draw(){
 		if (cam.scale > 0.0015 || i === selected){ ctx.fillStyle = '#cfd2da'; ctx.font = '11px sans-serif'; ctx.fillText((p.name || '?') + ' ×' + (p.count || 0), cx + r + 3, cy + 3); }
 	});
 
-	// ---- VISIT profile routes ----
+	// ---- population routes (RUNNER / PATROL waypoints) ----
 	if (mode === 'npc'){
-		preserved.profiles.forEach((prof, pi) => {
-			if (!hasWaypoints(prof.type) || !prof.waypoints || !prof.waypoints.length) return;
-			const isSel = pi === selectedProfile;
-			const col = profColor(prof, isSel);
-			const wpts = prof.waypoints;
-			// connecting lines (dashed)
-			if (wpts.length > 1){
-				ctx.beginPath();
-				wpts.forEach((w, k) => { const [sx, sy] = w2s(w.x, w.y); k ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy); });
-				ctx.strokeStyle = col + (isSel ? 'cc' : '77');
-				ctx.lineWidth = isSel ? 2 : 1.5;
-				ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
-			}
-			// waypoint dots
+		pops.forEach((p, pi) => {
+			if (p.visible === false || !isRouteBehavior(p.behavior) || !p.route || !p.route.length) return;
+			const isSel = pi === selected;
+			const col = isSel ? '#ff9944' : '#c06ee0';
+			const wpts = p.route;
+			const anchor = popAnchor(p);
+			const [ax, ay] = w2s(anchor.x, anchor.y);
+			// spawn -> route connectors plus the route chain (dashed)
+			ctx.beginPath();
+			ctx.moveTo(ax, ay);
+			wpts.forEach(w => { const [sx, sy] = w2s(w.x, w.y); ctx.lineTo(sx, sy); });
+			if (p.behavior === 'PATROL' && wpts.length > 1){ const [sx, sy] = w2s(wpts[0].x, wpts[0].y); ctx.lineTo(sx, sy); } // close the loop
+			ctx.strokeStyle = col + (isSel ? 'cc' : '66');
+			ctx.lineWidth = isSel ? 2 : 1.5;
+			ctx.setLineDash([5, 4]); ctx.stroke(); ctx.setLineDash([]);
+			// waypoint dots + order numbers
 			wpts.forEach((w, k) => {
 				const [sx, sy] = w2s(w.x, w.y);
 				const r = isSel ? 6 : 4;
 				ctx.beginPath(); ctx.arc(sx, sy, r, 0, Math.PI * 2);
 				ctx.fillStyle = col; ctx.fill();
 				ctx.strokeStyle = '#15161a'; ctx.lineWidth = 1; ctx.stroke();
-				// number label
 				ctx.fillStyle = isSel ? '#fff' : col;
 				ctx.font = (isSel ? 'bold ' : '') + '9px monospace';
 				ctx.fillText(k + 1, sx + r + 2, sy + 3);
 			});
-			// profile name label near first waypoint
-			if (isSel || cam.scale > 0.003){
-				const [sx, sy] = w2s(wpts[0].x, wpts[0].y);
-				ctx.fillStyle = col; ctx.font = (isSel ? 'bold ' : '') + '11px sans-serif';
-				ctx.fillText((isSel ? '↺ ' : '') + prof.name, sx + 10, sy - 8);
-			}
 		});
 	}
 
@@ -779,7 +771,7 @@ function fitImageToViewport(layer){
 }
 function selectImage(i){
 	selectedImage = i;
-	if (i >= 0){ selected = -1; selectedProfile = -1; syncFormClear(); syncProfFormClear(); }
+	if (i >= 0){ selected = -1; syncFormClear(); }
 	updateImageStatus();
 	updateWorldMapButton();
 	renderImageLayerList();
@@ -932,14 +924,14 @@ let drag = null, drawMode = false;
 cv.addEventListener('mousedown', e => {
 	const mx = e.offsetX, my = e.offsetY; const [wx, wy] = s2w(mx, my);
 
-	// Waypoint mode: click places a new waypoint on the selected VISIT profile
-	if (waypointMode && selectedProfile >= 0){
-		const prof = preserved.profiles[selectedProfile];
-		if (prof && hasWaypoints(prof.type)){
-			// Seed z from a population that uses this profile (a real town elevation) so the server snaps the
-			// waypoint to the correct geodata layer; the 2D map can't supply z itself. Falls back to 0.
-			prof.waypoints.push({ x: Math.round(wx), y: Math.round(wy), z: profileBaseZ(prof.name) });
-			syncProfForm();
+	// Waypoint mode: click places a new route waypoint on the selected population
+	if (waypointMode && selected >= 0){
+		const p = pops[selected];
+		if (isRouteBehavior(p.behavior)){
+			// Seed z from the population's elevation so the server snaps the waypoint to the right
+			// geodata layer; the 2D map can't supply z itself.
+			(p.route = p.route || []).push({ x: Math.round(wx), y: Math.round(wy), z: p.z | 0 });
+			syncForm();
 			draw();
 		}
 		return;
@@ -952,9 +944,9 @@ cv.addEventListener('mousedown', e => {
 	if (imgHit){ selectImage(imgHit.i); drag = { mode: imgHit.mode, i: imgHit.i, corner: imgHit.corner, px: wx, py: wy }; cv.style.cursor = imgHit.cursor; return; }
 	if (document.getElementById('editImages').checked && (selectedImage >= 0)){ selectedImage = -1; updateImageStatus(); draw(); }
 
-	// Drag a waypoint of a VISIT profile
+	// Drag a route waypoint
 	const wpHit = pickWaypoint(mx, my);
-	if (wpHit){ selectProfile(wpHit.pi); drag = { mode: 'waypoint', pi: wpHit.pi, wi: wpHit.wi }; return; }
+	if (wpHit){ if (wpHit.pi !== selected) select(wpHit.pi); drag = { mode: 'waypoint', pi: wpHit.pi, wi: wpHit.wi }; return; }
 
 	// Drag polygon vertex
 	const vi = pickVertex(mx, my);
@@ -976,9 +968,9 @@ cv.addEventListener('mousemove', e => {
 		syncForm(); draw();
 	}
 	else if (drag.mode === 'waypoint'){
-		const w = preserved.profiles[drag.pi].waypoints[drag.wi];
+		const w = pops[drag.pi].route[drag.wi];
 		w.x = Math.round(wx); w.y = Math.round(wy);
-		syncProfForm(); draw();
+		draw();
 	}
 	else if (drag.mode === 'image-move'){ const layer = mapImages[drag.i]; const dx = wx - drag.px, dy = wy - drag.py; layer.x1 = Math.round(layer.x1 + dx); layer.y1 = Math.round(layer.y1 + dy); layer.x2 = Math.round(layer.x2 + dx); layer.y2 = Math.round(layer.y2 + dy); drag.px = wx; drag.py = wy; draw(); }
 	else if (drag.mode === 'image-resize'){ resizeImageLayer(mapImages[drag.i], drag.corner, wx, wy); updateImageStatus(); draw(); }
@@ -1008,11 +1000,11 @@ function pickVertex(mx, my){
 }
 function pickWaypoint(mx, my){
 	if (mode !== 'npc') return null;
-	for (let pi = 0; pi < preserved.profiles.length; pi++){
-		const prof = preserved.profiles[pi];
-		if (!hasWaypoints(prof.type) || !prof.waypoints) continue;
-		for (let wi = 0; wi < prof.waypoints.length; wi++){
-			const [sx, sy] = w2s(prof.waypoints[wi].x, prof.waypoints[wi].y);
+	for (let pi = 0; pi < pops.length; pi++){
+		const p = pops[pi];
+		if (p.visible === false || !isRouteBehavior(p.behavior) || !p.route) continue;
+		for (let wi = 0; wi < p.route.length; wi++){
+			const [sx, sy] = w2s(p.route[wi].x, p.route[wi].y);
 			if (Math.hypot(mx - sx, my - sy) < 8) return { pi, wi };
 		}
 	}
@@ -1022,63 +1014,82 @@ function setDrawMode(on){ drawMode = on; cv.style.cursor = on ? 'copy' : 'crossh
 function setWaypointMode(on){
 	waypointMode = on;
 	document.getElementById('waypointBanner').classList.toggle('on', on);
-	document.getElementById('waypointBtn').textContent = on ? 'Finish (Esc)' : '✦ Add waypoints';
-	document.getElementById('waypointBtn').classList.toggle('sec', !on);
+	const btn = document.getElementById('routeBtn');
+	if (btn){ btn.textContent = on ? 'Finish route (Esc)' : '✦ Draw route'; btn.classList.toggle('sec', !on); }
 	cv.style.cursor = on ? 'copy' : 'crosshair';
 }
 
 // ---- population model ops ----
+function defaultPop(x, y){
+	if (mode === 'phantom') return { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, poly: [] };
+	const d = BEHAVIOR_DEFAULTS.IDLE;
+	return { name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40,
+		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], race: '', store: '', respawn: false, poly: [] };
+}
 function addPop(x, y){
-	pops.push((mode === 'phantom')
-		? { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, poly: [] }
-		: { name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40, profile: 'loiter', race: '', store: '', respawn: false, poly: [] });
+	pops.push(defaultPop(x, y));
 	select(pops.length - 1); renderList(); draw(); updateStatus();
 }
-function select(i){ selected = i; selectedImage = -1; updateImageStatus(); syncForm(); renderList(); }
+function select(i){ if (waypointMode) setWaypointMode(false); selected = i; selectedImage = -1; updateImageStatus(); syncForm(); renderList(); }
 function syncForm(){
 	const p = pops[selected];
 	document.getElementById('form').classList.toggle('empty', !p);
 	document.getElementById('formHint').textContent = p ? 'Editing: ' + (p.name || '(unnamed)') : 'Select a population from the list below, or double-click the map to add one.';
 	if (!p) return;
-	for (const k of ['name','x','y','z','radius','count','minLevel','maxLevel','profile','race','store']) document.getElementById('f_' + k).value = p[k] ?? '';
+	for (const k of ['name','x','y','z','radius','count','minLevel','maxLevel']) document.getElementById('f_' + k).value = p[k] ?? '';
 	document.getElementById('f_respawn').checked = !!p.respawn;
+	if (mode === 'phantom') return;
+	document.getElementById('f_behavior').value = p.behavior || 'IDLE';
+	document.getElementById('f_race').value = p.race || '';
+	document.getElementById('f_store').value = p.store || 'SELL';
+	document.getElementById('f_run').value = p.run ? 'true' : 'false';
+	document.getElementById('f_pauseMin').value = p.pauseMin ?? 25;
+	document.getElementById('f_pauseMax').value = p.pauseMax ?? 80;
+	applyBehaviorUi(p);
 }
-function syncFormClear(){ document.getElementById('form').classList.add('empty'); document.querySelectorAll('#form input, #form select').forEach(i => i.type === 'checkbox' ? i.checked = false : i.value = ''); }
+// Show only the controls relevant to the chosen behavior.
+function applyBehaviorUi(p){
+	const route = isRouteBehavior(p.behavior);
+	document.getElementById('routeRow').style.display = route ? '' : 'none';
+	document.getElementById('storeRow').style.display = (p.behavior === 'SHOP') ? '' : 'none';
+	const n = (p.route && p.route.length) || 0;
+	document.getElementById('routeCount').textContent = route ? (n + ' waypoint' + (n === 1 ? '' : 's') + ' placed.') : '';
+	document.getElementById('behaviorHelp').textContent = BEHAVIOR_HELP[p.behavior] || '';
+}
+function syncFormClear(){ document.getElementById('form').classList.add('empty'); }
 document.querySelectorAll('#form input, #form select').forEach(el => el.addEventListener('input', () => {
 	const p = pops[selected]; if (!p) return;
 	const id = el.id.slice(2);
 	if (id === 'respawn') p.respawn = el.checked;
-	else if (['x','y','z','radius','count','minLevel','maxLevel'].includes(id)) p[id] = +el.value;
+	else if (id === 'behavior'){
+		p.behavior = el.value;
+		if (p.behavior === 'SHOP' && !p.store) p.store = 'SELL';
+		if (p.behavior !== 'SHOP') p.store = '';
+		// adopt this behavior's movement defaults so it "has its own rules"
+		const d = BEHAVIOR_DEFAULTS[p.behavior] || BEHAVIOR_DEFAULTS.IDLE;
+		p.run = d.run; p.pauseMin = d.pauseMin; p.pauseMax = d.pauseMax;
+		if (waypointMode && !isRouteBehavior(p.behavior)) setWaypointMode(false);
+		syncForm();
+	}
+	else if (id === 'run') p.run = el.value === 'true';
+	else if (['x','y','z','radius','count','minLevel','maxLevel','pauseMin','pauseMax'].includes(id)) p[id] = +el.value;
 	else p[id] = el.value;
 	renderList(); draw();
 }));
-document.getElementById('del').onclick = () => { if (selected < 0) return; pops.splice(selected, 1); selected = -1; renderList(); draw(); syncForm(); updateStatus(); };
+document.getElementById('del').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops.splice(selected, 1); selected = -1; renderList(); draw(); syncForm(); updateStatus(); };
 document.getElementById('zoneBtn').onclick = () => { if (selected < 0){ alert('Select or add a population first, then draw its zone.'); return; } pops[selected].poly = pops[selected].poly || []; setDrawMode(!drawMode); };
 document.getElementById('clearZone').onclick = () => { if (selected < 0) return; pops[selected].poly = []; setDrawMode(false); draw(); };
 document.getElementById('addBtn').onclick = () => { const [wx, wy] = s2w(cv.width / 2, cv.height / 2); addPop(Math.round(wx), Math.round(wy)); };
 
-// "Add / edit route" button on population form
-document.getElementById('addRouteBtn').onclick = () => {
+// "Draw route" — place this population's waypoints directly on the map (RUNNER / PATROL only).
+document.getElementById('routeBtn').onclick = () => {
 	if (selected < 0) return;
 	const p = pops[selected];
-	// If population already has a VISIT profile, jump straight to editing it
-	const existingPi = preserved.profiles.findIndex(pr => pr.name === p.profile && hasWaypoints(pr.type));
-	if (existingPi >= 0){
-		selectProfile(existingPi);
-		setWaypointMode(true);
-		return;
-	}
-	// Create a dedicated VISIT profile named after the population
-	const safeName = 'route_' + (p.name || 'pop').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase();
-	const profName = safeName;
-	preserved.profiles.push({ name: profName, type: 'VISIT', run: false, radius: 600, pauseMin: 20, pauseMax: 60, waypoints: [] });
-	p.profile = profName;
-	syncForm();
-	updateProfileList();
-	selectProfile(preserved.profiles.length - 1);
-	setWaypointMode(true);
-	toast('Route profile "' + profName + '" created — click the map to place waypoints.');
+	if (!isRouteBehavior(p.behavior)){ alert('Set this population\'s behavior to Runner or Patrol first, then draw its route.'); return; }
+	p.route = p.route || [];
+	setWaypointMode(!waypointMode);
 };
+document.getElementById('clearRouteBtn').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops[selected].route = []; syncForm(); draw(); };
 
 function renderList(){
 	const el = document.getElementById('list'); el.innerHTML = '';
@@ -1086,7 +1097,8 @@ function renderList(){
 		const d = document.createElement('div'); d.className = 'item' + (i === selected ? ' sel' : '');
 		const eye = document.createElement('span'); eye.textContent = p.visible === false ? '🚫' : '👁'; eye.title = 'show/hide'; eye.style.cssText = 'cursor:pointer;margin-right:6px;opacity:' + (p.visible === false ? '.4' : '1');
 		eye.onclick = ev => { ev.stopPropagation(); p.visible = p.visible === false; renderList(); draw(); };
-		const txt = document.createElement('span'); txt.innerHTML = '<span class="dot" style="background:' + popColor(p) + '"></span>' + (p.name || '?') + ' <small>×' + (p.count || 0) + (p.store ? ' · ' + p.store : '') + ' · L' + p.minLevel + '-' + p.maxLevel + '</small>';
+		const tag = (mode === 'phantom') ? '' : (p.store ? p.store : (p.behavior || 'IDLE'));
+		const txt = document.createElement('span'); txt.innerHTML = '<span class="dot" style="background:' + popColor(p) + '"></span>' + (p.name || '?') + ' <small>×' + (p.count || 0) + (tag ? ' · ' + tag : '') + ' · L' + p.minLevel + '-' + p.maxLevel + '</small>';
 		txt.onclick = () => { select(i); panToPop(p); };
 		d.appendChild(eye); d.appendChild(txt); el.appendChild(d);
 	});
@@ -1095,138 +1107,6 @@ function popAnchor(p){ return (p.poly && p.poly.length) ? polyCentroid(p.poly) :
 function panToPop(p){ const a = popAnchor(p); cam.x = a.x - (cv.width / 2) / cam.scale; cam.y = a.y - (cv.height / 2) / cam.scale; draw(); }
 document.getElementById('toggleAll').onclick = () => { const anyVisible = pops.some(p => p.visible !== false); pops.forEach(p => p.visible = !anyVisible); document.getElementById('toggleAll').textContent = anyVisible ? 'Show all' : 'Hide all'; renderList(); draw(); };
 document.getElementById('imgOpacity').addEventListener('input', draw);
-
-// ---- profile model ops ----
-function addProfile(){
-	preserved.profiles.push({ name: 'new_profile', type: 'VISIT', run: false, radius: 600, pauseMin: 20, pauseMax: 60, waypoints: [] });
-	updateProfileList();
-	selectProfile(preserved.profiles.length - 1);
-	renderProfList();
-}
-function selectProfile(i){
-	if (waypointMode) setWaypointMode(false);
-	selectedProfile = i;
-	selected = -1;
-	syncFormClear();
-	syncProfForm();
-	renderList();
-	renderProfList();
-	draw();
-}
-function syncProfForm(){
-	const prof = preserved.profiles[selectedProfile];
-	document.getElementById('profForm').classList.toggle('empty', !prof);
-	document.getElementById('profFormHint').textContent = prof
-		? 'Editing: ' + (prof.name || '(unnamed)')
-		: 'Select a profile below, or use "+ Profile" to create one.';
-	if (!prof) return;
-	document.getElementById('pf_name').value = prof.name || '';
-	document.getElementById('pf_type').value = prof.type || 'WANDER';
-	document.getElementById('pf_run').value = prof.run ? 'true' : 'false';
-	document.getElementById('pf_radius').value = prof.radius ?? 600;
-	document.getElementById('pf_pauseMin').value = prof.pauseMin ?? 10;
-	document.getElementById('pf_pauseMax').value = prof.pauseMax ?? 30;
-	const route = hasWaypoints(prof.type);
-	document.getElementById('waypointControls').style.display = route ? '' : 'none';
-	document.getElementById('radiusControl').style.display = route ? 'none' : '';
-	if (route){
-		const n = prof.waypoints ? prof.waypoints.length : 0;
-		document.getElementById('waypointCount').textContent = n + ' waypoint' + (n === 1 ? '' : 's') + ' placed.';
-	}
-	document.getElementById('profHelp').textContent = PROFILE_HELP[prof.type] || '';
-}
-const PROFILE_HELP = {
-	WANDER: 'Bots wander randomly within the radius around their spawn (loiterers / idlers).',
-	VISIT: 'Bots tour the waypoints you place on the map, picking the next one at RANDOM each time. Long idles on arrival make it look purposeful.',
-	PATROL: 'Bots walk the waypoints you place IN ORDER, looping the route like guards or travellers.',
-	FARM: 'Bots actively seek out and fight nearby monsters within the radius.'
-};
-function syncProfFormClear(){
-	document.getElementById('profForm').classList.add('empty');
-	document.getElementById('profFormHint').textContent = 'Select a profile below, or use "+ Profile" to create one.';
-}
-document.querySelectorAll('#profForm input, #profForm select').forEach(el => el.addEventListener('input', () => {
-	const prof = preserved.profiles[selectedProfile];
-	if (!prof) return;
-	const id = el.id.slice(3); // strip 'pf_'
-	if (id === 'name'){
-		const oldName = prof.name;
-		prof.name = el.value;
-		// update any population referencing the old name
-		pops.forEach(p => { if (p.profile === oldName) p.profile = el.value; });
-		updateProfileList();
-		renderList();
-	} else if (id === 'type'){
-		prof.type = el.value;
-		const route = hasWaypoints(el.value);
-		document.getElementById('waypointControls').style.display = route ? '' : 'none';
-		document.getElementById('radiusControl').style.display = route ? 'none' : '';
-		if (route){
-			const n = prof.waypoints ? prof.waypoints.length : 0;
-			document.getElementById('waypointCount').textContent = n + ' waypoint' + (n === 1 ? '' : 's') + ' placed.';
-		} else if (waypointMode){
-			setWaypointMode(false);
-		}
-		document.getElementById('profHelp').textContent = PROFILE_HELP[el.value] || '';
-	} else if (id === 'run'){
-		prof.run = el.value === 'true';
-	} else if (id === 'radius'){
-		prof.radius = +el.value;
-	} else if (id === 'pauseMin'){
-		prof.pauseMin = +el.value;
-	} else if (id === 'pauseMax'){
-		prof.pauseMax = +el.value;
-	}
-	renderProfList();
-	draw();
-}));
-document.getElementById('waypointBtn').onclick = () => {
-	if (selectedProfile < 0) return;
-	const prof = preserved.profiles[selectedProfile];
-	if (!prof || !hasWaypoints(prof.type)) return;
-	setWaypointMode(!waypointMode);
-};
-document.getElementById('clearWaypointsBtn').onclick = () => {
-	if (selectedProfile < 0) return;
-	if (waypointMode) setWaypointMode(false);
-	preserved.profiles[selectedProfile].waypoints = [];
-	syncProfForm();
-	draw();
-};
-document.getElementById('delProfile').onclick = () => {
-	if (selectedProfile < 0) return;
-	if (waypointMode) setWaypointMode(false);
-	preserved.profiles.splice(selectedProfile, 1);
-	selectedProfile = -1;
-	updateProfileList();
-	syncProfFormClear();
-	renderProfList();
-	draw();
-};
-document.getElementById('addProfileBtn').onclick = addProfile;
-
-function renderProfList(){
-	const el = document.getElementById('profList');
-	el.innerHTML = '';
-	if (!preserved.profiles.length){
-		const hint = document.createElement('div');
-		hint.className = 'muted';
-		hint.textContent = 'No profiles defined. Click "+ Profile" to add one, or load FakePlayerBehavior.xml.';
-		el.appendChild(hint);
-		return;
-	}
-	preserved.profiles.forEach((prof, i) => {
-		const d = document.createElement('div');
-		d.className = 'item' + (i === selectedProfile ? ' sel' : '');
-		const col = profColor(prof, false);
-		const wptTag = (prof.type === 'VISIT' && prof.waypoints && prof.waypoints.length)
-			? ` <small style="background:${col}22;border:1px solid ${col}55;border-radius:3px;padding:1px 5px;color:${col}">↺ ${prof.waypoints.length} pts</small>`
-			: '';
-		d.innerHTML = `<span class="dot" style="background:${col}"></span>${prof.name || '?'} <small>${prof.type} · ${prof.run ? 'run' : 'walk'} · ${prof.pauseMin}-${prof.pauseMax}s</small>${wptTag}`;
-		d.onclick = () => selectProfile(i);
-		el.appendChild(d);
-	});
-}
 
 // ---- XML load/save ----
 async function loadXmlText(text, name, handle){
@@ -1240,42 +1120,47 @@ async function loadXmlText(text, name, handle){
 function parseXml(text){
 	const doc = new DOMParser().parseFromString(text, 'application/xml');
 	const list = doc.querySelector('list'); if (!list){ alert('No <list> root found.'); return; }
-	pops = []; preserved = { profiles: [], assigns: [], def: null };
+	pops = []; preserved = { assigns: [], def: null };
 	const ser = new XMLSerializer();
+	// First pass: collect movement profiles by name so we can fold each into the population that uses it.
+	const profiles = {};
+	for (const node of list.children){
+		if (node.tagName !== 'profile') continue;
+		const waypoints = [...node.children].filter(n => n.tagName === 'point')
+			.map(n => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y'), z: +(n.getAttribute('z') || 0) }));
+		profiles[node.getAttribute('name') || ''] = {
+			type:     (node.getAttribute('type') || 'WANDER').toUpperCase(),
+			run:      node.getAttribute('run') === 'true',
+			pauseMin: +(node.getAttribute('pauseMin') || 10),
+			pauseMax: +(node.getAttribute('pauseMax') || 30),
+			waypoints
+		};
+	}
 	for (const node of list.children){
 		const tag = node.tagName;
-		if (tag === 'profile'){
-			// Parse profile into an editable object
-			const waypoints = [...node.children]
-				.filter(n => n.tagName === 'point')
-				.map(n => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y'), z: +(n.getAttribute('z') || 0) }));
-			preserved.profiles.push({
-				name:     node.getAttribute('name') || '',
-				type:     (node.getAttribute('type') || 'WANDER').toUpperCase(),
-				run:      node.getAttribute('run') !== 'false',
-				radius:   +(node.getAttribute('radius') || 600),
-				pauseMin: +(node.getAttribute('pauseMin') || 10),
-				pauseMax: +(node.getAttribute('pauseMax') || 30),
-				waypoints
-			});
-		}
-		else if (tag === 'assign'){ preserved.assigns.push(ser.serializeToString(node)); }
+		if (tag === 'assign'){ preserved.assigns.push(ser.serializeToString(node)); }
 		else if (tag === 'default'){ preserved.def = ser.serializeToString(node); }
 		else if (tag === 'population'){
 			const g = a => node.getAttribute(a);
 			const poly = [...node.children].filter(n => n.tagName === 'point').map(n => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y') }));
-			pops.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 600), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 40), profile: g('profile') || '', race: g('race') || '', store: g('store') || '', respawn: g('respawn') === 'true', poly });
+			const store = g('store') || '';
+			const prof = profiles[g('profile') || ''];
+			const behavior = behaviorFromProfile(prof, store);
+			const d = BEHAVIOR_DEFAULTS[behavior];
+			pops.push({
+				name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'),
+				radius: +(g('radius') || 600), count: +(g('count') || 0),
+				minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 40),
+				behavior,
+				run:      prof ? prof.run : d.run,
+				pauseMin: prof ? prof.pauseMin : d.pauseMin,
+				pauseMax: prof ? prof.pauseMax : d.pauseMax,
+				route:    (prof && isRouteBehavior(behavior)) ? prof.waypoints.map(w => ({ ...w })) : [],
+				race: g('race') || '', store, respawn: g('respawn') === 'true', poly
+			});
 		}
 	}
-	updateProfileList(); renderList(); renderProfList(); selected = -1; selectedProfile = -1; syncForm(); syncProfFormClear(); draw();
-}
-function updateProfileList(){
-	const dl = document.getElementById('profiles');
-	dl.innerHTML = '';
-	const names = preserved.profiles.length
-		? preserved.profiles.map(p => p.name)
-		: ['loiter','mill','stroller','visit_giran','farmer','hunter'];
-	names.forEach(n => { const o = document.createElement('option'); o.value = n; dl.appendChild(o); });
+	renderList(); selected = -1; syncForm(); draw();
 }
 
 // ---- phantom populations (PhantomPopulations.xml) ----
@@ -1315,29 +1200,60 @@ function buildXml(){
 	let out = '<?xml version="1.0" encoding="UTF-8"?>\n';
 	out += '<list xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="xsd/FakePlayerBehavior.xsd">\n';
 
-	// Serialize profile objects back to XML
-	preserved.profiles.forEach(prof => {
-		const route = hasWaypoints(prof.type);
-		let a = `name="${esc(prof.name)}" type="${esc(prof.type)}"`;
-		// radius drives WANDER/FARM roam distance; it is meaningless for waypoint routes, so omit it there.
-		if (!route && (prof.radius != null)) a += ` radius="${prof.radius}"`;
-		a += ` run="${prof.run}" pauseMin="${prof.pauseMin}" pauseMax="${prof.pauseMax}"`;
-		if (route && prof.waypoints && prof.waypoints.length){
-			out += `\t<profile ${a}>\n`;
-			prof.waypoints.forEach(w => out += `\t\t<point x="${w.x}" y="${w.y}" z="${w.z}"/>\n`);
-			out += `\t</profile>\n`;
+	// Each population owns its behavior; generate one matching <profile> per population and
+	// reference it by a unique name. This keeps the file 100% compatible with the server while
+	// the user only ever thinks in terms of populations + behaviors.
+	const usedNames = new Set();
+	const profileFor = p => {
+		let base = 'mv_' + (p.name || 'pop').replace(/[^a-zA-Z0-9_]/g, '_').toLowerCase().replace(/^_+|_+$/g, '');
+		if (!base || base === 'mv_') base = 'mv_pop';
+		let name = base, i = 2;
+		while (usedNames.has(name)) name = base + '_' + (i++);
+		usedNames.add(name);
+		return name;
+	};
+	// Pre-assign each population a profile name + the profile XML so we can emit profiles first.
+	const profileBlocks = [];
+	pops.forEach(p => {
+		const d = BEHAVIOR_DEFAULTS[p.behavior] || BEHAVIOR_DEFAULTS.IDLE;
+		const name = profileFor(p);
+		p._profName = name;
+		const run = (p.run != null) ? p.run : d.run;
+		const pMin = (p.pauseMin != null) ? p.pauseMin : d.pauseMin;
+		const pMax = (p.pauseMax != null) ? p.pauseMax : d.pauseMax;
+		let a = `name="${esc(name)}" type="${d.type}"`;
+		const route = isRouteBehavior(p.behavior);
+		if (!route){
+			// WANDER/FARM roam distance: the population's own radius for IDLE/FARM, a small fixed drift for SHOP.
+			const hasPoly = p.poly && p.poly.length >= 3;
+			const roam = (d.roam === 'pop') ? (hasPoly ? polyRadius(p.poly, polyCentroid(p.poly)) : p.radius) : d.roam;
+			if (roam != null) a += ` radius="${roam}"`;
+		}
+		a += ` run="${run}" pauseMin="${pMin}" pauseMax="${pMax}"`;
+		if (route && p.route && p.route.length){
+			let b = `\t<profile ${a}>\n`;
+			p.route.forEach(w => b += `\t\t<point x="${w.x}" y="${w.y}" z="${w.z != null ? w.z : (p.z | 0)}"/>\n`);
+			b += `\t</profile>\n`;
+			profileBlocks.push(b);
 		} else {
-			out += `\t<profile ${a}/>\n`;
+			profileBlocks.push(`\t<profile ${a}/>\n`);
 		}
 	});
-	if (preserved.profiles.length) out += '\n';
+	// Keep any profile names still referenced by preserved <assign>/<default> entries resolvable:
+	// emit a minimal WANDER profile for each one we didn't already generate.
+	const referenced = new Set();
+	[...preserved.assigns, preserved.def || ''].forEach(s => { const m = /profile="([^"]+)"/.exec(s); if (m) referenced.add(m[1]); });
+	referenced.forEach(name => { if (!usedNames.has(name)){ usedNames.add(name); profileBlocks.push(`\t<profile name="${esc(name)}" type="WANDER" radius="150" run="false" pauseMin="25" pauseMax="80"/>\n`); } });
+
+	profileBlocks.forEach(b => out += b);
+	if (profileBlocks.length) out += '\n';
 
 	pops.forEach(p => {
 		const hasPoly = p.poly && p.poly.length >= 3;
 		let ax = p.x, ay = p.y, ar = p.radius;
 		if (hasPoly){ const c = polyCentroid(p.poly); ax = c.x; ay = c.y; ar = polyRadius(p.poly, c); }
 		let a = `name="${esc(p.name)}" x="${ax}" y="${ay}" z="${p.z}" radius="${ar}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
-		if (p.profile) a += ` profile="${esc(p.profile)}"`;
+		a += ` profile="${esc(p._profName)}"`;
 		if (p.race) a += ` race="${esc(p.race)}"`;
 		if (p.store) a += ` store="${esc(p.store)}"`;
 		if (p.respawn) a += ` respawn="true"`;
@@ -1452,8 +1368,6 @@ document.getElementById('showMarks').addEventListener('change', draw);
 // ---- startup: restore the remembered folder ----
 (async () => {
 	applyModeUi();
-	updateProfileList();
-	renderProfList();
 	updateStatus();
 	resize();
 	try {

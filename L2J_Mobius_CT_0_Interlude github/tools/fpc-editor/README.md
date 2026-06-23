@@ -41,15 +41,12 @@ The status chips at the top always show what's loaded or cataloged:
 ## Editing populations
 - **Double-click** the map to drop a new population there (or **+ Population**).
 - **Drag** a circle to move it; the X/Y update live.
-- **Click** a circle (or a list row) to edit its fields: name, count, level range, profile,
-  race, store type (`SELL`/`BUY`/`CRAFT`/`PACKAGE`), respawn.
-- **Draw zone** — select a population, click **Draw zone**, then click points on the map to
-  outline an area. Bots spawn **inside the shape** instead of a circle (great for sell/buy/craft
-  shop districts). Drag vertices to adjust; double-click or **Esc** to finish; **Clear zone** to
-  revert to a circle. Saved as `<point>` vertices under the population.
+- **Click** a circle (or a list row) to edit its fields: name, count, level range, **behavior**,
+  race, respawn.
 - **Wheel** to zoom, **drag empty space** to pan. The geodata map is crisp when zoomed in.
-- **Landmarks** — towns/villages are drawn as purple diamonds at their real coordinates so you
-  can orient without a map image. Toggle them with the **landmarks** checkbox.
+- **Landmarks** — towns and villages are drawn as purple diamonds at their real coordinates, and
+  zooming in reveals key NPC spots (gatekeeper, warehouse, shops, …) as small labeled dots so you
+  can drop route waypoints right onto them. Toggle them with the **landmarks** checkbox.
 - **👁 / 🚫** on each list row shows/hides that population; **Hide all / Show all** toggles every one.
 
 ## Map image layers
@@ -66,42 +63,42 @@ when you load that world map, city, or world-location image again. You can still
 loose image files onto the map for quick manual overlays. Loaded city/world-location images appear
 in a list with per-image show/hide toggles plus **Hide all / Show all**.
 
-## Movement profiles (what bots *do*)
-A **profile** is the behavior assigned to a population — it decides how those bots move. You can
-now create and edit profiles directly in the editor (the **Profiles** section below the population
-list), instead of hand-editing the XML.
+## Behaviors (what each population does)
+Every population has one **behavior**, chosen from the dropdown in its panel. The editor writes the
+matching movement profile into the XML for you — you never edit profiles by hand:
 
-Profile types:
-- **WANDER** — bots drift around randomly within a **radius** of their spawn. Use for loiterers and
-  idlers standing around town.
-- **VISIT** — bots tour a set of **waypoints**, picking the next one at **random** each time, with
-  long idles on arrival so it looks purposeful. This is the "wander between landmarks" behavior.
-- **PATROL** — same waypoints, but walked **in order**, looping the route like guards/travellers.
-- **FARM** — bots seek out and fight nearby monsters within the radius (field hunters).
+- **Idle / loiter** — bots drift around at random within the **radius** (or the **drawn zone**) of
+  their spawn. The standing-around-town crowd.
+- **Runner** — bots roam a **route** of waypoints you place, picking the next one at **random**.
+  This is the "wander between landmarks" behavior. Click **✦ Draw route**, then click the map to
+  drop each waypoint; drag one to move it; **Esc** to finish; **Clear route** to start over.
+- **Patrol** — same routes, but walked **in order** and looped, like guards or travellers.
+- **Farm** — bots seek out and fight monsters within the radius (field hunters). Tick **respawn**.
+- **Shop** — private-store vendors. Pick a **store type** (`SELL`/`BUY`/`CRAFT`/`PACKAGE`); they
+  barely move around the spawn.
 
-Each profile also has **run/walk** and a **pause** range (seconds idled between moves).
+Each behavior comes with sensible run/walk and pause defaults; tweak them under **Movement timing
+(advanced)** if you want.
 
-### Assigning a profile to a population
-Select a population and type (or pick) a profile name in its **profile** field. Every bot in that
-population will use it. Multiple populations can share one profile.
+### Areas: radius or a drawn zone
+- **Draw zone** — select a population, click **Draw zone**, then click points on the map to outline
+  an area. Bots spawn **inside the shape** instead of a circle (great for Idle crowds and shop
+  districts). Drag vertices to adjust; double-click or **Esc** to finish; **Clear zone** reverts to
+  a circle. Saved as `<point>` vertices under the population.
 
-### Drawing a route (waypoints)
-Two ways:
-1. **From a population** — select it and click **✦ Add / edit route**. The editor creates a VISIT
-   profile named `route_<population>`, assigns it, and drops you into waypoint mode. Click the map to
-   place each waypoint the bots should visit; drag a waypoint to move it. **Esc** or **Finish** ends.
-2. **From the Profiles section** — **+ Profile**, set type to VISIT or PATROL, then **✦ Add waypoints**.
-
-Routes are drawn on the map as numbered, dashed purple chains; the selected route is highlighted.
-Waypoint z is seeded from the population's elevation so the server snaps each point to the right
-ground layer.
+### Drawing a route
+Select a Runner or Patrol population and click **✦ Draw route**, then click the map to place each
+waypoint. Routes are drawn as numbered, dashed purple chains anchored to the spawn (the selected
+one turns orange). Waypoint z is seeded from the population's elevation so the server snaps each
+point to the right ground layer.
 
 ## Colors
-- blue = town loiterers/default (WANDER) · green = movers (mill/stroller) · purple = routes (VISIT/PATROL)
-- red = field hunters/farmers (FARM) · gold = private-store vendors · orange = the selected route
+- blue = Idle / loiter · purple = Runner / Patrol routes · red = Farm (field hunters)
+- gold = Shop vendors · orange = the selected route
 
 ## Notes
-- Profiles, populations, **and** waypoints are all editable in-tool now. Per-bot **assigns** and the
-  **default** entry are still read and written back unchanged (edit those by hand if needed).
+- You work entirely in **populations + behaviors**; the editor generates the underlying `<profile>`
+  for each population on save (named `mv_<population>`) and reads it back on load. Any **assign** and
+  **default** entries already in the file are preserved verbatim.
 - The exported file keeps the `xsd/FakePlayerBehavior.xsd` reference, so server-side schema
   validation stays clean.
