@@ -370,9 +370,14 @@ ever runs dry the engine clears the auto-potion item until respawn — bump `HP_
   idle unless a mob aggroed them — AutoPlay doesn't roam beyond its search radius, so they never walked to
   mobs or to dropped adena. Reverted to **long-range** search; clumping is held down by spaced spawns +
   respectful hunting. Pickup works again once they move (AutoPlay walks to items within ~200).
-- **"Frozen" mage that pots but won't fight:** a pure caster neither melees nor moves to its target, and
-  when out of MP it can't cast either — so it just stood there. Gave **all phantoms the auto-attack
-  action**: mages now walk in and melee as a fallback while AutoUse still casts their nukes when MP allows.
+- **Mages now play as proper ranged casters (not melee).** Reverted the auto-attack fallback; mages are
+  pure casters again, and a dedicated **mage combat tick** (1s) does the moving AutoPlay won't do for a
+  caster: it holds the mage at `MAGE_CAST_RANGE` (~650) to nuke (AutoUse casts), and when MP drops below
+  `MAGE_CAST_MP_PERCENT` (20%) it backs off to `MAGE_KITE_RANGE` (~850) and waits for MP to recover, then
+  closes back in — classic kite. An engaged mage won't sit-rest (it kites instead). (`data.mage` flag
+  drives it.) Tunables: the four `MAGE_*` constants.
+  - Note: the earlier "frozen" character was a **melee** that didn't even react to hits — treated as a
+    one-off glitch, not addressed.
 
 **Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
 so they arrive **with the parties increment** — standalone they'd have nothing to do.

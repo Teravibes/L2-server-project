@@ -44,6 +44,7 @@ import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
+import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
@@ -142,6 +143,14 @@ public class PhantomManager implements IXmlReader
 	private static final int REST_DANGER_RANGE = 700;
 	// Share of phantoms that roll a (DD) mage instead of a fighter.
 	private static final int MAGE_CHANCE = 30;
+	// Mage combat: casters don't move under AutoPlay, so a faster tick positions them. They hold at
+	// CAST_RANGE to nuke; when MP drops below CAST_MP_PERCENT they back off to KITE_RANGE and wait for it
+	// to recover, then close back in. TOLERANCE stops constant micro-repositioning.
+	private static final long MAGE_TICK_INTERVAL = 1000;
+	private static final int MAGE_CAST_RANGE = 650;
+	private static final int MAGE_KITE_RANGE = 850;
+	private static final int MAGE_RANGE_TOLERANCE = 150;
+	private static final int MAGE_CAST_MP_PERCENT = 20;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -178,15 +187,17 @@ public class PhantomManager implements IXmlReader
 		final Player player;
 		final Location home;
 		final Population population; // null for ad-hoc (admin) spawns
+		final boolean mage; // pure caster: needs the mage combat tick to position/kite it
 		long deadSince; // 0 while alive
 		boolean dormant; // auto-hunt paused because no real player is near
 		boolean resting; // sitting to regenerate HP/MP
 
-		PhantomData(Player player, Location home, Population population)
+		PhantomData(Player player, Location home, Population population, boolean mage)
 		{
 			this.player = player;
 			this.home = home;
 			this.population = population;
+			this.mage = mage;
 		}
 	}
 
@@ -419,9 +430,9 @@ public class PhantomManager implements IXmlReader
 			phantom.setOnlineStatus(true, false);
 			outfit(phantom, level, mage);
 			enterWorld(phantom, location);
-			enableAutoHunt(phantom);
+			enableAutoHunt(phantom, mage);
 
-			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location, population));
+			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, location, population, mage));
 			startSupervising();
 			LOGGER.info(getClass().getSimpleName() + ": Spawned phantom '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
 			return phantom;
@@ -865,22 +876,24 @@ public class PhantomManager implements IXmlReader
 	 * Configures the auto-hunt preferences and starts the native AutoPlay + AutoUse tasks. Soulshots
 	 * would be registered here too (via {@code addAutoSoulShot}) once phantoms are geared with a weapon.
 	 */
-	private void enableAutoHunt(Player phantom)
+	private void enableAutoHunt(Player phantom, boolean mage)
 	{
 		final AutoPlaySettingsHolder settings = phantom.getAutoPlaySettings();
 		settings.setNextTargetMode(TARGET_MODE_MONSTER);
-		// Long-range search so they actively seek and walk to mobs across the zone (short range left them
-		// standing idle unless a mob aggroed them - AutoPlay doesn't roam beyond its search radius).
-		// Clumping is instead held down by spaced spawns + respectful hunting (below).
+		// Long-range search so they actively seek mobs across the zone (short range left them standing idle
+		// unless a mob aggroed them - AutoPlay doesn't roam beyond its search radius). Clumping is instead
+		// held down by spaced spawns + respectful hunting (below).
 		settings.setShortRange(false);
 		settings.setRespectfulHunting(true); // skip mobs already being fought, so phantoms don't converge on one
 		settings.setPickup(true);
 
-		// Everyone gets the auto-attack action. For fighters it's their main damage; for mages it's a
-		// fallback so they still move to and engage a target (and aren't frozen when out of MP) - AutoUse
-		// keeps casting their nukes on top whenever MP allows. Without it a pure caster neither melees nor
-		// walks to its target, so it just stands there.
-		phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
+		// Fighters auto-attack (action id 2). Mages are pure casters: no auto-attack, so AutoPlay only picks
+		// the target and AutoUse casts their nukes - the mage combat tick keeps them at casting range and
+		// kites them out when they run low on MP (it does the moving AutoPlay won't do for a caster).
+		if (!mage)
+		{
+			phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
+		}
 
 		AutoPlayTaskManager.getInstance().startAutoPlay(phantom);
 		AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
@@ -928,7 +941,66 @@ public class PhantomManager implements IXmlReader
 		}
 		_supervising = true;
 		ThreadPool.scheduleAtFixedRate(this::supervise, SUPERVISE_INTERVAL, SUPERVISE_INTERVAL);
+		ThreadPool.scheduleAtFixedRate(this::mageCombat, MAGE_TICK_INTERVAL, MAGE_TICK_INTERVAL);
 		LOGGER.info(getClass().getSimpleName() + ": Phantom supervisor started.");
+	}
+
+	/**
+	 * Keeps awake mage phantoms at casting range of their target and kites them out when low on MP, since
+	 * the native AutoPlay never moves a pure caster. AutoUse does the actual nuking once they're in range.
+	 */
+	private void mageCombat()
+	{
+		for (PhantomData data : _phantoms.values())
+		{
+			if (!data.mage || data.dormant || data.resting)
+			{
+				continue;
+			}
+			final Player mage = data.player;
+			try
+			{
+				if (mage.isDead() || mage.isCastingNow() || mage.isMovementDisabled())
+				{
+					continue; // don't interrupt a cast or fight a stun
+				}
+				final WorldObject target = mage.getTarget();
+				if (!(target instanceof Monster) || ((Monster) target).isDead())
+				{
+					continue; // AutoPlay will pick a target; nothing to position around yet
+				}
+				positionMage(mage, (Monster) target);
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Mage combat error for " + mage.getName() + ": " + e.getMessage());
+			}
+		}
+	}
+
+	/** Moves a mage to its desired stand-off distance from the target (closer to nuke, further to kite). */
+	private void positionMage(Player mage, Monster target)
+	{
+		double dx = mage.getX() - target.getX();
+		double dy = mage.getY() - target.getY();
+		double distance = Math.hypot(dx, dy);
+		final boolean canCast = mage.getCurrentMpPercent() >= MAGE_CAST_MP_PERCENT;
+		final int desired = canCast ? MAGE_CAST_RANGE : MAGE_KITE_RANGE;
+		if (Math.abs(distance - desired) <= MAGE_RANGE_TOLERANCE)
+		{
+			return; // already in position - stand still so AutoUse can cast
+		}
+		if (distance < 1)
+		{
+			distance = 1;
+		}
+		// A point 'desired' units from the target, on the line toward the mage: walks in when too far, backs
+		// off when too close (or out of MP).
+		final int standX = target.getX() + (int) ((dx / distance) * desired);
+		final int standY = target.getY() + (int) ((dy / distance) * desired);
+		final Location destination = GeoEngine.getInstance().getValidLocation(mage, new Location(standX, standY, mage.getZ()));
+		mage.setRunning();
+		mage.getAI().setIntention(Intention.MOVE_TO, destination);
 	}
 
 	private void supervise()
@@ -993,7 +1065,7 @@ public class PhantomManager implements IXmlReader
 				}
 
 				// Resting: when safe and low on HP/MP, sit to regen; stand when recovered or threatened.
-				final boolean danger = phantom.isInCombat() || isMonsterNear(phantom);
+				final boolean danger = phantom.isInCombat() || hasLiveMonsterTarget(phantom) || isMonsterNear(phantom);
 				if (data.resting)
 				{
 					if (danger || ((phantom.getCurrentHpPercent() >= REST_STAND_PERCENT) && (phantom.getCurrentMpPercent() >= REST_STAND_PERCENT)))
@@ -1013,6 +1085,13 @@ public class PhantomManager implements IXmlReader
 				LOGGER.warning(getClass().getSimpleName() + ": Supervise error for " + phantom.getName() + ": " + e.getMessage());
 			}
 		}
+	}
+
+	/** @return {@code true} if the phantom currently has a living monster target (engaged - don't rest). */
+	private static boolean hasLiveMonsterTarget(Player phantom)
+	{
+		final WorldObject target = phantom.getTarget();
+		return (target instanceof Monster) && !((Monster) target).isDead();
 	}
 
 	/** @return {@code true} if a live monster is close enough that the phantom should not sit to rest. */
