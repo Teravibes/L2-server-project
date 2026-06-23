@@ -6,6 +6,10 @@
 	scattered within the group's circle (center + radius) or, if a polygon is drawn, inside that
 	shape; each spawn point is Z-snapped to the ground via geodata so they do not stack or float.
 
+	ON-DEMAND: phantoms are NOT created at boot. A group spawns when a real player comes within
+	(radius + ~2000) of its center, and despawns ~30s after the last player leaves the area (its
+	DB rows are deleted on despawn, so nothing leaks). Each visit rolls a fresh crowd.
+
 	Attributes:
 	  name      - label for logs (optional).
 	  x, y, z   - group center / anchor (required).

@@ -64,6 +64,7 @@ import org.l2jmobius.gameserver.model.item.type.CrystalType;
 import org.l2jmobius.gameserver.model.item.type.WeaponType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
+import org.l2jmobius.gameserver.network.GameClient;
 import org.l2jmobius.gameserver.taskmanagers.AutoPlayTaskManager;
 import org.l2jmobius.gameserver.taskmanagers.AutoUseTaskManager;
 
@@ -93,8 +94,14 @@ public class PhantomManager implements IXmlReader
 	private static final long SUPERVISE_INTERVAL = 5000;
 	// How long a dead phantom stays down before it is replaced (population) or revived (ad-hoc).
 	private static final long RESPAWN_DELAY = 15000;
-	// Delay before the boot deployment runs, to let the world and geodata finish loading.
-	private static final long DEPLOY_DELAY = 20000;
+	// On-demand activation: a population's phantoms exist only while a real player is near its anchor, and
+	// despawn a short while after the last one leaves. Keeps memory/DB free for empty zones and rolls a
+	// fresh crowd on every visit. ACTIVATION_MARGIN is added to the group radius to decide "near"; the
+	// grace delay avoids spawn/despawn thrash when a player skirts the edge; the stagger spreads the spawn
+	// cost (DB insert + level + gear per phantom) over a few ticks so entering a zone does not hitch.
+	private static final int ACTIVATION_MARGIN = 2000;
+	private static final long DEACTIVATE_DELAY = 30000;
+	private static final long SPAWN_STAGGER = 250;
 	// AutoPlay "next target" modes (mirrors the client toggle): 1 = monsters only.
 	private static final int TARGET_MODE_MONSTER = 1;
 	// AutoPlay auto-action id for the basic melee attack. Without it, AutoPlay treats the character as a
@@ -187,6 +194,8 @@ public class PhantomManager implements IXmlReader
 		int maxLevel = 1;
 		boolean respawn = true;
 		final List<Location> polygon = new ArrayList<>(); // optional area; spawn inside it instead of a circle
+		boolean active; // phantoms currently spawned (a real player is in range)
+		long emptySince; // when the last observer left this area (0 while a player is near)
 	}
 
 	private static class PhantomData
@@ -226,7 +235,8 @@ public class PhantomManager implements IXmlReader
 		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _populations.size() + " phantom population(s).");
 		if (!_populations.isEmpty())
 		{
-			ThreadPool.schedule(this::deploy, DEPLOY_DELAY);
+			// Populations are spawned on demand (when a real player approaches), not at boot - the supervisor
+			// drives activation/deactivation, so nothing is created until someone is near.
 			startSupervising();
 		}
 	}
@@ -255,34 +265,94 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
-	 * Deploys every configured population (called once, a short while after boot). Each phantom is
-	 * scattered within its group's circle/polygon and Z-snapped to the ground via geodata, so they spread
-	 * out instead of stacking on one tile.
+	 * Activates populations a real player has approached and despawns those everyone has left (after a grace
+	 * delay). Called every supervisor tick so phantoms exist only around the player(s).
 	 */
-	private void deploy()
+	private void updatePopulations(List<Player> observers, long now)
 	{
-		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
-		{
-			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - deployed phantoms will not hunt.");
-		}
-		int deployed = 0;
 		for (Population population : _populations)
 		{
-			int groupDeployed = 0;
-			for (int i = 0; i < population.count; i++)
+			if (population.count <= 0)
 			{
-				if (deployOne(population))
+				continue;
+			}
+			if (isAnyoneNear(population, observers))
+			{
+				population.emptySince = 0;
+				if (!population.active)
 				{
-					groupDeployed++;
+					activate(population);
 				}
 			}
-			deployed += groupDeployed;
-			if (groupDeployed < population.count)
+			else if (population.active)
 			{
-				LOGGER.warning(getClass().getSimpleName() + ": Population '" + population.name + "' deployed " + groupDeployed + "/" + population.count + " (bad anchor/geodata?).");
+				if (population.emptySince == 0)
+				{
+					population.emptySince = now;
+				}
+				else if ((now - population.emptySince) >= DEACTIVATE_DELAY)
+				{
+					deactivate(population);
+				}
 			}
 		}
-		LOGGER.info("===== " + deployed + " PHANTOMS DEPLOYED =====");
+	}
+
+	/** @return {@code true} if any real player is within {@link #ACTIVATION_MARGIN} of a population's area. */
+	private static boolean isAnyoneNear(Population population, List<Player> observers)
+	{
+		final long range = (long) population.radius + ACTIVATION_MARGIN;
+		final long rangeSq = range * range;
+		for (Player observer : observers)
+		{
+			final long dx = observer.getX() - population.center.getX();
+			final long dy = observer.getY() - population.center.getY();
+			if (((dx * dx) + (dy * dy)) <= rangeSq)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Spawns a population's phantoms (staggered to spread the cost) when a player first enters its area. */
+	private void activate(Population population)
+	{
+		population.active = true;
+		population.emptySince = 0;
+		if (!AutoPlayConfig.ENABLE_AUTO_PLAY)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - phantoms in '" + population.name + "' will not hunt.");
+		}
+		LOGGER.info(getClass().getSimpleName() + ": Activating population '" + population.name + "' (" + population.count + " phantoms).");
+		for (int i = 0; i < population.count; i++)
+		{
+			ThreadPool.schedule(() ->
+			{
+				// A quick in-and-out could have deactivated it before this staggered spawn fires.
+				if (population.active)
+				{
+					deployOne(population);
+				}
+			}, i * SPAWN_STAGGER);
+		}
+	}
+
+	/** Despawns all of a population's phantoms (deleting their DB rows) once everyone has left its area. */
+	private void deactivate(Population population)
+	{
+		population.active = false;
+		population.emptySince = 0;
+		int removed = 0;
+		for (PhantomData data : new ArrayList<>(_phantoms.values()))
+		{
+			if (data.population == population)
+			{
+				despawn(data);
+				removed++;
+			}
+		}
+		LOGGER.info(getClass().getSimpleName() + ": Deactivated population '" + population.name + "' (despawned " + removed + ").");
 	}
 
 	/** Spawns one phantom into a population: rolls a scattered location and a level in the group's range. */
@@ -922,7 +992,7 @@ public class PhantomManager implements IXmlReader
 		AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
 	}
 
-	/** Despawns and forgets every phantom (does not delete the DB rows). */
+	/** Despawns and forgets every phantom (also deletes their DB rows). */
 	public int clear()
 	{
 		int removed = 0;
@@ -932,12 +1002,22 @@ public class PhantomManager implements IXmlReader
 			removed++;
 		}
 		_phantoms.clear();
+		for (Population population : _populations)
+		{
+			population.active = false;
+			population.emptySince = 0;
+		}
 		return removed;
 	}
 
-	/** Stops the auto-hunt, removes the phantom from the world, and forgets it. */
+	/**
+	 * Stops the auto-hunt, removes the phantom from the world, forgets it, and deletes its character row.
+	 * The row must go because phantoms are now spawned/despawned on demand - without it every zone visit
+	 * would leak an orphan {@code phantom}-account character.
+	 */
 	private void despawn(PhantomData data)
 	{
+		final int objectId = data.player.getObjectId();
 		try
 		{
 			AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
@@ -946,9 +1026,17 @@ public class PhantomManager implements IXmlReader
 		}
 		catch (Exception e)
 		{
-			LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + data.player.getObjectId() + ": " + e.getMessage());
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + objectId + ": " + e.getMessage());
 		}
-		_phantoms.remove(data.player.getObjectId());
+		_phantoms.remove(objectId);
+		try
+		{
+			GameClient.deleteCharByObjId(objectId);
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to delete phantom row " + objectId + ": " + e.getMessage());
+		}
 	}
 
 	public int getCount()
@@ -1047,6 +1135,8 @@ public class PhantomManager implements IXmlReader
 	{
 		final long now = System.currentTimeMillis();
 		final List<Player> observers = onlineObservers();
+		// Spawn populations a player has approached; despawn ones everyone has left (after a grace delay).
+		updatePopulations(observers, now);
 		for (PhantomData data : new ArrayList<>(_phantoms.values()))
 		{
 			final Player phantom = data.player;
@@ -1070,7 +1160,15 @@ public class PhantomManager implements IXmlReader
 						{
 							final Population population = data.population;
 							despawn(data);
-							ThreadPool.schedule(() -> deployOne(population), RESPAWN_DELAY);
+							// Only replace it if the zone is still active when the delay elapses (a player could
+							// have left and the population deactivated in the meantime).
+							ThreadPool.schedule(() ->
+							{
+								if (population.active)
+								{
+									deployOne(population);
+								}
+							}, RESPAWN_DELAY);
 						}
 					}
 					else if ((now - data.deadSince) >= RESPAWN_DELAY)

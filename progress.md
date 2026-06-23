@@ -409,6 +409,18 @@ post-test-2 roam/mage-position fixes (they issue move intentions, but speed 0 = 
 Fix: `createAndSpawn` now calls **`phantom.setDietMode(true)`** (engine's "ignore weight penalty") before
 gearing, plus a `refreshOverloaded()` after — so load never pins a phantom regardless of race.
 
+**On-demand zone activation (NEW):** populations are **no longer deployed at boot**. The supervisor now
+spawns a group's phantoms when a real player comes within `radius + ACTIVATION_MARGIN` (~2000) of its
+anchor, and despawns them ~`DEACTIVATE_DELAY` (30s) after the last player leaves (grace delay avoids edge
+thrash; spawns are staggered `SPAWN_STAGGER`=250ms apart to spread the create+level+gear cost). So a zone
+is empty until you walk into it, then fills with a **fresh crowd each visit**, and frees memory/DB when
+you leave. Activation is keyed off the **population anchor** (there is no farm-zone definition in the
+datapack to bind to). `despawn()` now also **deletes the character row** (`GameClient.deleteCharByObjId`),
+fixing the long-standing orphan-`phantom`-row leak — required now that spawn/despawn churns. Ad-hoc
+`//phantom spawn` is unchanged (those persist + revive in place). Death respawn only fires if the zone is
+still active. (Travel companions / road ambiance: deferred; will be pure-ambiance and likely lightweight
+NPC FPCs rather than full Player phantoms.)
+
 **Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
 so they arrive **with the parties increment** — standalone they'd have nothing to do.
 
