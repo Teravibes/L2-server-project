@@ -442,10 +442,9 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
-	 * Brings a phantom to the requested level (by granting the exact experience for it, the same way the
-	 * admin level command does), learns its class skills, tops up its bars, and registers those skills
-	 * with the auto-use system so the engine casts them in combat. Gear (weapon/armor) and soulshots are
-	 * a later increment.
+	 * Brings a phantom to the requested level (granting the exact experience for it), advances it to the
+	 * class its level warrants, learns that class's full skill tree up to its level, gears it, tops up its
+	 * bars, and registers its skills with the auto-use system.
 	 * @param phantom the phantom to outfit
 	 * @param level the target level
 	 */
@@ -457,18 +456,72 @@ public class PhantomManager implements IXmlReader
 			final long targetExp = ExperienceData.getInstance().getExpForLevel(level);
 			if (targetExp > currentExp)
 			{
-				// Leveling up through addExpAndSp rewards the class skills for each level along the way.
 				phantom.addExpAndSp(targetExp - currentExp, 0);
 			}
 		}
-		// Belt and braces: make sure every auto-get class skill for the final level is learned. This must
-		// happen before gear() so the matching Expertise passive is known and the weapon has no grade
-		// penalty (which would also disable soulshots).
-		phantom.rewardSkills();
+		// Advance through the class transfers a real character of this level would have done (melee branch),
+		// then learn everything that class can learn by now - so a level-40 phantom is a proper 2nd-class
+		// fighter with a real kit, not a bare base Fighter. Learning is looped so chained skills resolve.
+		transferClass(phantom, level);
+		learnAllSkills(phantom);
 		gear(phantom, level);
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
+	}
+
+	/**
+	 * Advances a phantom from its base fighter class to the occupation its level warrants by walking the
+	 * class tree, choosing a random non-mage branch at each transfer: 1st at 20+, 2nd at 40+, 3rd at 76+.
+	 * @param phantom the phantom (created as a base fighter)
+	 * @param level its level
+	 */
+	private void transferClass(Player phantom, int level)
+	{
+		final int targetTier = (level < 20) ? 0 : (level < 40) ? 1 : (level < 76) ? 2 : 3;
+		if (targetTier == 0)
+		{
+			return; // base fighter is correct below level 20
+		}
+		PlayerClass current = phantom.getPlayerClass();
+		for (int step = 0; step < targetTier; step++)
+		{
+			final PlayerClass next = randomMeleeChild(current);
+			if (next == null)
+			{
+				break; // no further transfer available (e.g. a 2nd-class with no melee 3rd)
+			}
+			current = next;
+		}
+		if (current.getId() != phantom.getPlayerClass().getId())
+		{
+			phantom.setPlayerClass(current.getId());
+			phantom.setBaseClass(current.getId());
+		}
+	}
+
+	/** A random non-mage class transfer from the given class, or {@code null} if there are none. */
+	private static PlayerClass randomMeleeChild(PlayerClass parent)
+	{
+		final List<PlayerClass> options = new ArrayList<>();
+		for (PlayerClass child : parent.getNextClasses())
+		{
+			if (!child.isMage())
+			{
+				options.add(child);
+			}
+		}
+		return options.isEmpty() ? null : options.get(Rnd.get(options.size()));
+	}
+
+	/** Learns every skill the phantom's class can learn at its level, looped so chained skills resolve. */
+	private void learnAllSkills(Player phantom)
+	{
+		int guard = 0;
+		while ((phantom.giveAvailableSkills(false, true, true) > 0) && (guard++ < 10))
+		{
+			// keep learning until nothing new becomes available
+		}
 	}
 
 	/**

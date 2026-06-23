@@ -332,10 +332,26 @@ checks, per-Player tasks, combat), far heavier than NPC fake players. Dormancy c
 phantoms to ~nil; the cap bounds memory. A large world-filling population is now viable for solo play
 because only nearby phantoms are live.
 
-**Deliberately NOT done yet (next increments):** skip phantom **auto-save** (transient chars — minor I/O
-win), runtime shot restock, 1st/2nd **class transfer** (richer kits), hunting-zone relocate-when-empty,
-PvP target mode, persistence across restarts, DB cleanup of orphan phantom rows, config knobs for the
-ranges/cap, and **parties** (engine already supports auto-assist + offline-play party restore).
+**Done (increment 9 — class transfer + full skill tree):**
+- Phantoms now **advance to the class their level warrants** instead of staying a bare base Fighter:
+  `transferClass` walks the `PlayerClass` tree (data-driven via `getNextClasses()`), picking a random
+  **non-mage** branch at each transfer — 1st occupation at 20+, 2nd at 40+, 3rd at 76+ — then
+  `setPlayerClass`+`setBaseClass` (same as a village master).
+- `learnAllSkills` loops `giveAvailableSkills(false, true, true)` until nothing new resolves, so the
+  phantom learns its **whole class tree up to its level** (chained skills included). `registerAutoSkills`
+  then wires the new buffs/attacks into AutoUse, so e.g. a level-40 phantom is a real 2nd-class fighter
+  (Gladiator/Warlord/etc.) using its kit — not a 3-skill base Fighter.
+- All branches kept **melee** so the shared sword + soulshot path is unchanged.
+
+**Mages / buffers / healers — when:** deliberately fighters-only for now. Mage DDs are a near-term
+add-on (allow mage branches + give staff/spiritshots; the generic auto-skill registration already casts
+nukes). **Buffers/healers only make sense with parties** (they buff/heal allies), so they come **with the
+parties increment** — standalone they'd have nothing to do.
+
+**Deliberately NOT done yet (next increments):** **mage support** (staff/spiritshots + caster class
+branches), **parties** (then buffers/healers within them — engine already has auto-assist + offline-play
+party restore), skip phantom **auto-save**, runtime shot restock, hunting-zone relocate-when-empty, PvP
+target mode, persistence across restarts, DB cleanup of orphan phantom rows, config knobs.
 
 **Caveats / to verify in-game (untestable in this dev env — needs ant rebuild + JDK 25):**
 - Requires `EnableAutoPlay = True` (above) and **geodata loaded** for pathfinding to a target.
