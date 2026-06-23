@@ -101,6 +101,11 @@ public class PhantomManager implements IXmlReader
 	private static final int AUTO_ATTACK_ACTION = 2;
 	// How many soulshots to hand a freshly geared phantom (no runtime restock yet).
 	private static final int SHOT_COUNT = 5000;
+	// Healing potions for in-combat HP sustain while farming. Generous stack since phantoms fight a lot;
+	// refreshed on every (re)spawn. Native auto-potion drinks one when HP falls below the percent.
+	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
+	private static final int HP_POTION_COUNT = 20000;
+	private static final int HP_POTION_PERCENT = 60;
 	// Minimum spacing between phantoms at spawn, so a group does not stack on one tile.
 	private static final int MIN_SEPARATION = 250;
 	// First-occupation FIGHTER class ids per race (verified in FakePlayerAppearanceFactory), weighted by
@@ -578,6 +583,12 @@ public class PhantomManager implements IXmlReader
 			phantom.getInventory().addItem(ItemProcessType.REWARD, shotId, SHOT_COUNT, phantom, null);
 			phantom.addAutoSoulShot(shotId); // registers both soulshots and spiritshots for auto-use
 		}
+
+		// Healing potions: in-combat HP sustain (sitting can't help mid-fight). Native auto-potion drinks
+		// one when HP drops below the threshold; the big stack lasts a long farm session.
+		phantom.getInventory().addItem(ItemProcessType.REWARD, HP_POTION_ID, HP_POTION_COUNT, phantom, null);
+		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
+		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
 		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
 		// always, helmet/gloves often skipped) so a group is not a row of identical fully-armored clones.

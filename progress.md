@@ -359,6 +359,12 @@ because only nearby phantoms are live.
 passively while standing and never sat or drank potions; the native AutoPlay/AutoUse has no rest, and its
 auto-potion path is HP-only.
 
+**Healing potions (in-combat HP sustain):** each phantom is given a large stack of Greater Healing
+Potion (id 1539, ×20000, refreshed every spawn) with native **auto-potion** set to drink below 60% HP
+(`setAutoPotionItem` + `setAutoPotionPercent`; requires `EnableAutoPotion=True`, the default). Potions
+cover HP *during* fights (sitting can't); resting still covers MP (mages) and HP when safe. If a stack
+ever runs dry the engine clears the auto-potion item until respawn — bump `HP_POTION_COUNT` if needed.
+
 **Buffers / healers — when:** they only make sense **with parties** (their job is buffing/healing allies),
 so they arrive **with the parties increment** — standalone they'd have nothing to do.
 
