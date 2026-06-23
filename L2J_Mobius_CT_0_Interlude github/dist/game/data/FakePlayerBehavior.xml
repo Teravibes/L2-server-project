@@ -1,122 +1,95 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-	Fake player behavior + procedural population.
-
-	PROFILES define HOW a bot moves:
-	  WANDER - random hops within its radius of the home anchor (idling / milling about).
-	  VISIT  - walks to a RANDOM point of interest from its <point> list, idles a long time on arrival,
-	           then moves to another: this is "purposeful" movement between gatekeeper / warehouse / shops.
-	  PATROL - walks the <point> list in order, looping.
-	  For procedurally deployed bots the wander radius comes from their <population> (so cluster
-	  tightness is set per group); the profile "radius" is only a fallback for discovered bots.
-
-	POPULATIONS define WHERE / HOW MANY / WHAT:
-	  count, x/y/z (anchor center), radius (scatter + wander; small = tight cluster),
-	  minLevel/maxLevel (drives gear tier: most bots are poor/average, only a few fully kitted),
-	  profile, and optional race (a dominant race for the group, e.g. a Dwarven village).
-
-	Coordinates are taken from the datapack (town respawn points and Giran NPC spawns).
-
-	Tuning intent: most bots IDLE in clusters (the majority around the gatekeeper), a minority MOVE
-	with purpose. Starting villages are kept small and race-appropriate.
--->
 <list xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="xsd/FakePlayerBehavior.xsd">
-	<!-- ===== Movement profiles ===== -->
-	<!-- Idlers: stand around a spot, only shuffle occasionally. -->
-	<profile name="loiter" type="WANDER" radius="150" run="false" pauseMin="25" pauseMax="80" />
-	<!-- Light movers: amble around an area. -->
-	<profile name="mill" type="WANDER" radius="350" run="false" pauseMin="18" pauseMax="45" />
-	<!-- Purposeful movers in Giran: walk between the key NPCs, lingering at each. -->
+	<profile name="loiter" type="WANDER" radius="150" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mill" type="WANDER" radius="350" run="false" pauseMin="18" pauseMax="45"/>
 	<profile name="visit_giran" type="VISIT" run="false" pauseMin="25" pauseMax="70">
-		<point x="83485" y="147998" z="-3407" /> <!-- Gatekeeper -->
-		<point x="83192" y="146680" z="-3464" /> <!-- Warehouse -->
-		<point x="82651" y="146714" z="-3466" /> <!-- Dimensional Merchants -->
-		<point x="85055" y="146560" z="-3399" /> <!-- Blacksmith / weapon shops -->
-		<point x="85505" y="146208" z="-3399" /> <!-- Grocer -->
-		<point x="81360" y="150016" z="-3528" /> <!-- Mammon -->
+		<point x="83485" y="147998" z="-3407"/> <!-- Gatekeeper -->
+		<point x="83192" y="146680" z="-3464"/> <!-- Warehouse -->
+		<point x="82651" y="146714" z="-3466"/> <!-- Dimensional Merchants -->
+		<point x="85055" y="146560" z="-3399"/> <!-- Blacksmith / weapon shops -->
+		<point x="85505" y="146208" z="-3399"/> <!-- Grocer -->
+		<point x="81360" y="150016" z="-3528"/> <!-- Mammon -->
 	</profile>
-	<!-- Roams wide at a run: fallback profile for discovered hand-placed fake players. -->
-	<profile name="farmer" type="WANDER" radius="1400" run="true" pauseMin="3" pauseMax="9" />
-	<!-- Hunters: seek the nearest monster in the zone, fight it, then roam to find more. -->
-	<profile name="hunter" type="FARM" run="true" pauseMin="2" pauseMax="6" />
+	<profile name="farmer" type="WANDER" radius="1400" run="true" pauseMin="3" pauseMax="9"/>
+	<profile name="hunter" type="FARM" run="true" pauseMin="2" pauseMax="6"/>
 
-	<!-- ===== GIRAN (~145): mostly idlers clustered on NPCs, the majority at the gatekeeper ===== -->
-	<population name="giran_gatekeeper" count="38" x="83485" y="147998" z="-3407" radius="240" minLevel="1" maxLevel="76" profile="loiter" />
-	<population name="giran_warehouse" count="14" x="83192" y="146680" z="-3464" radius="200" minLevel="1" maxLevel="76" profile="loiter" />
-	<population name="giran_merchants" count="12" x="82651" y="146714" z="-3466" radius="200" minLevel="1" maxLevel="60" profile="loiter" />
-	<population name="giran_blacksmith" count="12" x="85055" y="146560" z="-3399" radius="200" minLevel="15" maxLevel="76" profile="loiter" />
-	<population name="giran_grocer" count="10" x="85505" y="146208" z="-3399" radius="180" minLevel="1" maxLevel="50" profile="loiter" />
-	<population name="giran_mammon" count="10" x="81360" y="150016" z="-3528" radius="180" minLevel="20" maxLevel="76" profile="loiter" />
-	<!-- The minority that move with purpose between the above. -->
-	<population name="giran_movers" count="26" x="83485" y="147998" z="-3407" radius="300" minLevel="15" maxLevel="76" profile="visit_giran" />
-	<!-- A little background milling in the square. -->
-	<population name="giran_crowd" count="22" x="83400" y="147600" z="-3400" radius="900" minLevel="15" maxLevel="50" profile="mill" />
-	<!-- Private-shop market: seated vendors with WTS/WTB store signs (visual stores). -->
-	<population name="giran_market_sell" count="30" x="83400" y="147300" z="-3400" radius="500" minLevel="20" maxLevel="62" profile="loiter" store="SELL" />
-	<population name="giran_market_buy" count="12" x="83400" y="147300" z="-3400" radius="500" minLevel="20" maxLevel="62" profile="loiter" store="BUY" />
-	<population name="giran_gk_vendors" count="10" x="83485" y="147998" z="-3407" radius="260" minLevel="20" maxLevel="62" profile="loiter" store="SELL" />
+	<population name="giran_gatekeeper" x="83384" y="148145" z="-3407" radius="240" count="15" minLevel="1" maxLevel="76" profile="loiter" />
+	<population name="giran_warehouse" x="83192" y="146680" z="-3464" radius="200" count="5" minLevel="1" maxLevel="76" profile="loiter" />
+	<population name="giran_blacksmith" x="85055" y="146560" z="-3399" radius="200" count="3" minLevel="15" maxLevel="76" profile="loiter" />
+	<population name="giran_grocer" x="85467" y="146349" z="-3399" radius="180" count="5" minLevel="1" maxLevel="50" profile="loiter" />
+	<population name="giran_mammon" x="81360" y="150016" z="-3528" radius="180" count="2" minLevel="20" maxLevel="76" profile="loiter" />
+	<population name="giran_movers" x="82718" y="148176" z="-3407" radius="1589" count="10" minLevel="15" maxLevel="76" profile="visit_giran">
+		<point x="83509" y="148065" z="-3407" />
+		<point x="81164" y="147919" z="-3407" />
+		<point x="81145" y="148403" z="-3407" />
+		<point x="82717" y="148384" z="-3407" />
+		<point x="83483" y="148335" z="-3407" />
+		<point x="83502" y="148069" z="-3407" />
+		<point x="83509" y="148058" z="-3407" />
+	</population>
+	<population name="giran_crowd" x="82443" y="148243" z="-3400" radius="400" count="22" minLevel="15" maxLevel="50" profile="mill" />
+	<population name="ti_gatekeeper" x="-83990" y="243336" z="-3700" radius="220" count="3" minLevel="1" maxLevel="18" profile="loiter" race="HUMAN" />
+	<population name="ti_movers" x="-83676" y="243620" z="-3700" radius="2752" count="3" minLevel="1" maxLevel="18" profile="mill" race="HUMAN">
+		<point x="-83569" y="244668" z="-3700" />
+		<point x="-83495" y="244828" z="-3700" />
+		<point x="-83112" y="244839" z="-3700" />
+		<point x="-82861" y="244633" z="-3700" />
+		<point x="-82764" y="244428" z="-3700" />
+		<point x="-82947" y="244280" z="-3700" />
+		<point x="-83010" y="244023" z="-3700" />
+		<point x="-83067" y="243783" z="-3700" />
+		<point x="-83672" y="243623" z="-3700" />
+		<point x="-83854" y="243515" z="-3700" />
+		<point x="-83586" y="242511" z="-3700" />
+		<point x="-83906" y="242385" z="-3700" />
+		<point x="-84334" y="242436" z="-3700" />
+		<point x="-85458" y="241523" z="-3700" />
+		<point x="-85601" y="241780" z="-3700" />
+		<point x="-83575" y="244662" z="-3700" />
+	</population>
+	<population name="elf_gatekeeper" x="46926" y="51511" z="-2976" radius="220" count="3" minLevel="1" maxLevel="20" profile="loiter" race="ELF" />
+	<population name="elf_movers" x="46926" y="51511" z="-2976" radius="450" count="2" minLevel="1" maxLevel="20" profile="mill" race="ELF" />
+	<population name="delf_gatekeeper" x="12501" y="16768" z="-4500" radius="220" count="4" minLevel="1" maxLevel="20" profile="loiter" race="DARK_ELF" />
+	<population name="delf_movers" x="12501" y="16768" z="-4500" radius="450" count="2" minLevel="1" maxLevel="20" profile="mill" race="DARK_ELF" />
+	<population name="dwarf_gatekeeper" x="115072" y="-178176" z="-880" radius="200" count="11" minLevel="1" maxLevel="20" profile="loiter" race="DWARF" />
+	<population name="dwarf_movers" x="115072" y="-178176" z="-880" radius="400" count="2" minLevel="1" maxLevel="20" profile="mill" race="DWARF" />
+	<population name="orc_gatekeeper" x="-44316" y="-113136" z="-80" radius="220" count="3" minLevel="1" maxLevel="20" profile="loiter" race="ORC" />
+	<population name="orc_movers" x="-44316" y="-113136" z="-80" radius="450" count="1" minLevel="1" maxLevel="20" profile="mill" race="ORC" />
+	<population name="gludin_gatekeeper" x="-83520" y="150560" z="-3000" radius="260" count="12" minLevel="1" maxLevel="30" profile="loiter" />
+	<population name="gludin_movers" x="-83520" y="150560" z="-3000" radius="600" count="1" minLevel="1" maxLevel="30" profile="mill" />
+	<population name="gludio_gatekeeper" x="-12764" y="122682" z="-3000" radius="260" count="5" minLevel="5" maxLevel="35" profile="loiter" />
+	<population name="gludio_movers" x="-14252" y="123341" z="-3000" radius="526" count="5" minLevel="5" maxLevel="35" profile="mill">
+		<point x="-13989" y="122947" z="-3000" />
+		<point x="-14564" y="122918" z="-3000" />
+		<point x="-14660" y="123638" z="-3000" />
+		<point x="-14280" y="123846" z="-3000" />
+		<point x="-14033" y="123742" z="-3000" />
+		<point x="-13989" y="122955" z="-3000" />
+	</population>
+	<population name="Giran Sellers" x="82094" y="148147" z="-3000" radius="649" count="150" minLevel="1" maxLevel="40" profile="loiter" store="SELL">
+		<point x="82590" y="147888" z="-3000" />
+		<point x="82583" y="148357" z="-3000" />
+		<point x="81986" y="148402" z="-3000" />
+		<point x="81908" y="148324" z="-3000" />
+		<point x="81468" y="148320" z="-3000" />
+		<point x="81532" y="147858" z="-3000" />
+		<point x="82590" y="147877" z="-3000" />
+	</population>
+	<population name="Giran Buyers" x="81434" y="148096" z="-3000" radius="467" count="100" minLevel="1" maxLevel="40" profile="loiter" store="BUY">
+		<point x="81671" y="147900" z="-3000" />
+		<point x="81599" y="148350" z="-3000" />
+		<point x="81115" y="148437" z="-3000" />
+		<point x="81119" y="147904" z="-3000" />
+		<point x="81667" y="147889" z="-3000" />
+	</population>
+	<population name="Giran Crafters" x="82359" y="148629" z="-3000" radius="305" count="10" minLevel="1" maxLevel="40" profile="loiter" store="CRAFT">
+		<point x="82177" y="148527" z="-3000" />
+		<point x="82612" y="148538" z="-3000" />
+		<point x="82627" y="148774" z="-3000" />
+		<point x="82207" y="148782" z="-3000" />
+		<point x="82173" y="148523" z="-3000" />
+	</population>
+	<population name="Gludio Sellers" x="-14411" y="123749" z="-3000" radius="100" count="5" minLevel="1" maxLevel="40" profile="loiter" store="SELL" />
 
-	<!-- ===== Starting villages: small, race-appropriate, clustered at the gatekeeper ===== -->
-	<!-- Talking Island (Humans) -->
-	<population name="ti_gatekeeper" count="9" x="-83990" y="243336" z="-3700" radius="220" minLevel="1" maxLevel="18" profile="loiter" race="HUMAN" />
-	<population name="ti_movers" count="3" x="-83990" y="243336" z="-3700" radius="450" minLevel="1" maxLevel="18" profile="mill" race="HUMAN" />
-	<!-- Elven Village -->
-	<population name="elf_gatekeeper" count="8" x="46926" y="51511" z="-2976" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="ELF" />
-	<population name="elf_movers" count="2" x="46926" y="51511" z="-2976" radius="450" minLevel="1" maxLevel="20" profile="mill" race="ELF" />
-	<!-- Dark Elven Village -->
-	<population name="delf_gatekeeper" count="8" x="12501" y="16768" z="-4500" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="DARK_ELF" />
-	<population name="delf_movers" count="2" x="12501" y="16768" z="-4500" radius="450" minLevel="1" maxLevel="20" profile="mill" race="DARK_ELF" />
-	<!-- Dwarven Village (anchored on Gatekeeper Wirphy; crowd stays mostly at the gatekeeper) -->
-	<population name="dwarf_gatekeeper" count="11" x="115072" y="-178176" z="-880" radius="200" minLevel="1" maxLevel="20" profile="loiter" race="DWARF" />
-	<population name="dwarf_movers" count="2" x="115072" y="-178176" z="-880" radius="400" minLevel="1" maxLevel="20" profile="mill" race="DWARF" />
-	<!-- Orc Village -->
-	<population name="orc_gatekeeper" count="8" x="-44316" y="-113136" z="-80" radius="220" minLevel="1" maxLevel="20" profile="loiter" race="ORC" />
-	<population name="orc_movers" count="2" x="-44316" y="-113136" z="-80" radius="450" minLevel="1" maxLevel="20" profile="mill" race="ORC" />
-
-	<!-- ===== Gludin & Gludio: mixed-race hubs, a bit larger ===== -->
-	<population name="gludin_gatekeeper" count="12" x="-83520" y="150560" z="-3000" radius="260" minLevel="1" maxLevel="30" profile="loiter" />
-	<population name="gludin_movers" count="5" x="-83520" y="150560" z="-3000" radius="600" minLevel="1" maxLevel="30" profile="mill" />
-	<population name="gludio_gatekeeper" count="14" x="-14288" y="122752" z="-3000" radius="260" minLevel="5" maxLevel="35" profile="loiter" />
-	<population name="gludio_movers" count="5" x="-14288" y="122752" z="-3000" radius="600" minLevel="5" maxLevel="35" profile="mill" />
-
-	<!-- ===== Field / farming zones (hunters seek monsters and roam the zone; respawn keeps them populated)
-	     Coordinates are real zone vertices from the datapack; with geodata loaded the Z snaps to ground.
-	     The wide radius + FARM behavior spreads bots across the zone instead of clustering at one spot.
-	     Level ranges follow each zone so gear fits. -->
-	<!-- Starter areas (lvl 1-12) -->
-	<population name="field_talking_island" count="5" x="-75291" y="251836" z="-3200" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
-	<population name="field_elven" count="5" x="49544" y="40940" z="-3450" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
-	<population name="field_darkelf" count="5" x="28698" y="13261" z="-3150" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
-	<population name="field_orc" count="5" x="-51344" y="-113300" z="-2950" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
-	<population name="field_dwarven" count="5" x="113960" y="-173988" z="-1100" radius="2200" minLevel="2" maxLevel="12" profile="hunter" respawn="true" />
-	<!-- Gludio / Dion (lvl 12-40) -->
-	<population name="field_wasteland" count="8" x="-55720" y="179196" z="-2950" radius="2500" minLevel="12" maxLevel="18" profile="hunter" respawn="true" />
-	<population name="field_plains_of_dion" count="8" x="25435" y="135929" z="-2900" radius="2500" minLevel="20" maxLevel="28" profile="hunter" respawn="true" />
-	<population name="field_execution_grounds" count="7" x="40084" y="144588" z="-2900" radius="2200" minLevel="20" maxLevel="30" profile="hunter" respawn="true" />
-	<population name="field_bee_hive" count="7" x="16408" y="180568" z="-3050" radius="2200" minLevel="22" maxLevel="30" profile="hunter" respawn="true" />
-	<population name="field_tanor_canyon" count="8" x="34507" y="162123" z="-3100" radius="2200" minLevel="30" maxLevel="40" profile="hunter" respawn="true" />
-	<population name="field_cruma_marshlands" count="8" x="9868" y="104802" z="-3531" radius="2200" minLevel="30" maxLevel="40" profile="hunter" respawn="true" />
-	<!-- Giran (lvl 26-62) -->
-	<population name="field_gorgon_garden" count="7" x="116016" y="126984" z="-3331" radius="2200" minLevel="26" maxLevel="36" profile="hunter" respawn="true" />
-	<population name="field_breka_stronghold" count="7" x="78196" y="120284" z="-2300" radius="2200" minLevel="28" maxLevel="38" profile="hunter" respawn="true" />
-	<population name="field_death_pass" count="7" x="65732" y="104240" z="-3500" radius="2200" minLevel="36" maxLevel="44" profile="hunter" respawn="true" />
-	<population name="field_hardins" count="7" x="70780" y="125060" z="-3000" radius="2200" minLevel="38" maxLevel="46" profile="hunter" respawn="true" />
-	<population name="field_dragon_valley" count="8" x="76948" y="116416" z="-3000" radius="2500" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
-	<!-- Oren (lvl 30-55) -->
-	<population name="field_outlaw_forest" count="7" x="89692" y="-19820" z="-3400" radius="2200" minLevel="30" maxLevel="40" profile="hunter" respawn="true" />
-	<population name="field_lizardmen" count="8" x="76384" y="92276" z="-3300" radius="2200" minLevel="40" maxLevel="46" profile="hunter" respawn="true" />
-	<population name="field_skyshadow" count="7" x="77664" y="62308" z="-3100" radius="2200" minLevel="40" maxLevel="48" profile="hunter" respawn="true" />
-	<population name="field_timak" count="7" x="69452" y="36716" z="-3300" radius="2200" minLevel="48" maxLevel="55" profile="hunter" respawn="true" />
-	<!-- Aden (lvl 50-65) -->
-	<population name="field_plains_of_glory" count="8" x="134340" y="120" z="-3500" radius="2500" minLevel="50" maxLevel="58" profile="hunter" respawn="true" />
-	<population name="field_devils_isle" count="7" x="39370" y="196737" z="-3300" radius="2200" minLevel="50" maxLevel="58" profile="hunter" respawn="true" />
-	<population name="field_war_torn_plains" count="7" x="152528" y="152" z="-3300" radius="2500" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
-	<population name="field_cemetery" count="7" x="169328" y="5668" z="-3400" radius="2200" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
-	<population name="field_fields_of_massacre" count="8" x="176140" y="-24540" z="-3000" radius="2500" minLevel="55" maxLevel="62" profile="hunter" respawn="true" />
-	<population name="field_blazing_swamp" count="7" x="143434" y="-25858" z="-4200" radius="2200" minLevel="58" maxLevel="65" profile="hunter" respawn="true" />
-
-	<!-- ===== Per-bot assignments for hand-placed fake players (discovered in the world) ===== -->
-
-	<!-- Fallback profile for any discovered fake player without an explicit assignment. -->
-	<default profile="loiter" />
+	<default profile="loiter"/>
 </list>
