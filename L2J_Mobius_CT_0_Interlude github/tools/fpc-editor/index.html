@@ -152,11 +152,18 @@
 				</div>
 				<label>race (optional)</label>
 				<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
-				<div id="routeRow" class="row" style="margin-top:8px">
-					<button id="routeBtn" class="sec" style="flex:2">✦ Draw route</button>
-					<button id="clearRouteBtn" class="sec" style="flex:1">Clear route</button>
+				<div id="routeRow" style="margin-top:8px">
+					<div class="row">
+						<button id="routeBtn" class="sec" style="flex:2">✦ Draw route</button>
+						<button id="clearRouteBtn" class="sec" style="flex:1">Clear all</button>
+					</div>
+					<div class="row" style="margin-top:6px">
+						<button id="mapLandmarksBtn" class="sec" style="flex:3">⬡ Map to nearby landmarks</button>
+						<button id="addRandomBtn" class="sec" style="flex:2">+ Random point</button>
+					</div>
+					<div id="routeCount" class="muted"></div>
+					<div id="routeWaypointList"></div>
 				</div>
-				<div id="routeCount" class="muted"></div>
 				<div id="behaviorHelp" class="muted"></div>
 				<details class="adv" style="border-top:0;margin-top:0">
 					<summary>Movement timing (advanced)</summary>
@@ -1117,9 +1124,30 @@ function applyBehaviorUi(p){
 	const route = isRouteBehavior(p.behavior);
 	document.getElementById('routeRow').style.display = route ? '' : 'none';
 	document.getElementById('storeRow').style.display = (p.behavior === 'SHOP') ? '' : 'none';
-	const n = (p.route && p.route.length) || 0;
-	document.getElementById('routeCount').textContent = route ? (n + ' waypoint' + (n === 1 ? '' : 's') + ' placed.') : '';
 	document.getElementById('behaviorHelp').textContent = BEHAVIOR_HELP[p.behavior] || '';
+	renderWaypointList(p);
+}
+function renderWaypointList(p){
+	const wrap = document.getElementById('routeWaypointList');
+	wrap.innerHTML = '';
+	if (!p || !isRouteBehavior(p.behavior)){ document.getElementById('routeCount').textContent = ''; return; }
+	const route = p.route || [];
+	const n = route.length;
+	document.getElementById('routeCount').textContent = n + ' waypoint' + (n === 1 ? '' : 's') + ' placed.';
+	route.forEach((w, wi) => {
+		const row = document.createElement('div');
+		row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 12px;font-size:11px;';
+		const lbl = document.createElement('span');
+		lbl.style.cssText = 'flex:1;color:#cfd2da;cursor:pointer;';
+		lbl.textContent = (wi + 1) + '. ' + w.x + ', ' + w.y;
+		lbl.title = 'Click to pan map to this waypoint';
+		lbl.onclick = () => { cam.x = w.x - (cv.width / 2) / cam.scale; cam.y = w.y - (cv.height / 2) / cam.scale; draw(); };
+		const del = document.createElement('button');
+		del.textContent = '✕'; del.title = 'Remove this waypoint';
+		del.style.cssText = 'padding:1px 6px;font-size:11px;background:#b5432f;border:0;border-radius:3px;color:#fff;cursor:pointer;';
+		del.onclick = () => { p.route.splice(wi, 1); renderWaypointList(p); draw(); };
+		row.appendChild(lbl); row.appendChild(del); wrap.appendChild(row);
+	});
 }
 function syncFormClear(){ document.getElementById('form').classList.add('empty'); }
 document.querySelectorAll('#form input, #form select').forEach(el => el.addEventListener('input', () => {
@@ -1155,6 +1183,63 @@ document.getElementById('routeBtn').onclick = () => {
 	setWaypointMode(!waypointMode);
 };
 document.getElementById('clearRouteBtn').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops[selected].route = []; syncForm(); draw(); };
+
+// Map to nearby landmarks: collect all spot coords from every town within LANDMARK_RADIUS world units
+// and append them to the route so the runner visits real NPC locations automatically.
+const LANDMARK_RADIUS = 5000;
+document.getElementById('mapLandmarksBtn').onclick = () => {
+	if (selected < 0) return;
+	const p = pops[selected];
+	if (!isRouteBehavior(p.behavior)){ alert('Set behavior to Runner or Patrol first.'); return; }
+	const anchor = popAnchor(p);
+	const found = [];
+	LANDMARKS.forEach(town => {
+		// Include the town center diamond itself if within range
+		if (Math.hypot(town.x - anchor.x, town.y - anchor.y) < LANDMARK_RADIUS)
+			found.push({ n: town.n, x: town.x, y: town.y });
+		(town.spots || []).forEach(s => {
+			if (Math.hypot(s.x - anchor.x, s.y - anchor.y) < LANDMARK_RADIUS)
+				found.push({ n: s.n, x: s.x, y: s.y });
+		});
+	});
+	if (!found.length){ toast('No landmarks found within ' + LANDMARK_RADIUS + ' units.', true); return; }
+	p.route = p.route || [];
+	found.forEach(f => {
+		// Only add if not already very close to an existing waypoint
+		if (!p.route.some(w => Math.hypot(w.x - f.x, w.y - f.y) < 100))
+			p.route.push({ x: Math.round(f.x), y: Math.round(f.y), z: p.z | 0 });
+	});
+	syncForm(); draw();
+	toast('Added ' + found.length + ' landmark' + (found.length === 1 ? '' : 's') + ' to route.');
+};
+
+// Add random waypoint: drops a random point inside the population's zone/radius so you can
+// supplement a landmark route with extra loitering spots.
+document.getElementById('addRandomBtn').onclick = () => {
+	if (selected < 0) return;
+	const p = pops[selected];
+	if (!isRouteBehavior(p.behavior)){ alert('Set behavior to Runner or Patrol first.'); return; }
+	p.route = p.route || [];
+	const anchor = popAnchor(p);
+	const r = p.radius || 600;
+	// Rejection-sample inside circle (or just use uniform square if poly)
+	let wx, wy;
+	if (p.poly && p.poly.length >= 3){
+		// Random point inside bounding box of poly, rejecting outside
+		const xs = p.poly.map(v => v.x), ys = p.poly.map(v => v.y);
+		const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
+		let tries = 0;
+		do { wx = minX + Math.random() * (maxX - minX); wy = minY + Math.random() * (maxY - minY); tries++; }
+		while (!pointInPoly(wx, wy, p.poly) && tries < 200);
+	} else {
+		const angle = Math.random() * Math.PI * 2;
+		const dist = Math.sqrt(Math.random()) * r; // uniform in circle
+		wx = anchor.x + Math.cos(angle) * dist;
+		wy = anchor.y + Math.sin(angle) * dist;
+	}
+	p.route.push({ x: Math.round(wx), y: Math.round(wy), z: p.z | 0 });
+	syncForm(); draw();
+};
 
 function renderList(){
 	const el = document.getElementById('list'); el.innerHTML = '';
