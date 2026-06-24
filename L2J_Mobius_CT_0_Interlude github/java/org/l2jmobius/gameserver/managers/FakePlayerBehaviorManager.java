@@ -424,6 +424,16 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				{
 					routed.points.addAll(routePoints);
 				}
+				// Route files store only geometry; the per-waypoint delays live on the editor-generated
+				// profile, keyed in the same effective (reversal-applied) order as routed.points. Carry them
+				// over so named/recorded routes honor their delays (manual routes already keep this profile).
+				for (Map.Entry<Integer, Integer> delayEntry : profile.pointDelays.entrySet())
+				{
+					if (delayEntry.getKey() < routed.points.size())
+					{
+						routed.pointDelays.put(delayEntry.getKey(), delayEntry.getValue());
+					}
+				}
 				profile = routed;
 			}
 			else
