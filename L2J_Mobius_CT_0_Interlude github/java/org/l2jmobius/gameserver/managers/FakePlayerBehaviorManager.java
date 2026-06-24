@@ -843,14 +843,33 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				}
 			}
 
-			// Arrived (or recovered): idle for a while before the next goal.
+			// Arrived (or recovered). Decide how long to pause here before the next goal:
+			// - an explicit per-waypoint delay always wins (0 = no stop);
+			// - PATROL otherwise defaults to 0 so guards walk their loop continuously;
+			// - VISIT/WANDER/FARM otherwise use the profile's loiter pause (pauseMin..pauseMax).
 			state.phase = Phase.IDLE;
 			state.moveTarget = null;
 			state.moveAttempts = 0;
-			final long pauseMs = (state.pendingArrivalDelay >= 0) ? (state.pendingArrivalDelay * 1000L) : (Rnd.get(state.profile.pauseMin, state.profile.pauseMax) * 1000L);
+			final long pauseMs;
+			if (state.pendingArrivalDelay >= 0)
+			{
+				pauseMs = state.pendingArrivalDelay * 1000L;
+			}
+			else if (state.profile.type == ProfileType.PATROL)
+			{
+				pauseMs = 0L;
+			}
+			else
+			{
+				pauseMs = Rnd.get(state.profile.pauseMin, state.profile.pauseMax) * 1000L;
+			}
 			state.pendingArrivalDelay = -1;
 			state.nextActionTime = now + pauseMs;
-			return;
+			if (pauseMs > 0)
+			{
+				return;
+			}
+			// No pause: fall through and pick the next waypoint this same tick for seamless movement.
 		}
 
 		// IDLE: wait out the pause, then pick the next destination.
