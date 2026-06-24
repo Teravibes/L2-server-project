@@ -199,6 +199,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		Race race; // optional dominant race for this group (e.g. a Dwarven village)
 		boolean respawn; // field bots die; respawn a fresh replacement to keep the zone populated
 		String storeType; // null, or SELL / BUY / PACKAGE / CRAFT -> seated private-store vendors
+		boolean fullStock; // market hub (e.g. Giran): vendors ignore the level cap and stock every grade
 		final List<Location> polygon = new ArrayList<>(); // optional area; bots spawn inside it instead of a circle
 	}
 
@@ -291,6 +292,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				population.maxLevel = set.getInt("maxLevel", 60);
 				population.respawn = set.getBoolean("respawn", false);
 				population.storeType = set.contains("store") ? set.getString("store") : null;
+				population.fullStock = set.getBoolean("fullStock", false);
 				population.profileName = set.getString("profile", _defaultProfile);
 				population.routeName = set.contains("route") ? set.getString("route") : null;
 			population.routeReversed = set.getBoolean("reversed", false);
@@ -484,10 +486,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				{
 					final String kind = population.storeType.toUpperCase();
 					final int level = look.getLevel();
+					// A market-hub shop (e.g. Giran) ignores the level cap and stocks every grade; elsewhere
+					// the population's level range gates the tier, so towns sell region-appropriate goods.
+					final boolean fullStock = population.fullStock;
 					if (kind.equals("CRAFT") || kind.equals("MANUFACTURE"))
 					{
 						// A real manufacture store: offers recipes; the customer brings the materials.
-						final List<FakePlayerCraftItem> recipes = FakePlayerStoreFactory.generateCraftRecipes(level);
+						final List<FakePlayerCraftItem> recipes = FakePlayerStoreFactory.generateCraftRecipes(level, fullStock);
 						look.setCraftItems(recipes);
 						look.setStore(PrivateStoreType.MANUFACTURE.getId(), FakePlayerStoreFactory.craftTitle(recipes));
 					}
@@ -497,12 +502,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 						final int storeId;
 						if (kind.equals("BUY"))
 						{
-							stock = FakePlayerStoreFactory.generateBuy(level);
+							stock = FakePlayerStoreFactory.generateBuy(level, fullStock);
 							storeId = PrivateStoreType.BUY.getId();
 						}
 						else
 						{
-							stock = FakePlayerStoreFactory.generateSell(level);
+							stock = FakePlayerStoreFactory.generateSell(level, fullStock);
 							storeId = kind.equals("PACKAGE") ? PrivateStoreType.PACKAGE_SELL.getId() : PrivateStoreType.SELL.getId();
 						}
 						look.setStoreItems(stock);

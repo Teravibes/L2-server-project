@@ -66,7 +66,7 @@
 		<point x="-14033" y="123742" z="-3000" />
 		<point x="-13989" y="122955" z="-3000" />
 	</population>
-	<population name="Giran Sellers" x="82094" y="148147" z="-3000" radius="649" count="150" minLevel="1" maxLevel="40" profile="loiter" store="SELL">
+	<population name="Giran Sellers" x="82094" y="148147" z="-3000" radius="649" count="150" minLevel="1" maxLevel="40" profile="loiter" store="SELL" fullStock="true">
 		<point x="82590" y="147888" z="-3000" />
 		<point x="82583" y="148357" z="-3000" />
 		<point x="81986" y="148402" z="-3000" />
@@ -75,14 +75,14 @@
 		<point x="81532" y="147858" z="-3000" />
 		<point x="82590" y="147877" z="-3000" />
 	</population>
-	<population name="Giran Buyers" x="81434" y="148096" z="-3000" radius="467" count="100" minLevel="1" maxLevel="40" profile="loiter" store="BUY">
+	<population name="Giran Buyers" x="81434" y="148096" z="-3000" radius="467" count="100" minLevel="1" maxLevel="40" profile="loiter" store="BUY" fullStock="true">
 		<point x="81671" y="147900" z="-3000" />
 		<point x="81599" y="148350" z="-3000" />
 		<point x="81115" y="148437" z="-3000" />
 		<point x="81119" y="147904" z="-3000" />
 		<point x="81667" y="147889" z="-3000" />
 	</population>
-	<population name="Giran Crafters" x="82359" y="148629" z="-3000" radius="305" count="10" minLevel="1" maxLevel="40" profile="loiter" store="CRAFT">
+	<population name="Giran Crafters" x="82359" y="148629" z="-3000" radius="305" count="10" minLevel="1" maxLevel="40" profile="loiter" store="CRAFT" fullStock="true">
 		<point x="82177" y="148527" z="-3000" />
 		<point x="82612" y="148538" z="-3000" />
 		<point x="82627" y="148774" z="-3000" />

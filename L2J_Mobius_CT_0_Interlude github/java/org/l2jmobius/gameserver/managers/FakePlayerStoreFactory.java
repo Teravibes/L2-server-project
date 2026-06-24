@@ -87,7 +87,7 @@ public class FakePlayerStoreFactory
 
 	private static volatile boolean _built = false;
 	private static final EnumMap<CrystalType, List<ItemTemplate>> EQUIP = new EnumMap<>(CrystalType.class);
-	private static final List<ItemTemplate> BULK = new ArrayList<>();
+	private static final EnumMap<CrystalType, List<ItemTemplate>> BULK = new EnumMap<>(CrystalType.class);
 	private static final EnumMap<CrystalType, List<RecipeList>> RECIPES = new EnumMap<>(CrystalType.class);
 
 	private FakePlayerStoreFactory()
@@ -113,6 +113,7 @@ public class FakePlayerStoreFactory
 			for (CrystalType grade : CrystalType.values())
 			{
 				EQUIP.put(grade, new ArrayList<>());
+				BULK.put(grade, new ArrayList<>());
 				RECIPES.put(grade, new ArrayList<>());
 			}
 			for (ItemTemplate item : ItemData.getInstance().getAllItems())
@@ -145,7 +146,9 @@ public class FakePlayerStoreFactory
 				}
 				else if (item.isStackable() && isBulkType(item))
 				{
-					BULK.add(item);
+					// Bucket consumables by their crystal grade too (soulshots/spiritshots carry crystal_type
+					// D..S; gradeless mats fall into NONE and stay available to every town).
+					BULK.get(item.getCrystalType()).add(item);
 				}
 			}
 			// Recipes are bucketed by the grade of the item they produce, so crafters honour the same
@@ -228,9 +231,14 @@ public class FakePlayerStoreFactory
 	 * Picks one equipment item: a weighted grade roll (capped by level) then a random item of that
 	 * grade, stepping down to a lower grade if the rolled bucket happens to be empty.
 	 */
-	private static ItemTemplate pickEquip(int level)
+	/**
+	 * Picks one item from grade-bucketed pools: a weighted grade roll capped at {@code maxOrdinal}, then a
+	 * random item of that grade, stepping down to a lower grade if the rolled bucket happens to be empty.
+	 * @param buckets the grade-keyed pool (equipment or consumables)
+	 * @param maxOrdinal the highest {@link CrystalType} ordinal allowed (the vendor's grade cap)
+	 */
+	private static ItemTemplate pickGraded(EnumMap<CrystalType, List<ItemTemplate>> buckets, int maxOrdinal)
 	{
-		final int maxOrdinal = maxGrade(level).ordinal();
 		int total = 0;
 		for (int i = 0; i <= maxOrdinal; i++)
 		{
@@ -255,7 +263,7 @@ public class FakePlayerStoreFactory
 			}
 			for (int i = chosen; i >= 0; i--)
 			{
-				final List<ItemTemplate> bucket = EQUIP.get(CrystalType.values()[i]);
+				final List<ItemTemplate> bucket = buckets.get(CrystalType.values()[i]);
 				if (!bucket.isEmpty())
 				{
 					return bucket.get(Rnd.get(bucket.size()));
@@ -265,9 +273,21 @@ public class FakePlayerStoreFactory
 		return null;
 	}
 
-	private static ItemTemplate pickBulk()
+	private static ItemTemplate pickEquip(int maxOrdinal)
 	{
-		return BULK.isEmpty() ? null : BULK.get(Rnd.get(BULK.size()));
+		return pickGraded(EQUIP, maxOrdinal);
+	}
+
+	/** Consumables are now grade-gated like equipment, so a low-level town surfaces its own tier of shots. */
+	private static ItemTemplate pickBulk(int maxOrdinal)
+	{
+		return pickGraded(BULK, maxOrdinal);
+	}
+
+	/** The grade cap a vendor surfaces: full range for a market hub, else gated by its level. */
+	private static int gradeCap(int level, boolean fullStock)
+	{
+		return fullStock ? (CrystalType.values().length - 1) : maxGrade(level).ordinal();
 	}
 
 	/**
@@ -458,16 +478,17 @@ public class FakePlayerStoreFactory
 	 * @param level the vendor's level (gates equipment grade)
 	 * @return the generated stock (may be empty if the catalog is unavailable)
 	 */
-	public static List<FakePlayerStoreItem> generateSell(int level)
+	public static List<FakePlayerStoreItem> generateSell(int level, boolean fullStock)
 	{
 		build();
+		final int cap = gradeCap(level, fullStock);
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final Set<Integer> seen = new HashSet<>();
 		final int lines = Rnd.get(2, 5);
 		for (int i = 0; i < lines; i++)
 		{
 			final boolean bulk = Rnd.get(100) < 55;
-			final ItemTemplate item = bulk ? pickBulk() : pickEquip(level);
+			final ItemTemplate item = bulk ? pickBulk(cap) : pickEquip(cap);
 			if ((item == null) || !seen.add(item.getId()))
 			{
 				continue;
@@ -485,9 +506,10 @@ public class FakePlayerStoreFactory
 	 * @param level the vendor's level (gates equipment grade)
 	 * @return the generated demand list
 	 */
-	public static List<FakePlayerStoreItem> generateBuy(int level)
+	public static List<FakePlayerStoreItem> generateBuy(int level, boolean fullStock)
 	{
 		build();
+		final int cap = gradeCap(level, fullStock);
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final Set<Integer> seen = new HashSet<>();
 		final int lines = Rnd.get(1, 3);
@@ -495,7 +517,7 @@ public class FakePlayerStoreFactory
 		{
 			// Buy stores lean toward bulk goods (mats/shots) with a minority wanting a piece of gear.
 			final boolean bulk = Rnd.get(100) < 70;
-			final ItemTemplate item = bulk ? pickBulk() : pickEquip(level);
+			final ItemTemplate item = bulk ? pickBulk(cap) : pickEquip(cap);
 			if ((item == null) || !seen.add(item.getId()))
 			{
 				continue;
@@ -507,10 +529,9 @@ public class FakePlayerStoreFactory
 		return stock;
 	}
 
-	/** Picks one recipe by the same weighted grade roll (capped by level) used for equipment. */
-	private static RecipeList pickRecipe(int level)
+	/** Picks one recipe by the same weighted grade roll (capped at {@code maxOrdinal}) used for equipment. */
+	private static RecipeList pickRecipe(int maxOrdinal)
 	{
-		final int maxOrdinal = maxGrade(level).ordinal();
 		int total = 0;
 		for (int i = 0; i <= maxOrdinal; i++)
 		{
@@ -551,15 +572,16 @@ public class FakePlayerStoreFactory
 	 * @param level the crafter's level (gates the grade of what it can make)
 	 * @return the offered recipes (may be empty if no recipe data is available)
 	 */
-	public static List<FakePlayerCraftItem> generateCraftRecipes(int level)
+	public static List<FakePlayerCraftItem> generateCraftRecipes(int level, boolean fullStock)
 	{
 		build();
+		final int cap = gradeCap(level, fullStock);
 		final List<FakePlayerCraftItem> recipes = new ArrayList<>();
 		final Set<Integer> seen = new HashSet<>();
 		final int lines = Rnd.get(2, 5);
 		for (int i = 0; i < lines; i++)
 		{
-			final RecipeList recipe = pickRecipe(level);
+			final RecipeList recipe = pickRecipe(cap);
 			if ((recipe == null) || !seen.add(recipe.getId()))
 			{
 				continue;

@@ -57,6 +57,9 @@
 						<xs:attribute type="xs:string" name="race" use="optional" />
 						<xs:attribute type="xs:boolean" name="respawn" use="optional" />
 						<xs:attribute type="xs:string" name="store" use="optional" />
+						<xs:attribute type="xs:boolean" name="fullStock" use="optional" />
+						<xs:attribute type="xs:string" name="route" use="optional" />
+						<xs:attribute type="xs:boolean" name="reversed" use="optional" />
 					</xs:complexType>
 				</xs:element>
 			</xs:choice>

@@ -164,6 +164,7 @@
 				<div id="storeRow">
 					<label>store type</label>
 					<select id="f_store"><option>SELL</option><option>BUY</option><option>CRAFT</option><option>PACKAGE</option></select>
+					<label style="margin-top:6px"><input id="f_fullStock" type="checkbox" style="width:auto;margin-right:6px" />market hub — stock every grade (ignore level)</label>
 				</div>
 				<label>race (optional)</label>
 				<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
@@ -1164,7 +1165,7 @@ function defaultPop(x, y){
 	if (mode === 'phantom') return { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, poly: [] };
 	const d = BEHAVIOR_DEFAULTS.IDLE;
 	return { name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40,
-		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], routeName: null, race: '', store: '', respawn: false, poly: [], waypointDelays: {}, routeReversed: false };
+		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], routeName: null, race: '', store: '', respawn: false, poly: [], waypointDelays: {}, routeReversed: false, fullStock: false };
 }
 function addPop(x, y){
 	pops.push(defaultPop(x, y));
@@ -1184,6 +1185,7 @@ function syncForm(){
 	rebuildRouteDropdown();
 	document.getElementById('f_routeName').value = p.routeName || '';
 	document.getElementById('f_store').value = p.store || 'SELL';
+	document.getElementById('f_fullStock').checked = !!p.fullStock;
 	document.getElementById('f_run').value = p.run ? 'true' : 'false';
 	document.getElementById('f_pauseMin').value = p.pauseMin ?? 25;
 	document.getElementById('f_pauseMax').value = p.pauseMax ?? 80;
@@ -1303,6 +1305,7 @@ document.querySelectorAll('#form input, #form select').forEach(el => el.addEvent
 	const p = pops[selected]; if (!p) return;
 	const id = el.id.slice(2);
 	if (id === 'respawn') p.respawn = el.checked;
+	else if (id === 'fullStock') p.fullStock = el.checked;
 	else if (id === 'behavior'){
 		p.behavior = el.value;
 		if (p.behavior === 'SHOP' && !p.store) p.store = 'SELL';
@@ -1432,7 +1435,8 @@ function parseXml(text){
 				route:    (prof && isRouteBehavior(behavior)) ? prof.waypoints.map(w => ({ x: w.x, y: w.y, z: w.z })) : [],
 				routeName: g('route') || null,
 				race: g('race') || '', store, respawn: g('respawn') === 'true', poly,
-				waypointDelays, routeReversed: g('reversed') === 'true'
+				waypointDelays, routeReversed: g('reversed') === 'true',
+				fullStock: g('fullStock') === 'true'
 			});
 		}
 	}
@@ -1540,6 +1544,7 @@ function buildXml(){
 		if (p.routeReversed) a += ` reversed="true"`;
 		if (p.race) a += ` race="${esc(p.race)}"`;
 		if (p.store) a += ` store="${esc(p.store)}"`;
+		if (p.store && p.fullStock) a += ` fullStock="true"`;
 		if (p.respawn) a += ` respawn="true"`;
 		if (hasPoly){
 			out += `\t<population ${a}>\n`;
