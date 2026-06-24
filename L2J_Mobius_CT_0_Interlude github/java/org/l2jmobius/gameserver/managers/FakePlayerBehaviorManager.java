@@ -184,6 +184,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		int maxLevel = 60;
 		String profileName;
 		String routeName; // optional: name of a route from data/routes/ to use instead of inline points
+		boolean routeReversed; // traverse the named route in reverse order
 		Race race; // optional dominant race for this group (e.g. a Dwarven village)
 		boolean respawn; // field bots die; respawn a fresh replacement to keep the zone populated
 		String storeType; // null, or SELL / BUY / PACKAGE / CRAFT -> seated private-store vendors
@@ -281,6 +282,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				population.storeType = set.contains("store") ? set.getString("store") : null;
 				population.profileName = set.getString("profile", _defaultProfile);
 				population.routeName = set.contains("route") ? set.getString("route") : null;
+			population.routeReversed = set.getBoolean("reversed", false);
 				forEach(populationNode, "point", pointNode ->
 				{
 					final StatSet p = new StatSet(parseAttributes(pointNode));
@@ -404,7 +406,16 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				routed.run = profile.run;
 				routed.pauseMin = profile.pauseMin;
 				routed.pauseMax = profile.pauseMax;
-				routed.points.addAll(routePoints);
+				if (population.routeReversed)
+				{
+					final List<Location> reversed = new ArrayList<>(routePoints);
+					java.util.Collections.reverse(reversed);
+					routed.points.addAll(reversed);
+				}
+				else
+				{
+					routed.points.addAll(routePoints);
+				}
 				profile = routed;
 			}
 			else

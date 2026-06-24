@@ -1432,7 +1432,7 @@ function parseXml(text){
 				route:    (prof && isRouteBehavior(behavior)) ? prof.waypoints.map(w => ({ x: w.x, y: w.y, z: w.z })) : [],
 				routeName: g('route') || null,
 				race: g('race') || '', store, respawn: g('respawn') === 'true', poly,
-				waypointDelays, routeReversed: false
+				waypointDelays, routeReversed: g('reversed') === 'true'
 			});
 		}
 	}
@@ -1537,6 +1537,7 @@ function buildXml(){
 		let a = `name="${esc(p.name)}" x="${ax}" y="${ay}" z="${p.z}" radius="${ar}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
 		a += ` profile="${esc(p._profName)}"`;
 		if (p.routeName) a += ` route="${esc(p.routeName)}"`;
+		if (p.routeReversed) a += ` reversed="true"`;
 		if (p.race) a += ` race="${esc(p.race)}"`;
 		if (p.store) a += ` store="${esc(p.store)}"`;
 		if (p.respawn) a += ` respawn="true"`;
