@@ -349,6 +349,9 @@
 
 	<!-- ADMIN FAKE PLAYERS -->
 	<admin command="fakechat" description="Send a fake chat message appearing to come from a fake player." accessLevel="100" />
+	<admin command="record_route" description="Start recording a bot movement route. Usage: //record_route &lt;name&gt;" accessLevel="100" />
+	<admin command="stop_route" description="Stop recording and save the current route to data/routes/." accessLevel="100" />
+	<admin command="list_routes" description="List all saved bot movement routes." accessLevel="100" />
 
 	<!-- ADMIN ONLINE -->
 	<admin command="online" description="Display a list of all currently online players." accessLevel="100" />

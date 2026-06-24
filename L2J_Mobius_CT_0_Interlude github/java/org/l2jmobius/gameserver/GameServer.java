@@ -87,6 +87,7 @@ import org.l2jmobius.gameserver.data.xml.LevelUpCrystalData;
 import org.l2jmobius.gameserver.data.xml.MapRegionData;
 import org.l2jmobius.gameserver.data.xml.MultisellData;
 import org.l2jmobius.gameserver.data.xml.NpcData;
+import org.l2jmobius.gameserver.data.xml.RouteData;
 import org.l2jmobius.gameserver.data.xml.NpcNameLocalisationData;
 import org.l2jmobius.gameserver.data.xml.OptionData;
 import org.l2jmobius.gameserver.data.xml.PetDataTable;
@@ -289,6 +290,7 @@ public class GameServer
 		LevelUpCrystalData.getInstance();
 		FakePlayerChatManager.getInstance();
 		WalkingManager.getInstance();
+		RouteData.getInstance();
 		FakePlayerBehaviorManager.getInstance();
 		PhantomManager.getInstance();
 		StaticObjectData.getInstance();

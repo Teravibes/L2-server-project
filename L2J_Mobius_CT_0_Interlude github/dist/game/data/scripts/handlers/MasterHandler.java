@@ -188,6 +188,7 @@ import handlers.chat.commands.admin.AdminTargetSay;
 import handlers.chat.commands.admin.AdminTeleport;
 import handlers.chat.commands.admin.AdminTest;
 import handlers.chat.commands.admin.AdminVitality;
+import handlers.chat.commands.admin.AdminFpcRoute;
 import handlers.chat.commands.admin.AdminZone;
 import handlers.chat.commands.admin.AdminZoneBuild;
 import handlers.chat.commands.user.ChannelDelete;
@@ -404,6 +405,7 @@ public class MasterHandler
 			AdminTest.class,
 			AdminVitality.class,
 			AdminZone.class,
+			AdminFpcRoute.class,
 			AdminZoneBuild.class,
 		},
 		{

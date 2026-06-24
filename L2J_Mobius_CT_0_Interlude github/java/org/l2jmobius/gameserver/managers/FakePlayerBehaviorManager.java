@@ -36,6 +36,7 @@ import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.data.xml.FakePlayerData;
+import org.l2jmobius.gameserver.data.xml.RouteData;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.geoengine.pathfinding.GeoLocation;
 import org.l2jmobius.gameserver.geoengine.pathfinding.PathFinding;
@@ -180,6 +181,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		int minLevel = 1;
 		int maxLevel = 60;
 		String profileName;
+		String routeName; // optional: name of a route from data/routes/ to use instead of inline points
 		Race race; // optional dominant race for this group (e.g. a Dwarven village)
 		boolean respawn; // field bots die; respawn a fresh replacement to keep the zone populated
 		String storeType; // null, or SELL / BUY / PACKAGE / CRAFT -> seated private-store vendors
@@ -271,6 +273,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				population.respawn = set.getBoolean("respawn", false);
 				population.storeType = set.contains("store") ? set.getString("store") : null;
 				population.profileName = set.getString("profile", _defaultProfile);
+				population.routeName = set.contains("route") ? set.getString("route") : null;
 				forEach(populationNode, "point", pointNode ->
 				{
 					final StatSet p = new StatSet(parseAttributes(pointNode));
@@ -379,7 +382,29 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	 */
 	private boolean deployOne(Population population)
 	{
-		final Profile profile = population.profileName == null ? null : _profiles.get(population.profileName);
+		Profile profile = population.profileName == null ? null : _profiles.get(population.profileName);
+		// If the population references a named route, create a per-population profile copy with those
+		// waypoints injected so bots follow the recorded path.
+		if ((population.routeName != null) && (profile != null))
+		{
+			final List<Location> routePoints = RouteData.getInstance().getRoute(population.routeName);
+			if (routePoints != null && !routePoints.isEmpty())
+			{
+				final Profile routed = new Profile();
+				routed.name = profile.name;
+				routed.type = profile.type == ProfileType.WANDER ? ProfileType.VISIT : profile.type;
+				routed.radius = profile.radius;
+				routed.run = profile.run;
+				routed.pauseMin = profile.pauseMin;
+				routed.pauseMax = profile.pauseMax;
+				routed.points.addAll(routePoints);
+				profile = routed;
+			}
+			else
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Population '" + population.name + "' references unknown route '" + population.routeName + "'.");
+			}
+		}
 		try
 		{
 			final int x;

@@ -153,6 +153,11 @@
 				<label>race (optional)</label>
 				<select id="f_race"><option value=""></option><option>HUMAN</option><option>ELF</option><option>DARK_ELF</option><option>ORC</option><option>DWARF</option></select>
 				<div id="routeRow" style="margin-top:8px">
+					<div class="row" style="margin-bottom:4px">
+						<label style="margin:0;line-height:28px;min-width:50px">Route</label>
+						<select id="f_routeName" style="flex:1;font-size:12px"><option value="">— manual waypoints —</option></select>
+						<button id="reloadRoutesBtn" class="sec" style="padding:0 8px;font-size:11px" title="Rescan routes folder">↺</button>
+					</div>
 					<div class="row">
 						<button id="routeBtn" class="sec" style="flex:2">✦ Draw route</button>
 						<button id="clearRouteBtn" class="sec" style="flex:1">Clear all</button>
@@ -222,6 +227,8 @@ let pops = [];            // editable population objects (the ACTIVE mode's list
 let preserved = { assigns: [], def: null }; // assign/default entries kept verbatim
 let selected = -1;
 let waypointMode = false;  // placing route waypoints for the selected population
+// Named routes loaded from data/routes/*.xml — keyed by route name, value = [{x,y,z}]
+let loadedRoutes = {};
 
 // ---- mode: NPC fake players vs real-Player phantoms ----
 let mode = 'npc';
@@ -580,6 +587,38 @@ async function collectHandles(dirHandle, prefix = '', out = []){
 }
 async function entryFile(e){ return e.file || (e.file = await e.handle.getFile()); }
 
+async function loadRoutes(entries){
+	loadedRoutes = {};
+	const routeFiles = entries.filter(e => /^routes\/[^/]+\.xml$/i.test(e.path));
+	for (const e of routeFiles){
+		try {
+			const text = await (await entryFile(e)).text();
+			const doc = new DOMParser().parseFromString(text, 'application/xml');
+			const routeEl = doc.querySelector('route');
+			if (!routeEl) continue;
+			const name = routeEl.getAttribute('name') || e.name.replace(/\.xml$/i, '');
+			const points = [...routeEl.querySelectorAll('point')].map(p => ({
+				x: +p.getAttribute('x'), y: +p.getAttribute('y'), z: +p.getAttribute('z')
+			}));
+			if (points.length) loadedRoutes[name] = points;
+		} catch(_){}
+	}
+	rebuildRouteDropdown();
+}
+
+function rebuildRouteDropdown(){
+	const sel = document.getElementById('f_routeName');
+	if (!sel) return;
+	const cur = sel.value;
+	sel.innerHTML = '<option value="">— manual waypoints —</option>';
+	Object.keys(loadedRoutes).sort().forEach(name => {
+		const opt = document.createElement('option');
+		opt.value = name; opt.textContent = name + ' (' + loadedRoutes[name].length + ' pts)';
+		sel.appendChild(opt);
+	});
+	sel.value = cur;
+}
+
 async function loadWorkspace(entries, label){
 	mapImages = [];
 	selectedImage = -1;
@@ -588,6 +627,7 @@ async function loadWorkspace(entries, label){
 	stores.npc = { pops: [], preserved: { assigns: [], def: null }, fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false };
 	stores.phantom = { pops: [], preserved: { assigns: [], def: null }, fileName: 'PhantomPopulations.xml', handle: null, loaded: false };
 	activate('npc'); applyModeUi();
+	await loadRoutes(entries);
 	const geo = entries.filter(e => /(\d+)_(\d+)\.l2j$/i.test(e.name));
 	const phantomE = entries.find(e => e.name.toLowerCase() === 'phantompopulations.xml');
 	let xmlE = entries.find(e => e.name.toLowerCase() === 'fakeplayerbehavior.xml');
@@ -746,10 +786,11 @@ function draw(){
 	// ---- population routes (RUNNER / PATROL waypoints) ----
 	if (mode === 'npc'){
 		pops.forEach((p, pi) => {
-			if (p.visible === false || !isRouteBehavior(p.behavior) || !p.route || !p.route.length) return;
+			if (p.visible === false || !isRouteBehavior(p.behavior)) return;
 			const isSel = pi === selected;
 			const col = isSel ? '#ff9944' : '#c06ee0';
-			const wpts = p.route;
+			const wpts = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : (p.route || []);
+			if (!wpts.length) return;
 			const anchor = popAnchor(p);
 			const [ax, ay] = w2s(anchor.x, anchor.y);
 			// spawn -> route connectors plus the route chain (dashed)
@@ -1096,7 +1137,7 @@ function defaultPop(x, y){
 	if (mode === 'phantom') return { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, poly: [] };
 	const d = BEHAVIOR_DEFAULTS.IDLE;
 	return { name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40,
-		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], race: '', store: '', respawn: false, poly: [] };
+		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], routeName: null, race: '', store: '', respawn: false, poly: [] };
 }
 function addPop(x, y){
 	pops.push(defaultPop(x, y));
@@ -1113,6 +1154,8 @@ function syncForm(){
 	if (mode === 'phantom') return;
 	document.getElementById('f_behavior').value = p.behavior || 'IDLE';
 	document.getElementById('f_race').value = p.race || '';
+	rebuildRouteDropdown();
+	document.getElementById('f_routeName').value = p.routeName || '';
 	document.getElementById('f_store').value = p.store || 'SELL';
 	document.getElementById('f_run').value = p.run ? 'true' : 'false';
 	document.getElementById('f_pauseMin').value = p.pauseMin ?? 25;
@@ -1131,6 +1174,18 @@ function renderWaypointList(p){
 	const wrap = document.getElementById('routeWaypointList');
 	wrap.innerHTML = '';
 	if (!p || !isRouteBehavior(p.behavior)){ document.getElementById('routeCount').textContent = ''; return; }
+	// Named route selected: show its points as read-only preview.
+	if (p.routeName && loadedRoutes[p.routeName]){
+		const pts = loadedRoutes[p.routeName];
+		document.getElementById('routeCount').textContent = 'Named route "' + p.routeName + '": ' + pts.length + ' waypoints (read-only — edit in routes/ folder).';
+		pts.forEach((w, wi) => {
+			const row = document.createElement('div');
+			row.style.cssText = 'padding:2px 12px;font-size:11px;color:#8ab4c2;';
+			row.textContent = (wi + 1) + '. ' + w.x + ', ' + w.y;
+			wrap.appendChild(row);
+		});
+		return;
+	}
 	const route = p.route || [];
 	const n = route.length;
 	document.getElementById('routeCount').textContent = n + ' waypoint' + (n === 1 ? '' : 's') + ' placed.';
@@ -1164,6 +1219,13 @@ document.querySelectorAll('#form input, #form select').forEach(el => el.addEvent
 		if (waypointMode && !isRouteBehavior(p.behavior)) setWaypointMode(false);
 		syncForm();
 	}
+	else if (id === 'routeName'){
+		p.routeName = el.value || null;
+		// When a named route is selected, preview its waypoints in the list (read-only).
+		renderWaypointList(p);
+		draw();
+		return;
+	}
 	else if (id === 'run') p.run = el.value === 'true';
 	else if (['x','y','z','radius','count','minLevel','maxLevel','pauseMin','pauseMax'].includes(id)) p[id] = +el.value;
 	else p[id] = el.value;
@@ -1182,7 +1244,13 @@ document.getElementById('routeBtn').onclick = () => {
 	p.route = p.route || [];
 	setWaypointMode(!waypointMode);
 };
-document.getElementById('clearRouteBtn').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops[selected].route = []; syncForm(); draw(); };
+document.getElementById('clearRouteBtn').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops[selected].route = []; pops[selected].routeName = null; syncForm(); draw(); };
+document.getElementById('reloadRoutesBtn').onclick = async () => {
+	if (!rememberedHandle){ alert('Open a data folder first.'); return; }
+	await loadRoutes(await collectHandles(rememberedHandle));
+	const p = pops[selected]; if (p) syncForm();
+	alert('Routes reloaded: ' + Object.keys(loadedRoutes).length + ' found.');
+};
 
 // Map to nearby landmarks: collect all spot coords from every town within LANDMARK_RADIUS world units
 // and append them to the route so the runner visits real NPC locations automatically.
@@ -1306,6 +1374,7 @@ function parseXml(text){
 				pauseMin: prof ? prof.pauseMin : d.pauseMin,
 				pauseMax: prof ? prof.pauseMax : d.pauseMax,
 				route:    (prof && isRouteBehavior(behavior)) ? prof.waypoints.map(w => ({ ...w })) : [],
+				routeName: g('route') || null,
 				race: g('race') || '', store, respawn: g('respawn') === 'true', poly
 			});
 		}
@@ -1380,9 +1449,11 @@ function buildXml(){
 			if (roam != null) a += ` radius="${roam}"`;
 		}
 		a += ` run="${run}" pauseMin="${pMin}" pauseMax="${pMax}"`;
-		if (route && p.route && p.route.length){
+		// Resolve waypoints: named route takes precedence over manually drawn ones.
+		const wpts = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : (p.route || []);
+		if (route && wpts.length){
 			let b = `\t<profile ${a}>\n`;
-			p.route.forEach(w => b += `\t\t<point x="${w.x}" y="${w.y}" z="${w.z != null ? w.z : (p.z | 0)}"/>\n`);
+			wpts.forEach(w => b += `\t\t<point x="${w.x}" y="${w.y}" z="${w.z != null ? w.z : (p.z | 0)}"/>\n`);
 			b += `\t</profile>\n`;
 			profileBlocks.push(b);
 		} else {
@@ -1404,6 +1475,7 @@ function buildXml(){
 		if (hasPoly){ const c = polyCentroid(p.poly); ax = c.x; ay = c.y; ar = polyRadius(p.poly, c); }
 		let a = `name="${esc(p.name)}" x="${ax}" y="${ay}" z="${p.z}" radius="${ar}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
 		a += ` profile="${esc(p._profName)}"`;
+		if (p.routeName) a += ` route="${esc(p.routeName)}"`;
 		if (p.race) a += ` race="${esc(p.race)}"`;
 		if (p.store) a += ` store="${esc(p.store)}"`;
 		if (p.respawn) a += ` respawn="true"`;

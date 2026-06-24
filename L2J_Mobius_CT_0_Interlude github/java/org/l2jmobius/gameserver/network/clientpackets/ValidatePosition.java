@@ -28,6 +28,8 @@ import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.zone.ZoneId;
 import org.l2jmobius.gameserver.network.serverpackets.ValidateLocation;
 
+import handlers.chat.commands.admin.AdminFpcRoute;
+
 public class ValidatePosition extends ClientPacket
 {
 	private int _x;
@@ -133,6 +135,11 @@ public class ValidatePosition extends ClientPacket
 		if (!DoorData.getInstance().checkIfDoorsBetween(realX, realY, realZ, _x, _y, _z, player.getInstanceId(), false))
 		{
 			player.setLastServerPosition(realX, realY, realZ);
+		}
+
+		if (player.isGM())
+		{
+			AdminFpcRoute.onPlayerMoved(player);
 		}
 	}
 }
