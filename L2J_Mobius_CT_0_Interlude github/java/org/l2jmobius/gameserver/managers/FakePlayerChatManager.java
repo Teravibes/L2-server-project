@@ -138,9 +138,11 @@ public class FakePlayerChatManager implements IXmlReader
 			return;
 		}
 
-		// Seated private-store vendors are treated as AFK shops: they do not answer whispers.
+		// Static AFK store vendors are treated as offline shops: they do not answer whispers. A bot running a
+		// temporary deal store (a trade arranged from chat) DOES still answer, so the player can renegotiate
+		// or call the trade off.
 		final Npc bot = resolveBot(fpcName);
-		if ((bot != null) && isStoreVendor(bot))
+		if ((bot != null) && isStoreVendor(bot) && !FakePlayerBehaviorManager.getInstance().isDealVendor(bot))
 		{
 			return;
 		}
@@ -308,22 +310,19 @@ public class FakePlayerChatManager implements IXmlReader
 			return;
 		}
 		final String title = FakePlayerStoreFactory.title(playerSelling ? "BUY" : "SELL", stock);
+		// Stash the deal terms and reserve the bot, but do NOT walk yet. The bot quotes a price and waits;
+		// the player agrees (or haggles) and picks a meet spot over whisper. The whisper handler then walks
+		// the bot once a [[MEET:spot]] is agreed, applying any haggled price from the [[SHOP:...]] tag.
 		FakePlayerBehaviorManager.getInstance().setupDeal(bot, storeType, stock, title);
 
-		// Send it walking to its nearest gatekeeper; if it can't, drop the deal and let banter handle it.
-		if (!FakePlayerBehaviorManager.getInstance().requestMeet(bot, "gatekeeper", player))
-		{
-			FakePlayerBehaviorManager.getInstance().setupDeal(bot, 0, null, null);
-			reactToChat(player, player.getName(), text, false, "TRADE");
-			return;
-		}
-
 		final int unit = stock.get(0).getPrice();
-		final String spot = nearestLocation(bot).replace("in ", "").replace("near ", "");
-		final String deal = (playerSelling ? "buy their " : "sell ") + item.getName() + " at " + unit + " adena each; tell them to meet you at the " + spot + " gatekeeper";
+		final String deal = (playerSelling ? "buy their " : "sell them ") + item.getName() + " for about " + unit
+			+ " adena each; state your price and ask if they want to deal and where to meet (gatekeeper, warehouse or shop) - do not commit to walking anywhere yet";
 		final String fpcName = bot.getName();
 		final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal);
-		sendChat(player, fpcName, (line == null) || line.isEmpty() ? ("saw ur post, lets deal - meet me at the " + spot + " gatekeeper") : line);
+		sendChat(player, fpcName, (line == null) || line.isEmpty() //
+			? ("saw ur post - i " + (playerSelling ? "buy " : "sell ") + item.getName() + " for " + unit + " adena each, wanna deal? where u wanna meet?") //
+			: line);
 		MESSAGES_THIS_MINUTE.incrementAndGet();
 	}
 
@@ -531,7 +530,16 @@ public class FakePlayerChatManager implements IXmlReader
 	public String talkableBotName(String name)
 	{
 		final Npc bot = resolveBot(name);
-		return ((bot == null) || isStoreVendor(bot)) ? null : bot.getName();
+		if (bot == null)
+		{
+			return null;
+		}
+		// AFK vendors are unreachable; a temporary deal vendor stays reachable for cancel/renegotiate.
+		if (isStoreVendor(bot) && !FakePlayerBehaviorManager.getInstance().isDealVendor(bot))
+		{
+			return null;
+		}
+		return bot.getName();
 	}
 
 	/**
@@ -583,7 +591,9 @@ public class FakePlayerChatManager implements IXmlReader
 		}
 		boolean cancelled = false;
 		boolean handledShop = false;
-		if ((bot != null) && !isStoreVendor(bot))
+		// Roaming bots and bots running a temporary deal store both negotiate here (the latter so the player
+		// can renegotiate or cancel mid-deal); only static AFK vendors are excluded.
+		if ((bot != null) && (!isStoreVendor(bot) || FakePlayerBehaviorManager.getInstance().isDealVendor(bot)))
 		{
 			// SHOP tag: the bot commits to a real store for a specific item/price. Open it now if it is
 			// already waiting with the player, otherwise arm it and make sure it walks over to meet.

@@ -101,6 +101,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private static final long MEET_NUDGE_GRACE = 180000;
 	// Absolute safety: never hold a bot at a meet spot longer than this, whatever happens.
 	private static final long MEET_HARD_CAP = 1800000;
+	// A trade offer was PMed but the player never agreed a meet: release the bot's reservation after this.
+	private static final long OFFER_TTL = 420000; // 7 min
 
 	// Procedural deployment: where auto-spawned bots are scattered and how wide.
 	// Default center is the Giran town square area; tune to taste.
@@ -171,6 +173,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		int pendingStoreType; // PrivateStoreType id to activate on arrival, or 0 for a plain meet
 		List<FakePlayerStoreItem> pendingStock;
 		String pendingTitle;
+		long pendingDealExpire; // when an offered-but-not-yet-agreed deal reservation lapses (0 = none)
 		boolean dealActive; // a deal store is currently open on this bot
 
 		BotState(Profile profile, Location home, int radius, Population population)
@@ -769,7 +772,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 					state.pendingStoreType = 0;
 					state.pendingStock = null;
 					state.pendingTitle = null;
-					npc.updateAbnormalEffect(); // show the store sign
+					npc.broadcastInfo(); // re-render as a seated vendor so the store pose + sign actually show
 				}
 				if (who != null)
 				{
@@ -798,6 +801,17 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				}
 				return;
 			}
+		}
+
+		// A trade offer was PMed but the player never agreed a meet: drop the stale reservation so the bot
+		// can take new ads again. (Once a meet starts, pendingDealExpire is cleared, so this never fires
+		// mid-deal.)
+		if ((state.pendingStoreType != 0) && (state.pendingDealExpire > 0) && (now > state.pendingDealExpire))
+		{
+			state.pendingStoreType = 0;
+			state.pendingStock = null;
+			state.pendingTitle = null;
+			state.pendingDealExpire = 0;
 		}
 
 		// Seated private-store vendors are otherwise stationary (static vendors, or a bot mid-deal whose
@@ -1009,6 +1023,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		state.summonTarget = destination;
 		state.summonStart = System.currentTimeMillis();
 		state.summonHardExpire = state.summonStart + MEET_HARD_CAP;
+		state.pendingDealExpire = 0; // meet underway: the offer reservation no longer lapses
 		state.summonArrived = false;
 		state.waitingSince = 0;
 		state.summonNudged = false;
@@ -1063,13 +1078,14 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		state.pendingStoreType = 0;
 		state.pendingStock = null;
 		state.pendingTitle = null;
+		state.pendingDealExpire = 0;
 		// Tear down a temporary deal store so the bot becomes a normal roamer again.
 		final FakePlayerAppearance look = bot.getFakePlayerAppearance();
 		if (state.dealActive && (look != null))
 		{
 			look.setStore(0, "");
 			look.setStoreItems(null);
-			bot.updateAbnormalEffect();
+			bot.broadcastInfo(); // re-render as a normal standing roamer (drops the store pose + sign)
 		}
 		state.dealActive = false;
 		bot.setImmobilized(false);
@@ -1131,6 +1147,9 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		state.pendingStoreType = storeType;
 		state.pendingStock = stock;
 		state.pendingTitle = title;
+		// Reserve the bot for this offer, but let the reservation lapse if no meet is agreed in time. Cleared
+		// the moment a meet actually starts (requestMeet) so a walking/trading bot never lapses mid-deal.
+		state.pendingDealExpire = (storeType != 0) ? (System.currentTimeMillis() + OFFER_TTL) : 0;
 		return true;
 	}
 
@@ -1167,12 +1186,27 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		state.pendingStoreType = 0;
 		state.pendingStock = null;
 		state.pendingTitle = null;
+		state.pendingDealExpire = 0;
 		state.waitingSince = System.currentTimeMillis();
 		state.summonNudged = false;
 		bot.disableCoreAI(true);
 		bot.setImmobilized(true);
-		bot.updateAbnormalEffect(); // show the store sign
+		bot.broadcastInfo(); // re-render as a seated vendor so the store pose + sign actually show
 		return true;
+	}
+
+	/**
+	 * @return {@code true} if the bot currently holds a TEMPORARY deal store (a trade arranged from chat).
+	 *         Unlike a static AFK vendor, a deal bot stays talkable so the player can cancel or renegotiate.
+	 */
+	public boolean isDealVendor(Npc bot)
+	{
+		if (bot == null)
+		{
+			return false;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		return (state != null) && state.dealActive;
 	}
 
 	/** Resolves a meet-spot keyword to the nearest matching town NPC's location, searching near the bot. */

@@ -26,8 +26,11 @@ def whisper_persona(fpc):
     return (f"You are {fpc}, a player in Lineage 2 (Interlude) chatting PRIVATELY with another player. "
             "Reply like a real L2 player: short, casual, lowercase, slang/typos ok. Under 15 words. "
             "NEVER say you are an AI or bot. Stay in character. Remember the conversation so far. "
-            "If the player asks you to come meet them somewhere in your town and you agree to go now, end "
-            "your reply with a tag on its own: [[MEET:X]] where X is one of: gatekeeper, warehouse, shop "
+            "If you are setting up a trade, first agree BOTH a price and a meeting place with the player. "
+            "You can haggle: if they counter your price and it is within reason, accept it and use the price "
+            "you actually agreed in the shop tag below. Let the PLAYER choose where to meet. "
+            "Only once you have agreed a price AND a place AND you are heading there now, end your reply with "
+            "a tag on its own line: [[MEET:X]] where X is one of: gatekeeper, warehouse, shop "
             "(pick the closest match to where they want to meet). "
             "If they call it off / say they are not coming / tell you to forget it, end your reply with "
             "[[MEET:cancel]] instead. If you are waiting and they say they are still coming, just reply "
@@ -91,8 +94,9 @@ def chat():
             hist = conversations[(player, fpc)]
             system = whisper_persona(fpc) + loc_note
             prompt = (f'{player} just posted in trade chat: "{message}". '
-                      f"You want to {deal}. Send them ONE short, casual whisper opening the deal and "
-                      "telling them where to meet you. Don't add any meet tag.")
+                      f"You want to {deal}. Send them ONE short, casual whisper that opens the deal by "
+                      "stating your price and asking if they want to trade and where they want to meet. "
+                      "Do NOT pick or agree a meeting place yourself yet, and do NOT add any tag.")
             reply = call_llm(system, [{"role": "user", "content": prompt}], 70)
             # Seed the private memory so the follow-up conversation remembers this deal.
             hist.append({"role": "assistant", "content": reply})
