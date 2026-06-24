@@ -37,6 +37,8 @@ import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.data.xml.FakePlayerData;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
+import org.l2jmobius.gameserver.geoengine.pathfinding.GeoLocation;
+import org.l2jmobius.gameserver.geoengine.pathfinding.PathFinding;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
@@ -772,6 +774,26 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		state.phase = Phase.MOVING;
 	}
 
+	/**
+	 * Returns {@code dest} if the bot can walk there in a straight line. If a wall is in the way,
+	 * runs A* pathfinding and returns the first intermediate waypoint so the bot starts moving around
+	 * the obstacle rather than bumping into it and turning back.
+	 */
+	private Location navigableDest(Npc npc, Location dest)
+	{
+		if (GeoEngine.getInstance().canMoveToTarget(npc, dest))
+		{
+			return dest;
+		}
+		final List<GeoLocation> path = PathFinding.getInstance().findPath(npc.getX(), npc.getY(), npc.getZ(), dest.getX(), dest.getY(), dest.getZ(), npc.getInstanceId(), false);
+		if ((path != null) && !path.isEmpty())
+		{
+			final GeoLocation first = path.get(0);
+			return new Location(first.getX(), first.getY(), first.getZ());
+		}
+		return dest;
+	}
+
 	private Location nextDestination(Npc npc, BotState state)
 	{
 		final Profile profile = state.profile;
@@ -783,7 +805,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			}
 			final Location point = profile.points.get(state.patrolIndex % profile.points.size());
 			state.patrolIndex++;
-			return GeoEngine.getInstance().getValidLocation(npc, point);
+			return navigableDest(npc, GeoEngine.getInstance().getValidLocation(npc, point));
 		}
 
 		if (profile.type == ProfileType.VISIT)
@@ -793,7 +815,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				return null;
 			}
 			// Head to a random point of interest, so movement looks purposeful (and idles long on arrival).
-			return GeoEngine.getInstance().getValidLocation(npc, profile.points.get(Rnd.get(profile.points.size())));
+			return navigableDest(npc, GeoEngine.getInstance().getValidLocation(npc, profile.points.get(Rnd.get(profile.points.size()))));
 		}
 
 		if (profile.type == ProfileType.FARM)
