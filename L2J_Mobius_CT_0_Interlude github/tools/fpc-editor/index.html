@@ -809,7 +809,7 @@ function draw(){
 			if (p.visible === false || !isRouteBehavior(p.behavior)) return;
 			const isSel = pi === selected;
 			const col = isSel ? '#ff9944' : '#c06ee0';
-			const wpts = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : (p.route || []);
+			const wpts = effectiveWaypoints(p);
 			if (!wpts.length) return;
 			const anchor = popAnchor(p);
 			const [ax, ay] = w2s(anchor.x, anchor.y);
