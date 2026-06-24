@@ -38,8 +38,6 @@ import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.data.xml.FakePlayerData;
 import org.l2jmobius.gameserver.data.xml.RouteData;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
-import org.l2jmobius.gameserver.geoengine.pathfinding.GeoLocation;
-import org.l2jmobius.gameserver.geoengine.pathfinding.PathFinding;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
@@ -83,6 +81,14 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	private static final long COMBAT_BACKOFF = 6000;
 	// A killed field bot is replaced (with a fresh identity) after roughly this long.
 	private static final long RESPAWN_DELAY = 45000;
+
+	// Route following: how close (2D) counts as "reached this waypoint", how many times to re-issue a
+	// stalled move before recovering, and the max distance we will teleport-recover across. Mirrors the
+	// native WalkingManager: confirm real arrival, re-kick interrupted moves, teleport onto the node as a
+	// last resort instead of silently skipping it.
+	private static final int ARRIVE_DIST = 70;
+	private static final int MAX_MOVE_ATTEMPTS = 3;
+	private static final int STUCK_TELEPORT_DIST = 3000;
 
 	// "Come meet me" override: how long a summon lasts, how close counts as arrived, and how far we look
 	// for the requested landmark NPC (kept tight so meetups stay within the bot's own town).
@@ -148,6 +154,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		long nextActionTime;
 		int patrolIndex;
 		int pendingArrivalDelay = -1; // seconds to pause after next arrival (-1 = use profile default)
+		Location moveTarget; // the waypoint currently being travelled to (for arrival check + re-kick)
+		int moveAttempts; // consecutive re-issues of a move that stalled before reaching moveTarget
 
 		// Player-requested "come meet me" override: while set, the bot walks to this spot and then waits
 		// there (pinned) until the player shows up, calls it off, or stops answering.
@@ -786,8 +794,42 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			{
 				return; // still travelling
 			}
-			// Arrived: idle for a while before the next goal.
+
+			// Movement ended. Before treating it as an arrival, confirm the bot actually reached the
+			// waypoint. A bare !isMoving() also fires when the move never started or was interrupted (blocked
+			// path, geo step at a doorway/stairs), and counting that as "arrived" silently skips the point.
+			final Location target = state.moveTarget;
+			if ((target != null) && (npc.calculateDistance2D(target) > ARRIVE_DIST))
+			{
+				// Not there yet: re-issue the move toward the SAME waypoint and let the engine pathfind
+				// (around obstacles, up stairs) rather than advancing to the next point.
+				if (state.moveAttempts < MAX_MOVE_ATTEMPTS)
+				{
+					state.moveAttempts++;
+					if (state.profile.run)
+					{
+						npc.setRunning();
+					}
+					else
+					{
+						npc.setWalking();
+					}
+					npc.getAI().setIntention(Intention.MOVE_TO, target);
+					return;
+				}
+				// Repeatedly stuck a short hop away (e.g. a doorway sill geodata won't let an NPC cross):
+				// teleport onto the waypoint to recover, exactly as the native WalkingManager does. If it is
+				// far/unreachable, fall through and accept arrival so the route keeps progressing.
+				if (npc.calculateDistance3D(target) < STUCK_TELEPORT_DIST)
+				{
+					npc.teleToLocation(target);
+				}
+			}
+
+			// Arrived (or recovered): idle for a while before the next goal.
 			state.phase = Phase.IDLE;
+			state.moveTarget = null;
+			state.moveAttempts = 0;
 			final long pauseMs = (state.pendingArrivalDelay >= 0) ? (state.pendingArrivalDelay * 1000L) : (Rnd.get(state.profile.pauseMin, state.profile.pauseMax) * 1000L);
 			state.pendingArrivalDelay = -1;
 			state.nextActionTime = now + pauseMs;
@@ -815,28 +857,10 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		{
 			npc.setWalking();
 		}
+		state.moveTarget = destination;
+		state.moveAttempts = 0;
 		npc.getAI().setIntention(Intention.MOVE_TO, destination);
 		state.phase = Phase.MOVING;
-	}
-
-	/**
-	 * Returns {@code dest} if the bot can walk there in a straight line. If a wall is in the way,
-	 * runs A* pathfinding and returns the first intermediate waypoint so the bot starts moving around
-	 * the obstacle rather than bumping into it and turning back.
-	 */
-	private Location navigableDest(Npc npc, Location dest)
-	{
-		if (GeoEngine.getInstance().canMoveToTarget(npc, dest))
-		{
-			return dest;
-		}
-		final List<GeoLocation> path = PathFinding.getInstance().findPath(npc.getX(), npc.getY(), npc.getZ(), dest.getX(), dest.getY(), dest.getZ(), npc.getInstanceId(), false);
-		if ((path != null) && !path.isEmpty())
-		{
-			final GeoLocation first = path.get(0);
-			return new Location(first.getX(), first.getY(), first.getZ());
-		}
-		return dest;
 	}
 
 	private Location nextDestination(Npc npc, BotState state)
@@ -855,7 +879,11 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			{
 				state.pendingArrivalDelay = profile.pointDelays.get(idx);
 			}
-			return navigableDest(npc, GeoEngine.getInstance().getValidLocation(npc, point));
+			// Hand the AI the true waypoint and let Creature.moveToLocation pathfind the whole way (this is
+			// how the native walking NPCs climb stairs and round corners). Do NOT pre-clamp with
+			// getValidLocation: that returns the last point on a straight line, which pins the goal to the
+			// bottom of stairs or a doorway and makes the bot stop short.
+			return point;
 		}
 
 		if (profile.type == ProfileType.VISIT)
@@ -870,7 +898,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			{
 				state.pendingArrivalDelay = profile.pointDelays.get(idx);
 			}
-			return navigableDest(npc, GeoEngine.getInstance().getValidLocation(npc, profile.points.get(idx)));
+			// As above: give the engine the real point and let it pathfind, no straight-line pre-clamp.
+			return profile.points.get(idx);
 		}
 
 		if (profile.type == ProfileType.FARM)
