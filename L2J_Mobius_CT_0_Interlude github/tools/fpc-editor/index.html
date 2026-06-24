@@ -957,7 +957,6 @@ function loadMapImageFile(file, placement){
 			else fitImageToViewport(layer);
 			mapImages.push(layer);
 			selectImage(mapImages.length - 1);
-			document.getElementById('editImages').checked = true;
 			resolve(true);
 		};
 		img.onerror = () => resolve(false);
@@ -982,7 +981,6 @@ async function loadCatalogImage(entry, category){
 			else fitImageToViewport(layer);
 			mapImages.push(layer);
 			selectImage(mapImages.length - 1);
-			document.getElementById('editImages').checked = true;
 			updateStatus();
 			resolve(true);
 		};
@@ -1026,7 +1024,6 @@ async function loadImageFolder(files){
 		loaded += await loadMapImageFile(file, rec) ? 1 : 0;
 	}
 	if (!loaded){ await loadMapImageFiles(imageFiles); return; }
-	document.getElementById('editImages').checked = true;
 	document.getElementById('imgStatus').textContent = `Folder loaded: ${loaded} image${loaded === 1 ? '' : 's'} restored${missing ? `, ${missing} missing` : ''}.`;
 	renderImageLayerList();
 	updateStatus();
@@ -1206,7 +1203,7 @@ async function saveRouteFile(name){
 	const pts = loadedRoutes[name];
 	if (!pts) return;
 	let xml = '<?xml version="1.0" encoding="UTF-8"?>\n<route name="' + name + '">\n';
-	pts.forEach(w => { xml += '\t<point x="' + w.x + '" y="' + w.y + '" z="' + (w.z || 0) + '"' + (w.delay ? ' delay="' + w.delay + '"' : '') + '/>\n'; });
+	pts.forEach(w => { xml += '\t<point x="' + w.x + '" y="' + w.y + '" z="' + (w.z || 0) + '"/>\n'; });
 	xml += '</route>\n';
 	if (rememberedHandle){
 		try {
@@ -1363,62 +1360,6 @@ document.getElementById('reloadRoutesBtn').onclick = async () => {
 	alert('Routes reloaded: ' + Object.keys(loadedRoutes).length + ' found.');
 };
 
-// Map to nearby landmarks: collect all spot coords from every town within LANDMARK_RADIUS world units
-// and append them to the route so the runner visits real NPC locations automatically.
-const LANDMARK_RADIUS = 5000;
-document.getElementById('mapLandmarksBtn').onclick = () => {
-	if (selected < 0) return;
-	const p = pops[selected];
-	if (!isRouteBehavior(p.behavior)){ alert('Set behavior to Runner or Patrol first.'); return; }
-	const anchor = popAnchor(p);
-	const found = [];
-	LANDMARKS.forEach(town => {
-		// Include the town center diamond itself if within range
-		if (Math.hypot(town.x - anchor.x, town.y - anchor.y) < LANDMARK_RADIUS)
-			found.push({ n: town.n, x: town.x, y: town.y });
-		(town.spots || []).forEach(s => {
-			if (Math.hypot(s.x - anchor.x, s.y - anchor.y) < LANDMARK_RADIUS)
-				found.push({ n: s.n, x: s.x, y: s.y });
-		});
-	});
-	if (!found.length){ toast('No landmarks found within ' + LANDMARK_RADIUS + ' units.', true); return; }
-	p.route = p.route || [];
-	found.forEach(f => {
-		// Only add if not already very close to an existing waypoint
-		if (!p.route.some(w => Math.hypot(w.x - f.x, w.y - f.y) < 100))
-			p.route.push({ x: Math.round(f.x), y: Math.round(f.y), z: p.z | 0 });
-	});
-	syncForm(); draw();
-	toast('Added ' + found.length + ' landmark' + (found.length === 1 ? '' : 's') + ' to route.');
-};
-
-// Add random waypoint: drops a random point inside the population's zone/radius so you can
-// supplement a landmark route with extra loitering spots.
-document.getElementById('addRandomBtn').onclick = () => {
-	if (selected < 0) return;
-	const p = pops[selected];
-	if (!isRouteBehavior(p.behavior)){ alert('Set behavior to Runner or Patrol first.'); return; }
-	p.route = p.route || [];
-	const anchor = popAnchor(p);
-	const r = p.radius || 600;
-	// Rejection-sample inside circle (or just use uniform square if poly)
-	let wx, wy;
-	if (p.poly && p.poly.length >= 3){
-		// Random point inside bounding box of poly, rejecting outside
-		const xs = p.poly.map(v => v.x), ys = p.poly.map(v => v.y);
-		const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys);
-		let tries = 0;
-		do { wx = minX + Math.random() * (maxX - minX); wy = minY + Math.random() * (maxY - minY); tries++; }
-		while (!pointInPoly(wx, wy, p.poly) && tries < 200);
-	} else {
-		const angle = Math.random() * Math.PI * 2;
-		const dist = Math.sqrt(Math.random()) * r; // uniform in circle
-		wx = anchor.x + Math.cos(angle) * dist;
-		wy = anchor.y + Math.sin(angle) * dist;
-	}
-	p.route.push({ x: Math.round(wx), y: Math.round(wy), z: p.z | 0 });
-	syncForm(); draw();
-};
 
 function renderList(){
 	const el = document.getElementById('list'); el.innerHTML = '';
@@ -1565,11 +1506,15 @@ function buildXml(){
 			if (roam != null) a += ` radius="${roam}"`;
 		}
 		a += ` run="${run}" pauseMin="${pMin}" pauseMax="${pMax}"`;
-		// Resolve waypoints: named route takes precedence over manually drawn ones.
-		const wpts = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : (p.route || []);
+		// Resolve waypoints using effectiveWaypoints (respects routeReversed).
+		const wpts = effectiveWaypoints(p);
 		if (route && wpts.length){
 			let b = `\t<profile ${a}>\n`;
-			wpts.forEach(w => { let pt = `\t\t<point x="${w.x}" y="${w.y}" z="${w.z != null ? w.z : (p.z | 0)}"${w.delay ? ` delay="${w.delay}"` : ''}/>\n`; b += pt; });
+			wpts.forEach((w, di) => {
+				const wdelay = p.waypointDelays && p.waypointDelays[di];
+				let pt = `\t\t<point x="${w.x}" y="${w.y}" z="${w.z != null ? w.z : (p.z | 0)}"${wdelay ? ` delay="${wdelay}"` : ''}/>\n`;
+				b += pt;
+			});
 			b += `\t</profile>\n`;
 			profileBlocks.push(b);
 		} else {
@@ -1656,6 +1601,7 @@ async function saveXml(){
 	toast('✓ Saved &nbsp;·&nbsp; ' + saved.join(' &nbsp;·&nbsp; '));
 }
 document.getElementById('saveXml').onclick = saveXml;
+document.getElementById('formSaveBtn').onclick = saveXml;
 
 // image layer controls
 document.getElementById('loadWorldMap').onclick = async () => {
