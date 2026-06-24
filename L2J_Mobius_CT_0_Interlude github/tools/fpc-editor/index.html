@@ -74,6 +74,20 @@
 	details.adv > summary::before { content: '▸ '; color: #6b6d76; }
 	details.adv[open] > summary::before { content: '▾ '; }
 	details.adv > summary:hover { color: #cfd2da; }
+
+	/* collapsible section headers */
+	details.section { border-top: 2px solid #3a6df0; margin-top: 8px; }
+	details.section > summary {
+		list-style: none; cursor: pointer; padding: 10px 12px 8px;
+		font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em;
+		color: #7fb0f5; user-select: none; display: flex; align-items: center; gap: 6px;
+	}
+	details.section > summary::-webkit-details-marker { display: none; }
+	details.section > summary::before { content: '▸ '; color: #3a6df0; font-size: 13px; }
+	details.section[open] > summary::before { content: '▾ '; }
+	details.section > summary:hover { color: #b8d4ff; }
+	details.section > summary .sec-toggle { margin-left: auto; font-size: 11px; font-weight: 400; text-transform: none; letter-spacing: 0; color: #9aa0aa; cursor: pointer; padding: 2px 7px; background: #3a3b42; border: 0; border-radius: 4px; }
+	details.section > summary .sec-toggle:hover { color: #cfd2da; filter: brightness(1.1); }
 	.toolrow { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 12px; margin-top: 8px; }
 	.toolrow button { min-width: 0; }
 	.imageSelect { padding: 0 12px; margin-top: 8px; }
@@ -120,7 +134,8 @@
 		<input id="folderInput" type="file" multiple webkitdirectory hidden />
 
 		<!-- ====== POPULATION FORM ====== -->
-		<h2>Selected population</h2>
+		<details class="section" id="popSection" open>
+		<summary>Selected population</summary>
 		<div id="formHint">Select a population from the list below, or double-click the map to add one.</div>
 		<div id="form" class="empty">
 			<label>name</label><input id="f_name" />
@@ -163,10 +178,6 @@
 						<button id="reverseRouteBtn" class="sec" style="flex:1">⇅ Reverse</button>
 						<button id="clearRouteBtn" class="sec" style="flex:1">✕ Clear</button>
 					</div>
-					<div class="row" style="margin-top:6px">
-						<button id="mapLandmarksBtn" class="sec" style="flex:3">⬡ Map to nearby landmarks</button>
-						<button id="addRandomBtn" class="sec" style="flex:2">+ Random point</button>
-					</div>
 					<div id="routeCount" class="muted"></div>
 					<div id="routeWaypointList"></div>
 				</div>
@@ -183,15 +194,19 @@
 			</div>
 			<label><input id="f_respawn" type="checkbox" style="width:auto;margin-right:6px" /><span id="respawnText">respawn (field hunters)</span></label>
 			<div class="row" style="margin-top:10px"><button id="zoneBtn" class="sec" style="flex:2">Draw zone</button><button id="clearZone" class="sec" style="flex:1">Clear zone</button></div>
+			<div class="row" style="margin-top:10px"><button id="formSaveBtn" style="flex:1;background:#2e9d62">💾 Save</button></div>
 			<div class="row" style="margin-top:6px"><button id="del" style="flex:1">Delete population</button></div>
 			<div class="muted"><b>Draw zone:</b> outline a spawn area on the map (click points, Esc/double-click to finish). For Idle, bots drift inside it. <b>Draw route:</b> drop waypoints the Runner/Patrol bots will follow — drag a waypoint to move it, Esc to finish.</div>
 		</div>
+		</details>
 
 		<!-- ====== LISTS ====== -->
-		<div class="sectionHead" id="popSectionHead"><h2>Populations</h2><button id="toggleAll" class="sec">Hide all</button></div>
-		<div id="list"></div>
+		<details class="section" id="listSection" open>
+		<summary><span id="popSectionTitle">Populations</span><button class="sec-toggle" id="toggleAll" onclick="event.stopPropagation()">Hide all</button></summary>
+		<div id="list" style="min-height:160px"></div>
+		</details>
 
-		<details class="adv" open>
+		<details class="section" id="imgSection">
 			<summary>Map image layers</summary>
 			<label><input id="editImages" type="checkbox" style="width:auto;margin-right:6px" />edit images (drag / resize)</label>
 			<label>opacity</label>
@@ -244,7 +259,7 @@ function applyModeUi(){
 	document.getElementById('modePhantom').classList.toggle('sec', mode !== 'phantom');
 	document.getElementById('npcOnly').style.display = (mode === 'phantom') ? 'none' : '';
 	document.getElementById('respawnText').textContent = (mode === 'phantom') ? 'respawn (replace on death)' : 'respawn (field hunters)';
-	document.getElementById('popSectionHead').querySelector('h2').textContent = (mode === 'phantom') ? 'Phantom populations' : 'Populations';
+	document.getElementById('popSectionTitle').textContent = (mode === 'phantom') ? 'Phantom populations' : 'Populations';
 }
 function switchMode(m){
 	if (m === mode) return;
@@ -388,6 +403,10 @@ const BEHAVIOR_HELP = {
 	SHOP:   'Bots open private stores. Pick a store type; they barely move around the spawn.'
 };
 function isRouteBehavior(b){ return b === 'RUNNER' || b === 'PATROL'; }
+function effectiveWaypoints(p){
+	const base = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : (p.route || []);
+	return p.routeReversed ? [...base].reverse() : base;
+}
 function behaviorFromProfile(prof, store){
 	if (store) return 'SHOP';
 	if (!prof) return 'IDLE';
@@ -1148,7 +1167,7 @@ function defaultPop(x, y){
 	if (mode === 'phantom') return { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, poly: [] };
 	const d = BEHAVIOR_DEFAULTS.IDLE;
 	return { name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40,
-		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], routeName: null, race: '', store: '', respawn: false, poly: [] };
+		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], routeName: null, race: '', store: '', respawn: false, poly: [], waypointDelays: {}, routeReversed: false };
 }
 function addPop(x, y){
 	pops.push(defaultPop(x, y));
@@ -1203,7 +1222,7 @@ function renderWaypointList(p){
 	wrap.innerHTML = '';
 	if (!p || !isRouteBehavior(p.behavior)){ document.getElementById('routeCount').textContent = ''; return; }
 	const isNamed = !!(p.routeName && loadedRoutes[p.routeName]);
-	const route = isNamed ? loadedRoutes[p.routeName] : (p.route || []);
+	const route = effectiveWaypoints(p);
 	const n = route.length;
 	if (isNamed){
 		document.getElementById('routeCount').textContent = 'Route "' + p.routeName + '": ' + n + ' waypoints. Click row for delay, drag on map to move.';
@@ -1212,6 +1231,7 @@ function renderWaypointList(p){
 	}
 	route.forEach((w, wi) => {
 		const isOpen = wi === selectedWaypoint;
+		const delay = p.waypointDelays && p.waypointDelays[wi];
 		const row = document.createElement('div');
 		row.style.cssText = 'display:flex;flex-direction:column;padding:2px 12px 2px 8px;font-size:11px;border-left:2px solid ' + (isOpen ? '#4ea8c2' : 'transparent') + ';margin-bottom:1px;';
 
@@ -1229,7 +1249,7 @@ function renderWaypointList(p){
 
 		// Delay badge (shown if delay is set)
 		const badge = document.createElement('span');
-		if (w.delay){ badge.style.cssText = 'color:#f0c060;font-size:10px;'; badge.textContent = w.delay + 's'; }
+		if (delay){ badge.style.cssText = 'color:#f0c060;font-size:10px;'; badge.textContent = delay + 's'; }
 
 		const panBtn = document.createElement('button');
 		panBtn.textContent = '⊙'; panBtn.title = 'Pan map to this waypoint';
@@ -1239,7 +1259,19 @@ function renderWaypointList(p){
 		const del = document.createElement('button');
 		del.textContent = '✕'; del.title = 'Delete this waypoint';
 		del.style.cssText = 'padding:1px 5px;font-size:10px;background:#b5432f;border:0;border-radius:3px;color:#fff;cursor:pointer;';
-		del.onclick = e => { e.stopPropagation(); if (selectedWaypoint === wi) selectedWaypoint = -1; else if (selectedWaypoint > wi) selectedWaypoint--; route.splice(wi, 1); if (isNamed) saveRouteFile(p.routeName); renderWaypointList(p); draw(); };
+		del.onclick = e => {
+			e.stopPropagation();
+			if (selectedWaypoint === wi) selectedWaypoint = -1; else if (selectedWaypoint > wi) selectedWaypoint--;
+			const base = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : p.route;
+			const origIdx = p.routeReversed ? base.length - 1 - wi : wi;
+			base.splice(origIdx, 1);
+			if (p.routeName && loadedRoutes[p.routeName]) saveRouteFile(p.routeName);
+			delete p.waypointDelays[wi];
+			const nd = {};
+			Object.entries(p.waypointDelays).forEach(([k,v]) => { const ki = +k; if (ki > wi) nd[ki-1] = v; else nd[ki] = v; });
+			p.waypointDelays = nd;
+			renderWaypointList(p); draw();
+		};
 
 		main.onclick = () => { selectedWaypoint = isOpen ? -1 : wi; renderWaypointList(p); };
 		main.appendChild(num); main.appendChild(coords); main.appendChild(badge); main.appendChild(panBtn); main.appendChild(del);
@@ -1254,13 +1286,13 @@ function renderWaypointList(p){
 			lbl.textContent = 'Pause here (s):';
 			const inp = document.createElement('input');
 			inp.type = 'number'; inp.min = '0'; inp.step = '1';
-			inp.value = w.delay != null ? w.delay : '';
+			inp.value = delay != null ? delay : '';
 			inp.placeholder = 'none';
 			inp.style.cssText = 'width:60px;font-size:11px;padding:2px 4px;background:#1a1c22;border:1px solid #444;border-radius:3px;color:#eee;';
-			inp.oninput = () => { const v = parseInt(inp.value); w.delay = (isNaN(v) || v <= 0) ? null : v; if (isNamed) saveRouteFile(p.routeName); renderWaypointList(p); };
+			inp.oninput = () => { const v = parseInt(inp.value); if (isNaN(v) || v <= 0) delete p.waypointDelays[wi]; else p.waypointDelays[wi] = v; renderWaypointList(p); };
 			const clr = document.createElement('button');
 			clr.textContent = 'clear'; clr.style.cssText = 'font-size:10px;padding:1px 6px;background:#2a3040;border:1px solid #555;border-radius:3px;color:#aaa;cursor:pointer;';
-			clr.onclick = () => { w.delay = null; inp.value = ''; if (isNamed) saveRouteFile(p.routeName); renderWaypointList(p); };
+			clr.onclick = () => { delete p.waypointDelays[wi]; inp.value = ''; renderWaypointList(p); };
 			editor.appendChild(lbl); editor.appendChild(inp); editor.appendChild(clr);
 			row.appendChild(editor);
 			setTimeout(() => inp.focus(), 0);
@@ -1310,7 +1342,20 @@ document.getElementById('routeBtn').onclick = () => {
 	setWaypointMode(!waypointMode);
 };
 document.getElementById('clearRouteBtn').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops[selected].route = []; pops[selected].routeName = null; selectedWaypoint = -1; syncForm(); draw(); };
-document.getElementById('reverseRouteBtn').onclick = () => { if (selected < 0) return; const p = pops[selected]; const r = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : p.route; if (r && r.length > 1){ r.reverse(); selectedWaypoint = -1; if (p.routeName && loadedRoutes[p.routeName]) saveRouteFile(p.routeName); renderWaypointList(p); draw(); } };
+document.getElementById('reverseRouteBtn').onclick = () => {
+	if (selected < 0) return;
+	const p = pops[selected];
+	const len = effectiveWaypoints(p).length;
+	if (len < 2) return;
+	// remap delays to new display positions
+	const nd = {};
+	Object.entries(p.waypointDelays || {}).forEach(([k,v]) => { nd[len - 1 - +k] = v; });
+	p.waypointDelays = nd;
+	p.routeReversed = !p.routeReversed;
+	selectedWaypoint = -1;
+	renderWaypointList(p);
+	draw();
+};
 document.getElementById('reloadRoutesBtn').onclick = async () => {
 	if (!rememberedHandle){ alert('Open a data folder first.'); return; }
 	await loadRoutes(await collectHandles(rememberedHandle));
@@ -1431,6 +1476,10 @@ function parseXml(text){
 			const prof = profiles[g('profile') || ''];
 			const behavior = behaviorFromProfile(prof, store);
 			const d = BEHAVIOR_DEFAULTS[behavior];
+			const waypointDelays = {};
+			if (prof && isRouteBehavior(behavior)){
+				prof.waypoints.forEach((w, i) => { if (w.delay != null) waypointDelays[i] = w.delay; });
+			}
 			pops.push({
 				name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'),
 				radius: +(g('radius') || 600), count: +(g('count') || 0),
@@ -1439,9 +1488,10 @@ function parseXml(text){
 				run:      prof ? prof.run : d.run,
 				pauseMin: prof ? prof.pauseMin : d.pauseMin,
 				pauseMax: prof ? prof.pauseMax : d.pauseMax,
-				route:    (prof && isRouteBehavior(behavior)) ? prof.waypoints.map(w => ({ ...w })) : [],
+				route:    (prof && isRouteBehavior(behavior)) ? prof.waypoints.map(w => ({ x: w.x, y: w.y, z: w.z })) : [],
 				routeName: g('route') || null,
-				race: g('race') || '', store, respawn: g('respawn') === 'true', poly
+				race: g('race') || '', store, respawn: g('respawn') === 'true', poly,
+				waypointDelays, routeReversed: false
 			});
 		}
 	}
