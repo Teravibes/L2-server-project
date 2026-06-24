@@ -136,7 +136,6 @@ import handlers.chat.commands.admin.AdminFakePlayers;
 import handlers.chat.commands.admin.AdminFence;
 import handlers.chat.commands.admin.AdminFightCalculator;
 import handlers.chat.commands.admin.AdminGamePoints;
-import handlers.chat.commands.admin.AdminPhantom;
 import handlers.chat.commands.admin.AdminGeodata;
 import handlers.chat.commands.admin.AdminGm;
 import handlers.chat.commands.admin.AdminGmChat;
@@ -350,7 +349,6 @@ public class MasterHandler
 			AdminExpSp.class,
 			AdminFakePlayers.class,
 			AdminFence.class,
-			AdminPhantom.class,
 			AdminFightCalculator.class,
 			AdminGamePoints.class,
 			AdminGeodata.class,

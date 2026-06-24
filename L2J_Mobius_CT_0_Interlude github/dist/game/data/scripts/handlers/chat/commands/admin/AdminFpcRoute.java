@@ -20,6 +20,8 @@
  */
 package handlers.chat.commands.admin;
 
+import java.util.Collection;
+
 import org.l2jmobius.gameserver.data.xml.RouteData;
 import org.l2jmobius.gameserver.handler.IAdminCommandHandler;
 import org.l2jmobius.gameserver.managers.RouteRecorder;
@@ -75,7 +77,7 @@ public class AdminFpcRoute implements IAdminCommandHandler
 
 		if (command.equals("admin_list_routes"))
 		{
-			final var names = RouteData.getInstance().getRouteNames();
+			final Collection<String> names = RouteData.getInstance().getRouteNames();
 			if (names.isEmpty())
 			{
 				player.sendMessage("No routes saved yet.");
