@@ -134,7 +134,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		boolean run = false;
 		int pauseMin = 8; // seconds to idle between hops
 		int pauseMax = 25;
-		final List<Location> points = new ArrayList<>(); // PATROL waypoints
+		final List<Location> points = new ArrayList<>(); // PATROL/VISIT waypoints
+		final Map<Integer, Integer> pointDelays = new HashMap<>(); // index -> delay seconds (0 = use default pause)
 	}
 
 	private static class BotState
@@ -146,6 +147,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		Phase phase = Phase.IDLE;
 		long nextActionTime;
 		int patrolIndex;
+		int pendingArrivalDelay = -1; // seconds to pause after next arrival (-1 = use profile default)
 
 		// Player-requested "come meet me" override: while set, the bot walks to this spot and then waits
 		// there (pinned) until the player shows up, calls it off, or stops answering.
@@ -236,7 +238,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				forEach(profileNode, "point", pointNode ->
 				{
 					final StatSet p = new StatSet(parseAttributes(pointNode));
+					final int idx = profile.points.size();
 					profile.points.add(new Location(p.getInt("x"), p.getInt("y"), p.getInt("z")));
+					if (p.contains("delay"))
+					{
+						profile.pointDelays.put(idx, p.getInt("delay"));
+					}
 				});
 				_profiles.put(profile.name, profile);
 			});
@@ -770,7 +777,9 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			}
 			// Arrived: idle for a while before the next goal.
 			state.phase = Phase.IDLE;
-			state.nextActionTime = now + (Rnd.get(state.profile.pauseMin, state.profile.pauseMax) * 1000L);
+			final long pauseMs = (state.pendingArrivalDelay >= 0) ? (state.pendingArrivalDelay * 1000L) : (Rnd.get(state.profile.pauseMin, state.profile.pauseMax) * 1000L);
+			state.pendingArrivalDelay = -1;
+			state.nextActionTime = now + pauseMs;
 			return;
 		}
 
@@ -828,8 +837,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			{
 				return null;
 			}
-			final Location point = profile.points.get(state.patrolIndex % profile.points.size());
+			final int idx = state.patrolIndex % profile.points.size();
+			final Location point = profile.points.get(idx);
 			state.patrolIndex++;
+			if (profile.pointDelays.containsKey(idx))
+			{
+				state.pendingArrivalDelay = profile.pointDelays.get(idx);
+			}
 			return navigableDest(npc, GeoEngine.getInstance().getValidLocation(npc, point));
 		}
 
@@ -840,7 +854,12 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				return null;
 			}
 			// Head to a random point of interest, so movement looks purposeful (and idles long on arrival).
-			return navigableDest(npc, GeoEngine.getInstance().getValidLocation(npc, profile.points.get(Rnd.get(profile.points.size()))));
+			final int idx = Rnd.get(profile.points.size());
+			if (profile.pointDelays.containsKey(idx))
+			{
+				state.pendingArrivalDelay = profile.pointDelays.get(idx);
+			}
+			return navigableDest(npc, GeoEngine.getInstance().getValidLocation(npc, profile.points.get(idx)));
 		}
 
 		if (profile.type == ProfileType.FARM)

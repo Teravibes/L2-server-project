@@ -160,7 +160,8 @@
 					</div>
 					<div class="row">
 						<button id="routeBtn" class="sec" style="flex:2">✦ Draw route</button>
-						<button id="clearRouteBtn" class="sec" style="flex:1">Clear all</button>
+						<button id="reverseRouteBtn" class="sec" style="flex:1">⇅ Reverse</button>
+						<button id="clearRouteBtn" class="sec" style="flex:1">✕ Clear</button>
 					</div>
 					<div class="row" style="margin-top:6px">
 						<button id="mapLandmarksBtn" class="sec" style="flex:3">⬡ Map to nearby landmarks</button>
@@ -1088,7 +1089,7 @@ cv.addEventListener('mousemove', e => {
 	else if (drag.mode === 'image-move'){ const layer = mapImages[drag.i]; const dx = wx - drag.px, dy = wy - drag.py; layer.x1 = Math.round(layer.x1 + dx); layer.y1 = Math.round(layer.y1 + dy); layer.x2 = Math.round(layer.x2 + dx); layer.y2 = Math.round(layer.y2 + dy); drag.px = wx; drag.py = wy; draw(); }
 	else if (drag.mode === 'image-resize'){ resizeImageLayer(mapImages[drag.i], drag.corner, wx, wy); updateImageStatus(); draw(); }
 });
-window.addEventListener('mouseup', () => drag = null);
+window.addEventListener('mouseup', () => { if (drag && drag.mode === 'waypoint') renderWaypointList(pops[drag.pi]); drag = null; });
 window.addEventListener('keydown', e => {
 	if (e.key === 'Escape'){
 		if (waypointMode){ setWaypointMode(false); return; }
@@ -1170,6 +1171,8 @@ function applyBehaviorUi(p){
 	document.getElementById('behaviorHelp').textContent = BEHAVIOR_HELP[p.behavior] || '';
 	renderWaypointList(p);
 }
+let selectedWaypoint = -1; // index of waypoint with open delay editor
+
 function renderWaypointList(p){
 	const wrap = document.getElementById('routeWaypointList');
 	wrap.innerHTML = '';
@@ -1188,20 +1191,64 @@ function renderWaypointList(p){
 	}
 	const route = p.route || [];
 	const n = route.length;
-	document.getElementById('routeCount').textContent = n + ' waypoint' + (n === 1 ? '' : 's') + ' placed.';
+	document.getElementById('routeCount').textContent = n + ' waypoint' + (n === 1 ? '' : 's') + ' placed. Click a row to set a delay.';
 	route.forEach((w, wi) => {
+		const isOpen = wi === selectedWaypoint;
 		const row = document.createElement('div');
-		row.style.cssText = 'display:flex;align-items:center;gap:6px;padding:2px 12px;font-size:11px;';
-		const lbl = document.createElement('span');
-		lbl.style.cssText = 'flex:1;color:#cfd2da;cursor:pointer;';
-		lbl.textContent = (wi + 1) + '. ' + w.x + ', ' + w.y;
-		lbl.title = 'Click to pan map to this waypoint';
-		lbl.onclick = () => { cam.x = w.x - (cv.width / 2) / cam.scale; cam.y = w.y - (cv.height / 2) / cam.scale; draw(); };
+		row.style.cssText = 'display:flex;flex-direction:column;padding:2px 12px 2px 8px;font-size:11px;border-left:2px solid ' + (isOpen ? '#4ea8c2' : 'transparent') + ';margin-bottom:1px;';
+
+		// Main row: number + coords + delay badge + delete
+		const main = document.createElement('div');
+		main.style.cssText = 'display:flex;align-items:center;gap:5px;cursor:pointer;';
+
+		const num = document.createElement('span');
+		num.style.cssText = 'color:#5a7a8a;min-width:16px;text-align:right;font-size:10px;';
+		num.textContent = (wi + 1) + '.';
+
+		const coords = document.createElement('span');
+		coords.style.cssText = 'flex:1;color:#cfd2da;';
+		coords.textContent = w.x + ', ' + w.y;
+
+		// Delay badge (shown if delay is set)
+		const badge = document.createElement('span');
+		if (w.delay){ badge.style.cssText = 'color:#f0c060;font-size:10px;'; badge.textContent = w.delay + 's'; }
+
+		const panBtn = document.createElement('button');
+		panBtn.textContent = '⊙'; panBtn.title = 'Pan map to this waypoint';
+		panBtn.style.cssText = 'padding:1px 5px;font-size:10px;background:#2a3040;border:1px solid #444;border-radius:3px;color:#aaa;cursor:pointer;';
+		panBtn.onclick = e => { e.stopPropagation(); cam.x = w.x - (cv.width / 2) / cam.scale; cam.y = w.y - (cv.height / 2) / cam.scale; draw(); };
+
 		const del = document.createElement('button');
-		del.textContent = '✕'; del.title = 'Remove this waypoint';
-		del.style.cssText = 'padding:1px 6px;font-size:11px;background:#b5432f;border:0;border-radius:3px;color:#fff;cursor:pointer;';
-		del.onclick = () => { p.route.splice(wi, 1); renderWaypointList(p); draw(); };
-		row.appendChild(lbl); row.appendChild(del); wrap.appendChild(row);
+		del.textContent = '✕'; del.title = 'Delete this waypoint';
+		del.style.cssText = 'padding:1px 5px;font-size:10px;background:#b5432f;border:0;border-radius:3px;color:#fff;cursor:pointer;';
+		del.onclick = e => { e.stopPropagation(); if (selectedWaypoint === wi) selectedWaypoint = -1; else if (selectedWaypoint > wi) selectedWaypoint--; p.route.splice(wi, 1); renderWaypointList(p); draw(); };
+
+		main.onclick = () => { selectedWaypoint = isOpen ? -1 : wi; renderWaypointList(p); };
+		main.appendChild(num); main.appendChild(coords); main.appendChild(badge); main.appendChild(panBtn); main.appendChild(del);
+		row.appendChild(main);
+
+		// Inline delay editor (expanded when this waypoint is selected)
+		if (isOpen){
+			const editor = document.createElement('div');
+			editor.style.cssText = 'display:flex;align-items:center;gap:6px;padding:4px 0 2px 18px;';
+			const lbl = document.createElement('label');
+			lbl.style.cssText = 'color:#8ab4c2;font-size:10px;white-space:nowrap;';
+			lbl.textContent = 'Pause here (s):';
+			const inp = document.createElement('input');
+			inp.type = 'number'; inp.min = '0'; inp.step = '1';
+			inp.value = w.delay != null ? w.delay : '';
+			inp.placeholder = 'none';
+			inp.style.cssText = 'width:60px;font-size:11px;padding:2px 4px;background:#1a1c22;border:1px solid #444;border-radius:3px;color:#eee;';
+			inp.oninput = () => { const v = parseInt(inp.value); w.delay = (isNaN(v) || v <= 0) ? null : v; renderWaypointList(p); };
+			const clr = document.createElement('button');
+			clr.textContent = 'clear'; clr.style.cssText = 'font-size:10px;padding:1px 6px;background:#2a3040;border:1px solid #555;border-radius:3px;color:#aaa;cursor:pointer;';
+			clr.onclick = () => { w.delay = null; inp.value = ''; renderWaypointList(p); };
+			editor.appendChild(lbl); editor.appendChild(inp); editor.appendChild(clr);
+			row.appendChild(editor);
+			setTimeout(() => inp.focus(), 0);
+		}
+
+		wrap.appendChild(row);
 	});
 }
 function syncFormClear(){ document.getElementById('form').classList.add('empty'); }
@@ -1244,7 +1291,8 @@ document.getElementById('routeBtn').onclick = () => {
 	p.route = p.route || [];
 	setWaypointMode(!waypointMode);
 };
-document.getElementById('clearRouteBtn').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops[selected].route = []; pops[selected].routeName = null; syncForm(); draw(); };
+document.getElementById('clearRouteBtn').onclick = () => { if (selected < 0) return; if (waypointMode) setWaypointMode(false); pops[selected].route = []; pops[selected].routeName = null; selectedWaypoint = -1; syncForm(); draw(); };
+document.getElementById('reverseRouteBtn').onclick = () => { if (selected < 0) return; const r = pops[selected].route; if (r && r.length > 1){ r.reverse(); selectedWaypoint = -1; renderWaypointList(pops[selected]); draw(); } };
 document.getElementById('reloadRoutesBtn').onclick = async () => {
 	if (!rememberedHandle){ alert('Open a data folder first.'); return; }
 	await loadRoutes(await collectHandles(rememberedHandle));
@@ -1345,7 +1393,7 @@ function parseXml(text){
 	for (const node of list.children){
 		if (node.tagName !== 'profile') continue;
 		const waypoints = [...node.children].filter(n => n.tagName === 'point')
-			.map(n => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y'), z: +(n.getAttribute('z') || 0) }));
+			.map(n => { const d = n.getAttribute('delay'); return { x: +n.getAttribute('x'), y: +n.getAttribute('y'), z: +(n.getAttribute('z') || 0), ...(d ? { delay: +d } : {}) }; });
 		profiles[node.getAttribute('name') || ''] = {
 			type:     (node.getAttribute('type') || 'WANDER').toUpperCase(),
 			run:      node.getAttribute('run') === 'true',
@@ -1453,7 +1501,7 @@ function buildXml(){
 		const wpts = (p.routeName && loadedRoutes[p.routeName]) ? loadedRoutes[p.routeName] : (p.route || []);
 		if (route && wpts.length){
 			let b = `\t<profile ${a}>\n`;
-			wpts.forEach(w => b += `\t\t<point x="${w.x}" y="${w.y}" z="${w.z != null ? w.z : (p.z | 0)}"/>\n`);
+			wpts.forEach(w => { let pt = `\t\t<point x="${w.x}" y="${w.y}" z="${w.z != null ? w.z : (p.z | 0)}"${w.delay ? ` delay="${w.delay}"` : ''}/>\n`; b += pt; });
 			b += `\t</profile>\n`;
 			profileBlocks.push(b);
 		} else {
