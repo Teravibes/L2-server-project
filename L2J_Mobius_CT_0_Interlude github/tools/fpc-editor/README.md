@@ -1,104 +1,108 @@
 # FPC Editor
 
-A standalone visual editor for `data/FakePlayerBehavior.xml` (NPC fake-player populations) **and
-`data/PhantomPopulations.xml`** (real-Player phantom populations). No install, no build, no server —
-it's a single HTML file that runs in your browser.
+A standalone visual editor for `FakePlayerBehavior.xml` (NPC fake-player populations) and `PhantomPopulations.xml` (real-Player phantom populations). No install, no build — single HTML file, open in a browser.
 
-## NPC fake players vs Phantoms (mode switch)
-The two buttons at the top of the side panel switch what you're editing:
+## Quick start
 
-- **NPC fake players** → `FakePlayerBehavior.xml` (the original NPC-rendered crowd: profiles, race,
-  store type, etc.).
-- **Phantoms** → `PhantomPopulations.xml` (real `Player` phantoms that farm via the engine's auto-hunt:
-  just count, level range and respawn — no profile/race/store).
+1. Click **📂 Open data folder** and pick your server's `game/data` folder. The editor loads:
+   - `FakePlayerBehavior.xml` and `PhantomPopulations.xml`
+   - `geodata/*.l2j` tiles (rendered as a real height-relief world map)
+   - Named routes from `routes/*.xml`
+   - Map images from `Cities/`, `world locations/`, and `World Map/` subfolders
+2. The folder is **remembered** — reloads automatically next time.
+3. Edit, then click **💾 Save** to write back to the same folder. There's also a Save button at the bottom of each population's form.
 
-Switching modes **hides the other set** and shows only the active one (drawn in a distinct teal), so
-you place each cleanly. The **map, geodata and landmarks stay loaded** across both modes, so you can
-position phantom zones against the same world view. **Save** writes whichever mode you're in to its own
-file; switch and Save again to write the other.
+> Chrome/Edge: saves directly in place. Firefox: downloads the updated XML.
 
-## Run it
-Double-click `index.html` (or right-click → Open with → your browser).
+## Mode switch
 
-## Quick start — one folder, one save
-1. Click **📂 Open data folder** and pick the folder that holds your fake-player files —
-   usually your server's `game/data`. The editor scans it and loads:
-   - `FakePlayerBehavior.xml` (the populations),
-   - the `geodata/*.l2j` tiles (the real world map),
-   - the image catalog from your map-image folders.
-2. The folder is **remembered**. Next time you open the editor it **reloads that folder
-   automatically** — no clicking, no re-picking. Use **change…** (next to the folder name)
-   to point it somewhere else.
-3. Edit your populations (see below), then click **💾 Save** to write the XML back to that
-   same folder. Restart/reload the server to apply.
+The two buttons at the top switch what you're editing:
+- **NPC fake players** → `FakePlayerBehavior.xml` (crowd bots: profiles, behaviors, routes, shops)
+- **Phantoms** → `PhantomPopulations.xml` (real-Player field hunters: level range, respawn, zone)
 
-The status chips at the top always show what's loaded or cataloged:
-**XML ✓ · Geodata ✓ · Images catalog**.
+Map and geodata stay loaded across both modes.
 
-> Saving directly back to the file needs Chrome/Edge (File System Access API). In Firefox the
-> same **Open data folder** button reads the folder, and **Save** downloads the updated XML.
+## Working with populations
 
-## Editing populations
-- **Double-click** the map to drop a new population there (or **+ Population**).
-- **Drag** a circle to move it; the X/Y update live.
-- **Click** a circle (or a list row) to edit its fields: name, count, level range, **behavior**,
-  race, respawn.
-- **Wheel** to zoom, **drag empty space** to pan. The geodata map is crisp when zoomed in.
-- **Landmarks** — towns and villages are drawn as purple diamonds at their real coordinates, and
-  zooming in reveals key NPC spots (gatekeeper, warehouse, shops, …) as small labeled dots so you
-  can drop route waypoints right onto them. Toggle them with the **landmarks** checkbox.
-- **👁 / 🚫** on each list row shows/hides that population; **Hide all / Show all** toggles every one.
+- **Double-click** the map to add a population, or click **+ Population**.
+- **Drag** a circle to move it.
+- **Click** a circle or list row to open its form (name, count, level range, behavior, etc.).
+- **👁 / 🚫** on each row shows/hides that population. **Hide all / Show all** toggles everything.
+- All sections in the side panel are **collapsible** — click the header to expand/collapse.
 
-## Map image layers
-Map images are loaded intentionally from three sources after you open the data folder:
+## Behaviors (NPC mode)
 
-- **Load world map** loads the detected world-map image, then changes to **Hide world map** /
-  **Show world map**. Use a filename like `world map.png` or place it in a `World Map` folder.
-- **Cities** reads images from a folder named `Cities`. Its dropdown starts with **Load all**, then each image name.
-- **World locations** reads images from a folder named `world locations`. Its dropdown starts with **Load all**, then each image name.
+| Behavior | What it does |
+|---|---|
+| **Idle / loiter** | Bots drift randomly within radius or drawn zone |
+| **Runner** | Bots visit route waypoints in random order |
+| **Patrol** | Bots walk route waypoints in order, looping |
+| **Farm** | Bots seek and fight monsters in zone. Tick **respawn**. |
+| **Shop** | Seated private-store vendors (SELL/BUY/CRAFT/PACKAGE) |
 
-Turn on **edit images** to drag/resize loaded image layers. Their positions are saved into
-`fpc-map-images.json` when you click **Save**, and the next load applies the saved placement
-when you load that world map, city, or world-location image again. You can still drag-and-drop
-loose image files onto the map for quick manual overlays. Loaded city/world-location images appear
-in a list with per-image show/hide toggles plus **Hide all / Show all**.
+Movement timing defaults (run/walk, pause range) are set per behavior; tweak under **Movement timing (advanced)**.
 
-## Behaviors (what each population does)
-Every population has one **behavior**, chosen from the dropdown in its panel. The editor writes the
-matching movement profile into the XML for you — you never edit profiles by hand:
+## Routes
 
-- **Idle / loiter** — bots drift around at random within the **radius** (or the **drawn zone**) of
-  their spawn. The standing-around-town crowd.
-- **Runner** — bots roam a **route** of waypoints you place, picking the next one at **random**.
-  This is the "wander between landmarks" behavior. Click **✦ Draw route**, then click the map to
-  drop each waypoint; drag one to move it; **Esc** to finish; **Clear route** to start over.
-- **Patrol** — same routes, but walked **in order** and looped, like guards or travellers.
-- **Farm** — bots seek out and fight monsters within the radius (field hunters). Tick **respawn**.
-- **Shop** — private-store vendors. Pick a **store type** (`SELL`/`BUY`/`CRAFT`/`PACKAGE`); they
-  barely move around the spawn.
+Routes define the path Runner and Patrol bots follow. Two ways to set one up:
 
-Each behavior comes with sensible run/walk and pause defaults; tweak them under **Movement timing
-(advanced)** if you want.
+### Named routes (recommended for reuse)
+Named routes live in `routes/*.xml` and can be shared across many populations. Record one in-game with GM commands, or manage via the editor:
 
-### Areas: radius or a drawn zone
-- **Draw zone** — select a population, click **Draw zone**, then click points on the map to outline
-  an area. Bots spawn **inside the shape** instead of a circle (great for Idle crowds and shop
-  districts). Drag vertices to adjust; double-click or **Esc** to finish; **Clear zone** reverts to
-  a circle. Saved as `<point>` vertices under the population.
+**In-game recording (GM):**
+```
+//record_route gludio_market   ← start recording; walk the path
+//stop_route                   ← saves to data/routes/gludio_market.xml
+//list_routes                  ← shows all saved routes
+```
+A waypoint is captured every ~150 units walked.
 
-### Drawing a route
-Select a Runner or Patrol population and click **✦ Draw route**, then click the map to place each
-waypoint. Routes are drawn as numbered, dashed purple chains anchored to the spawn (the selected
-one turns orange). Waypoint z is seeded from the population's elevation so the server snaps each
-point to the right ground layer.
+**In the editor:**
+- Select a population with Runner or Patrol behavior.
+- Pick a named route from the **Route** dropdown (click ↺ to rescan the folder).
+- The route waypoints appear on the map and in the waypoint list.
+
+### Manual (drawn) routes
+- Click **✦ Draw route**, then click the map to place waypoints. Drag any dot to move it. **Esc** to finish.
+- Use **⇅ Reverse** to flip traversal order. Use **✕ Clear** to start over.
+
+### Per-population customization
+Each population can independently customize a shared named route:
+- **Delays**: click any waypoint row in the list to set a pause (seconds) at that point.
+- **Reverse**: click **⇅ Reverse** to traverse in opposite order — only affects this population, not the route file or other populations.
+- Delays and reversal are saved into the population's XML and survive save/reload.
+
+Waypoints are also **draggable on the map**. For named routes, dragging saves back to the `routes/*.xml` file. You can also **delete** individual waypoints (✕ button on each row) and pan to any waypoint (⊙).
+
+## Spawn zones
+
+Instead of a circle radius, bots can spawn inside a drawn polygon:
+- Select a population, click **Draw zone**, then click map points to outline the area.
+- Drag vertices to adjust. **Esc** or double-click to finish. **Clear zone** reverts to circle.
+- Works for any behavior. Great for town crowds and shop districts.
+
+## Map images
+
+The **Map image layers** section (collapsed by default) lets you overlay images on the geodata:
+- **Load world map** — toggle on/off. Expects a file like `world map.png` or a `World Map/` folder.
+- **Cities** dropdown — images from a `Cities/` subfolder.
+- **World locations** dropdown — images from a `world locations/` subfolder.
+
+Check **edit images (drag / resize)** to reposition layers. Image placements are saved to `fpc-map-images.json` alongside your XML when you click Save.
 
 ## Colors
-- blue = Idle / loiter · purple = Runner / Patrol routes · red = Farm (field hunters)
-- gold = Shop vendors · orange = the selected route
+
+| Color | Meaning |
+|---|---|
+| Blue | Idle / loiter |
+| Purple | Runner / Patrol (routes drawn dashed) |
+| Red | Farm (field hunters) |
+| Gold | Shop vendors |
+| Teal | Phantoms |
+| Orange | Currently selected population's route |
 
 ## Notes
-- You work entirely in **populations + behaviors**; the editor generates the underlying `<profile>`
-  for each population on save (named `mv_<population>`) and reads it back on load. Any **assign** and
-  **default** entries already in the file are preserved verbatim.
-- The exported file keeps the `xsd/FakePlayerBehavior.xsd` reference, so server-side schema
-  validation stays clean.
+
+- The editor writes one `<profile>` per population on save (named `mv_<population>`). Existing `<assign>` and `<default>` entries in the file are preserved verbatim.
+- Waypoint Z is seeded from the population's elevation so the server snaps each point to the correct ground layer.
+- The editor connects to the File System Access API for direct saves (Chrome/Edge). Firefox falls back to download.
