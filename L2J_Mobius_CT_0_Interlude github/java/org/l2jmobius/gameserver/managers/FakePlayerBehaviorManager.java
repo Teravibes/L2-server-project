@@ -503,6 +503,15 @@ public class FakePlayerBehaviorManager implements IXmlReader
 					npc.disableCoreAI(true);
 					npc.setImmobilized(true);
 				}
+				else
+				{
+					// Movers: flag as a walker and kill template random-walk, exactly like the native
+					// WalkingManager. Otherwise the core NPC AI drags the bot back to its spawn the moment it
+					// travels past MaxDriftRange (default 300) and issues its own random walks, both of which
+					// fight our route MOVE_TO commands - the "walks out then snaps back home" behavior.
+					npc.setWalker();
+					npc.setRandomWalking(false);
+				}
 				npc.broadcastInfo();
 
 				if (profile != null)
@@ -545,6 +554,14 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			final Profile profile = resolveProfile(npc);
 			if (profile != null)
 			{
+				// Same as deployOne: non-vendor movers must be walkers so the core AI does not drag them
+				// home past MaxDriftRange or random-walk over our route commands.
+				final FakePlayerAppearance look = npc.getFakePlayerAppearance();
+				if ((look == null) || (look.getPrivateStoreType() == 0))
+				{
+					npc.setWalker();
+					npc.setRandomWalking(false);
+				}
 				_bots.put(npc.getObjectId(), new BotState(profile, new Location(npc.getX(), npc.getY(), npc.getZ()), profile.radius, null));
 			}
 		}
