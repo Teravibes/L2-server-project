@@ -314,12 +314,7 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				return "party me first :)";
 			}
-			buddy.abortCast();
-			buddy.teleToLocation(destination);
-			if (state.following)
-			{
-				ThreadPool.schedule(() -> ensureFollow(state, owner), 1500); // re-grab follow once arrived
-			}
+			teleportBuddy(state, owner, destination);
 			return "ok, tping there now";
 		}
 
@@ -401,12 +396,7 @@ public class PhantomBuddyManager implements IXmlReader
 			final Location destination = matchDestination(tp.group(1));
 			if (destination != null)
 			{
-				buddy.abortCast();
-				buddy.teleToLocation(destination);
-				if (state.following)
-				{
-					ThreadPool.schedule(() -> ensureFollow(state, owner), 1500);
-				}
+				teleportBuddy(state, owner, destination);
 			}
 		}
 		if (partied && TAG_DISBAND.matcher(reply).find())
@@ -854,6 +844,26 @@ public class PhantomBuddyManager implements IXmlReader
 		if (buddy.isInParty())
 		{
 			buddy.getParty().broadcastCreatureSay(new CreatureSay(buddy, ChatType.PARTY, buddy.getName(), text), buddy);
+		}
+	}
+
+	/**
+	 * Teleports a buddy to a destination and finalizes it for a clientless player. {@code teleToLocation} only
+	 * calls {@code onTeleported()} (which re-spawns + broadcasts) for players whose client is <i>detached</i>;
+	 * a buddy has no client at all, so without this call it would be {@code decayMe()}'d but never re-spawned -
+	 * it shows on the radar but renders for nobody. We finalize it ourselves and re-broadcast its appearance,
+	 * then re-grab follow once it arrives.
+	 */
+	private void teleportBuddy(Buddy state, Player owner, Location destination)
+	{
+		final Player buddy = state.npc;
+		buddy.abortCast();
+		buddy.teleToLocation(destination);
+		buddy.onTeleported(); // no-op if teleToLocation already finalized it; required for the clientless buddy
+		buddy.broadcastUserInfo();
+		if (state.following)
+		{
+			ThreadPool.schedule(() -> ensureFollow(state, owner), 1500); // re-grab follow once arrived
 		}
 	}
 

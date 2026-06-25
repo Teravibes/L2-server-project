@@ -460,11 +460,12 @@ public class PhantomManager implements IXmlReader
 			{
 				// A buddy that is partied/claimed by a player gets a grace period: it stays alive even though the
 				// town it idled in is now empty (the player may have teleported it out to a hunting zone). The
-				// PhantomBuddyManager despawns it when the party disbands, the owner logs off, or grace runs out.
-				// Such a population stays active so updatePopulations keeps watching it.
+				// PhantomBuddyManager despawns it when the party disbands, the owner logs off, or grace runs out,
+				// and activate()'s top-up counts it so re-entering the town won't stack a second buddy on it. We
+				// leave the population deactivated regardless, so we don't re-run this every tick (which spammed
+				// the log with "despawned 0").
 				if (data.role.isBuddy() && data.buddyEngaged)
 				{
-					population.active = true;
 					continue;
 				}
 				despawn(data);
