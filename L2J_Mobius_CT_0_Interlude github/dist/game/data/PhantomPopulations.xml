@@ -20,6 +20,14 @@
 	  maxLevel  - highest level rolled (default = minLevel). Each phantom rolls a level in the range.
 	  respawn   - true (default): when a phantom dies it is despawned and a fresh one is spawned
 	              into the same group a short while later. false: dead phantoms are not replaced.
+	  role      - (optional) makes this a SUPPORT BUDDY instead of a field hunter. One of:
+	              BUDDY_ELDER (Elven Elder - mage buffs, heals, recharge),
+	              BUDDY_PROPHET (Prophet - fighter buffs), or
+	              BUDDY_WARCRYER (Warcryer - Orc buffs). A buddy spawns idle where placed (it does NOT hunt).
+	              Whisper it to party up (you invite, it auto-accepts), then it keeps you buffed and topped up
+	              to ~half health, follows you, warns when low on MP, and teleports to a named gatekeeper
+	              destination on command ("going to ruins of agony"). Place buddies in town at level 40+ so
+	              they have a real buff kit; count = how many copies to offer.
 
 	Optional area instead of a circle - draw a polygon with <point> children:
 	  <population name="..." x="..." y="..." z="..." count="10" minLevel="20" maxLevel="30">
@@ -34,6 +42,11 @@
 	Example (commented out - edit/uncomment or manage via the fpc-editor tool):
 
 	<population name="Giran Field" x="83400" y="147600" z="-3400" radius="1500" count="10" minLevel="20" maxLevel="30" respawn="true" />
+
+	Support buddies idling in Giran (whisper one to party up - it then buffs/heals/follows you):
+	<population name="Giran Elder" x="83400" y="147600" z="-3400" radius="120" count="1" minLevel="70" maxLevel="70" role="BUDDY_ELDER" />
+	<population name="Giran Prophet" x="83430" y="147640" z="-3400" radius="120" count="1" minLevel="70" maxLevel="70" role="BUDDY_PROPHET" />
+	<population name="Giran Warcryer" x="83370" y="147560" z="-3400" radius="120" count="1" minLevel="70" maxLevel="70" role="BUDDY_WARCRYER" />
 -->
 <list>
 </list>

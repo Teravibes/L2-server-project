@@ -90,8 +90,32 @@ Clientless `Player` objects (same pattern as Mobius offline traders) that farm v
 
 ### Caveats
 - Requires geodata for pathfinding.
-- No party system yet (buffers/healers deferred until parties are built).
 - No persistence across restarts — fresh phantoms on each boot.
+
+---
+
+## System D — Personal Support Buddies (buffer/healer in YOUR party)
+
+A **buddy** is a special phantom: a support-class clientless `Player` you can party as a personal buffer/healer. Built on the phantom spawn/despawn system, but instead of hunting it binds to one player and supports them.
+
+**Three roles**, placed in towns via the editor (phantom mode → **role** dropdown) or `PhantomPopulations.xml` `role="..."`:
+- **BUDDY_ELDER** — Elven Elder (mage buffs, heals, recharge)
+- **BUDDY_PROPHET** — Prophet (fighter buffs)
+- **BUDDY_WARCRYER** — Warcryer (Orc buffs)
+
+All three are given a Heal (Prophet/Warcryer don't have one in Interlude) so every buddy can top you up. Place them at **level 40+** for a real 2nd-class buff kit.
+
+**Flow:** a buddy idles where placed (no hunting), spawning/despawning by player proximity like any phantom. Whisper it to **party up** (you send the invite → `RequestJoinParty` auto-accepts server-side and binds it as owner). Once partied it:
+- keeps **you and itself buffed** (re-casts a buff when it's missing or within ~20s of expiring),
+- **heals you** when you drop below ~50% HP (and itself below ~40%),
+- **follows** you,
+- **watches its MP** → whispers "i'm low on mp" and, when safe, sits to recover,
+- **teleports** to a named gatekeeper destination on command ("going to ruins of agony") — same coordinates the gatekeeper uses, read from `data/teleporters/town/*.xml`,
+- survives a **grace period** if you teleport away or briefly log off (an engaged buddy is exempt from the proximity despawn); **"brb" / "give me 5"** extends it; party disband / logout despawns it.
+
+**Commands work with the LLM brain off** (deterministic keyword parsing): party, follow, stay, `<place>`, brb, disband, buff, status. **With the brain on** (`BUDDY` mode in `fpc_brain.py`), free-form whispers get a natural reply that can carry an action tag (`[[FOLLOW]] [[STAY]] [[TP:place]] [[GRACE:n]] [[BUFF]] [[DISBAND]]`), so abbreviations like "roa" → Ruins of Agony are understood. Brain offline ⇒ a short canned reply.
+
+**Files:** `managers/PhantomBuddyManager.java` (brain), buddy spawn/grace hooks in `PhantomManager.java`, whisper routing in `ChatWhisper.java`, party intercept in `RequestJoinParty.java`, `BUDDY` mode in `fpc_brain.py`, editor role selector in `tools/fpc-editor/index.html`.
 
 ---
 
@@ -126,7 +150,8 @@ Build environment: JDK 25 + Ant. Build cannot run in this dev environment (Java 
 ## What's next / pending (not done yet)
 
 **Phantoms**
-- **Parties** → then buffers/healers make sense (the big next rock; consider a lightweight "support role" buffer/healer that buffs nearby allies before a full party object).
+- ✅ **Parties + support buddies** — done (see System D): party a buffer/healer (Elder/Prophet/Warcryer) that buffs, heals, follows, and teleports with you.
+- Buddy polish: on disband the buddy despawns where it stands (could walk/TP back to town first); a sitting OOM buddy can lose a fast-moving owner; pure support only (no assist-attack yet — deferred as a future toggle); buddy combat-support thresholds are constants in `PhantomBuddyManager` (lift into config with the rest).
 - Lift phantom tuning (post-kill/dispersal/roam/rest values, currently grouped constants in `PhantomManager`) into a config file so they're adjustable without a rebuild.
 - OOM-mage kite edge case: if a same-speed mob never lets the mage break off, it keeps retreating (hunt stopped, no potions) and could die instead of resting — decide between sit-under-fire after N failed retreats vs. keeping HP-potion sustain while fleeing.
 - Optionally tighten the target-deconflict interval (1s → ~0.4–0.5s) to close the brief window where two phantoms can flash onto one mob before it resolves.
@@ -152,6 +177,7 @@ Build environment: JDK 25 + Ant. Build cannot run in this dev environment (Java 
 | Route recorder (GM tool) | `java/.../managers/RouteRecorder.java` |
 | Route data loader | `java/.../data/xml/RouteData.java` |
 | Phantom manager | `java/.../managers/PhantomManager.java` |
+| Buddy manager (support buffer/healer) | `java/.../managers/PhantomBuddyManager.java` |
 | Appearance factory | `java/.../managers/FakePlayerAppearanceFactory.java` |
 | Store factory / manager | `java/.../managers/FakePlayerStoreFactory.java`, `FakePlayerStoreManager.java` |
 | Appearance holder | `java/.../model/actor/holders/npc/FakePlayerAppearance.java` |
@@ -164,4 +190,4 @@ Build environment: JDK 25 + Ant. Build cannot run in this dev environment (Java 
 | Admin route commands | `dist/.../scripts/handlers/chat/commands/admin/AdminFpcRoute.java` |
 | Visual editor | `tools/fpc-editor/index.html` + `README.md` |
 
-Development branch: `claude/sweet-hamilton-moyuip`
+Development branch: `claude/beautiful-galileo-dvp91l`

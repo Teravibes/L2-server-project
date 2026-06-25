@@ -21,6 +21,8 @@
 package org.l2jmobius.gameserver.network.clientpackets;
 
 import org.l2jmobius.gameserver.config.GeneralConfig;
+import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
+import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.holders.player.BlockList;
@@ -62,7 +64,22 @@ public class RequestJoinParty extends ClientPacket
 			requestor.sendPacket(SystemMessageId.YOU_MUST_FIRST_SELECT_A_USER_TO_INVITE_TO_YOUR_PARTY);
 			return;
 		}
-		
+
+		// Support buddy: a clientless phantom cannot answer the normal invite dialog, so accept it server-side
+		// and bind it to the inviting player. (Must be checked before the offline-mode guard below, since a
+		// buddy has no client either.)
+		if (PhantomManager.getInstance().isBuddy(target))
+		{
+			final SystemMessage invited = new SystemMessage(SystemMessageId.YOU_HAVE_INVITED_S1_TO_YOUR_PARTY);
+			invited.addString(target.getName());
+			requestor.sendPacket(invited);
+			if (!PhantomBuddyManager.getInstance().onInvited(requestor, target))
+			{
+				requestor.sendMessage(target.getName() + " could not join your party right now.");
+			}
+			return;
+		}
+
 		if ((target.getClient() == null) || target.getClient().isDetached())
 		{
 			requestor.sendMessage("Player is in offline mode.");

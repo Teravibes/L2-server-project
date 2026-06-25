@@ -152,6 +152,16 @@
 				<div><label>minLevel</label><input id="f_minLevel" type="number" /></div>
 				<div><label>maxLevel</label><input id="f_maxLevel" type="number" /></div>
 			</div>
+			<div id="phantomOnly" style="display:none">
+				<label>role</label>
+				<select id="f_role">
+					<option value="">Field hunter (auto-hunt)</option>
+					<option value="BUDDY_ELDER">Buddy — Elven Elder (mage buffs, heals)</option>
+					<option value="BUDDY_PROPHET">Buddy — Prophet (fighter buffs)</option>
+					<option value="BUDDY_WARCRYER">Buddy — Warcryer (orc buffs)</option>
+				</select>
+				<div class="muted">A buddy idles where placed (no hunting). Whisper it to party up — it then buffs/heals/follows you and teleports on command. Use level 40+ for a full buff kit.</div>
+			</div>
 			<div id="npcOnly">
 				<label>behavior</label>
 				<select id="f_behavior">
@@ -259,6 +269,7 @@ function applyModeUi(){
 	document.getElementById('modeNpc').classList.toggle('sec', mode !== 'npc');
 	document.getElementById('modePhantom').classList.toggle('sec', mode !== 'phantom');
 	document.getElementById('npcOnly').style.display = (mode === 'phantom') ? 'none' : '';
+	document.getElementById('phantomOnly').style.display = (mode === 'phantom') ? '' : 'none';
 	document.getElementById('respawnText').textContent = (mode === 'phantom') ? 'respawn (replace on death)' : 'respawn (field hunters)';
 	document.getElementById('popSectionTitle').textContent = (mode === 'phantom') ? 'Phantom populations' : 'Populations';
 }
@@ -1162,7 +1173,7 @@ function setWaypointMode(on){
 
 // ---- population model ops ----
 function defaultPop(x, y){
-	if (mode === 'phantom') return { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, poly: [] };
+	if (mode === 'phantom') return { name: 'new_phantoms', x, y, z: -3000, radius: 800, count: 10, minLevel: 1, maxLevel: 20, respawn: true, role: '', poly: [] };
 	const d = BEHAVIOR_DEFAULTS.IDLE;
 	return { name: 'new_population', x, y, z: -3000, radius: 600, count: 10, minLevel: 1, maxLevel: 40,
 		behavior: 'IDLE', run: d.run, pauseMin: d.pauseMin, pauseMax: d.pauseMax, route: [], routeName: null, race: '', store: '', respawn: false, poly: [], waypointDelays: {}, routeReversed: false, fullStock: false };
@@ -1179,7 +1190,7 @@ function syncForm(){
 	if (!p) return;
 	for (const k of ['name','x','y','z','radius','count','minLevel','maxLevel']) document.getElementById('f_' + k).value = p[k] ?? '';
 	document.getElementById('f_respawn').checked = !!p.respawn;
-	if (mode === 'phantom') return;
+	if (mode === 'phantom') { document.getElementById('f_role').value = p.role || ''; return; }
 	document.getElementById('f_behavior').value = p.behavior || 'IDLE';
 	document.getElementById('f_race').value = p.race || '';
 	rebuildRouteDropdown();
@@ -1452,7 +1463,7 @@ function parsePhantomText(text){
 		if (node.tagName !== 'population') continue;
 		const g = a => node.getAttribute(a);
 		const poly = [...node.children].filter(n => n.tagName === 'point').map(n => ({ x: +n.getAttribute('x'), y: +n.getAttribute('y') }));
-		arr.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 800), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 1), respawn: g('respawn') !== 'false', poly });
+		arr.push({ name: g('name') || '', x: +g('x'), y: +g('y'), z: +g('z'), radius: +(g('radius') || 800), count: +(g('count') || 0), minLevel: +(g('minLevel') || 1), maxLevel: +(g('maxLevel') || 1), respawn: g('respawn') !== 'false', role: g('role') || '', poly });
 	}
 	return arr;
 }
@@ -1465,6 +1476,7 @@ function buildPhantomXml(){
 		if (hasPoly){ const c = polyCentroid(p.poly); ax = c.x; ay = c.y; ar = polyRadius(p.poly, c); }
 		let a = `name="${esc(p.name)}" x="${ax}" y="${ay}" z="${p.z}" radius="${ar}" count="${p.count}" minLevel="${p.minLevel}" maxLevel="${p.maxLevel}"`;
 		if (!p.respawn) a += ` respawn="false"`;
+		if (p.role) a += ` role="${esc(p.role)}"`;
 		if (hasPoly){
 			out += `\t<population ${a}>\n`;
 			p.poly.forEach(v => out += `\t\t<point x="${v.x}" y="${v.y}" z="${p.z}" />\n`);

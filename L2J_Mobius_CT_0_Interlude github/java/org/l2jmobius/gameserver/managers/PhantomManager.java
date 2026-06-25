@@ -41,6 +41,7 @@ import org.l2jmobius.gameserver.data.sql.CharInfoTable;
 import org.l2jmobius.gameserver.data.xml.ExperienceData;
 import org.l2jmobius.gameserver.data.xml.ItemData;
 import org.l2jmobius.gameserver.data.xml.PlayerTemplateData;
+import org.l2jmobius.gameserver.data.xml.SkillData;
 import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
@@ -119,6 +120,15 @@ public class PhantomManager implements IXmlReader
 	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
 	private static final int HP_POTION_COUNT = 20000;
 	private static final int HP_POTION_PERCENT = 60;
+	// Heal skill ids a buddy may already know (Heal, Battle Heal, Greater Heal, Greater Battle Heal). If it
+	// knows none (Prophet/Warcryer), it is granted Heal (1011) so every buddy can top its owner up.
+	private static final int[] HEAL_SKILL_IDS =
+	{
+		1011,
+		1015,
+		1217,
+		1218
+	};
 	// Minimum spacing between phantoms at spawn, so a group does not stack on one tile.
 	private static final int MIN_SEPARATION = 250;
 	// First-occupation FIGHTER class ids per race (verified in FakePlayerAppearanceFactory), weighted by
@@ -201,6 +211,62 @@ public class PhantomManager implements IXmlReader
 	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> MAGE_GEAR = new EnumMap<>(BodyPart.class);
 	private static volatile boolean _gearBuilt = false;
 
+	/**
+	 * A buddy is a support-class phantom that idles in a town (no auto-hunt) until a real player whispers it,
+	 * parties it, and uses it as a personal buffer/healer. Each role fixes the exact support class to spawn.
+	 * All three cast (mage gear loadout); Prophet/Warcryer get a basic Heal granted since their Interlude class
+	 * has none, so every buddy can top its owner up.
+	 */
+	enum BuddyRole
+	{
+		NONE(0),
+		ELDER(30), // Elven Elder - mage buffs, heals, recharge
+		PROPHET(17), // Prophet - fighter buffs (Heal granted)
+		WARCRYER(52); // Warcryer - Orc buffs (Heal granted)
+
+		final int classId;
+
+		BuddyRole(int classId)
+		{
+			this.classId = classId;
+		}
+
+		boolean isBuddy()
+		{
+			return this != NONE;
+		}
+
+		static BuddyRole fromString(String value)
+		{
+			if ((value == null) || value.isEmpty())
+			{
+				return NONE;
+			}
+			switch (value.trim().toUpperCase())
+			{
+				case "BUDDY_ELDER":
+				case "ELDER":
+				{
+					return ELDER;
+				}
+				case "BUDDY_PROPHET":
+				case "PROPHET":
+				{
+					return PROPHET;
+				}
+				case "BUDDY_WARCRYER":
+				case "WARCRYER":
+				{
+					return WARCRYER;
+				}
+				default:
+				{
+					return NONE;
+				}
+			}
+		}
+	}
+
 	/** A deployment group: where/how many phantoms spawn, their level range, and whether to respawn. */
 	private static class Population
 	{
@@ -211,6 +277,7 @@ public class PhantomManager implements IXmlReader
 		int minLevel = 1;
 		int maxLevel = 1;
 		boolean respawn = true;
+		BuddyRole role = BuddyRole.NONE; // NONE = ordinary field hunter; otherwise an idle support buddy
 		final List<Location> polygon = new ArrayList<>(); // optional area; spawn inside it instead of a circle
 		boolean active; // phantoms currently spawned (a real player is in range)
 		long emptySince; // when the last observer left this area (0 while a player is near)
@@ -222,6 +289,7 @@ public class PhantomManager implements IXmlReader
 		final Location home;
 		final Population population; // null for ad-hoc (admin) spawns
 		final boolean mage; // pure caster: needs the mage combat tick to position/kite it
+		final BuddyRole role; // NONE for hunters; otherwise this is an idle support buddy (see PhantomBuddyManager)
 		long deadSince; // 0 while alive
 		boolean dormant; // auto-hunt paused because no real player is near
 		boolean resting; // sitting to regenerate HP/MP
@@ -232,13 +300,15 @@ public class PhantomManager implements IXmlReader
 		int claimedOid; // object id of the monster this phantom currently owns (0 = none)
 		int lastMobX; // last known position of the engaged mob, so a caster can walk to the loot after a kill
 		int lastMobY;
+		volatile boolean buddyEngaged; // buddy is partied/claimed by a player: skip the proximity despawn (grace)
 
-		PhantomData(Player player, Location home, Population population, boolean mage)
+		PhantomData(Player player, Location home, Population population, boolean mage, BuddyRole role)
 		{
 			this.player = player;
 			this.home = home;
 			this.population = population;
 			this.mage = mage;
+			this.role = role;
 		}
 	}
 
@@ -279,6 +349,7 @@ public class PhantomManager implements IXmlReader
 			population.minLevel = set.getInt("minLevel", 1);
 			population.maxLevel = set.getInt("maxLevel", population.minLevel);
 			population.respawn = set.getBoolean("respawn", true);
+			population.role = BuddyRole.fromString(set.getString("role", ""));
 			forEach(populationNode, "point", pointNode ->
 			{
 				final StatSet p = new StatSet(parseAttributes(pointNode));
@@ -348,8 +419,23 @@ public class PhantomManager implements IXmlReader
 		{
 			LOGGER.warning(getClass().getSimpleName() + ": EnableAutoPlay is false in config/Custom/AutoPlay.ini - phantoms in '" + population.name + "' will not hunt.");
 		}
-		LOGGER.info(getClass().getSimpleName() + ": Activating population '" + population.name + "' (" + population.count + " phantoms).");
-		for (int i = 0; i < population.count; i++)
+		// A buddy that stayed alive on grace (followed its owner away and came back) is already counted: only
+		// top the group back up to its count, so we don't stack a second buddy on the lingering one.
+		int alive = 0;
+		for (PhantomData data : _phantoms.values())
+		{
+			if (data.population == population)
+			{
+				alive++;
+			}
+		}
+		final int toSpawn = population.count - alive;
+		if (toSpawn <= 0)
+		{
+			return;
+		}
+		LOGGER.info(getClass().getSimpleName() + ": Activating population '" + population.name + "' (" + toSpawn + " phantoms).");
+		for (int i = 0; i < toSpawn; i++)
 		{
 			ThreadPool.schedule(() ->
 			{
@@ -372,6 +458,15 @@ public class PhantomManager implements IXmlReader
 		{
 			if (data.population == population)
 			{
+				// A buddy that is partied/claimed by a player gets a grace period: it stays alive even though the
+				// town it idled in is now empty (the player may have teleported it out to a hunting zone). The
+				// PhantomBuddyManager despawns it when the party disbands, the owner logs off, or grace runs out.
+				// Such a population stays active so updatePopulations keeps watching it.
+				if (data.role.isBuddy() && data.buddyEngaged)
+				{
+					population.active = true;
+					continue;
+				}
 				despawn(data);
 				removed++;
 			}
@@ -504,13 +599,15 @@ public class PhantomManager implements IXmlReader
 		// it is idempotent for the already-snapped deploy locations.
 		final int groundZ = GeoEngine.getInstance().getHeight(location.getX(), location.getY(), location.getZ());
 		final Location spawnLocation = new Location(location.getX(), location.getY(), groundZ);
+		final BuddyRole role = (population != null) ? population.role : BuddyRole.NONE;
 		try
 		{
-			// Random race/body type. Most phantoms are melee fighters; a share are DD mages. Fall back to
-			// Human Fighter if a template is missing. Orcs/dwarves skew male, like the NPC appearance factory.
-			final boolean mage = Rnd.get(100) < MAGE_CHANCE;
+			// Buddies are a fixed support class (Elder/Prophet/Warcryer) and always cast, so they take the mage
+			// gear loadout. Ordinary phantoms roll a random race/body type: mostly melee fighters, a share DD
+			// mages. Either way fall back to Human Fighter if a template is missing.
+			final boolean mage = role.isBuddy() || (Rnd.get(100) < MAGE_CHANCE);
 			final int[] pool = mage ? MAGE_CLASS_POOL : FIGHTER_CLASS_POOL;
-			final int classId = pool[Rnd.get(pool.length)];
+			final int classId = role.isBuddy() ? role.classId : pool[Rnd.get(pool.length)];
 			PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
 			PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
 			if (template == null)
@@ -524,7 +621,8 @@ public class PhantomManager implements IXmlReader
 				return null;
 			}
 
-			final boolean female = ((classId == 44) || (classId == 53)) ? (Rnd.get(100) < 30) : Rnd.nextBoolean();
+			// Orc (Warcryer) and dwarf bodies skew male, like the NPC appearance factory.
+			final boolean female = ((classId == 44) || (classId == 53) || (role == BuddyRole.WARCRYER)) ? (Rnd.get(100) < 30) : Rnd.nextBoolean();
 			final PlayerAppearance appearance = new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
 			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance);
 			if (phantom == null)
@@ -544,17 +642,33 @@ public class PhantomManager implements IXmlReader
 			// nearby players receive already shows its full set. (A post-spawn equip update can be throttled
 			// or coalesced by broadcastCharInfo, leaving gear invisible even though it was equipped.)
 			phantom.setOnlineStatus(true, false);
-			outfit(phantom, level, mage);
+			if (role.isBuddy())
+			{
+				outfitBuddy(phantom, level, role);
+			}
+			else
+			{
+				outfit(phantom, level, mage);
+			}
 			phantom.refreshOverloaded();
 			enterWorld(phantom, spawnLocation);
 
-			final PhantomData data = new PhantomData(phantom, spawnLocation, population, mage);
+			final PhantomData data = new PhantomData(phantom, spawnLocation, population, mage, role);
 			_phantoms.put(phantom.getObjectId(), data);
-			// Fan out first; the auto-hunt starts when dispersal ends (see supervise), so a freshly spawned
-			// group spreads over its area instead of all converging on the nearest mobs at once.
-			beginDisperse(phantom, data);
+			if (role.isBuddy())
+			{
+				// Buddies don't hunt - they stand where placed until a real player whispers/parties them. The
+				// PhantomBuddyManager owns everything from there (buffing, following, commands). Keep self-buffed.
+				PhantomBuddyManager.getInstance().onBuddySpawned(data.player, role.name());
+			}
+			else
+			{
+				// Fan out first; the auto-hunt starts when dispersal ends (see supervise), so a freshly spawned
+				// group spreads over its area instead of all converging on the nearest mobs at once.
+				beginDisperse(phantom, data);
+			}
 			startSupervising();
-			LOGGER.info(getClass().getSimpleName() + ": Spawned phantom '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
+			LOGGER.info(getClass().getSimpleName() + ": Spawned " + (role.isBuddy() ? (role + " buddy") : "phantom") + " '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
 			return phantom;
 		}
 		catch (Exception e)
@@ -626,6 +740,63 @@ public class PhantomManager implements IXmlReader
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
+	}
+
+	/**
+	 * Outfits a support buddy: brings it to {@code level}, sets it directly to its fixed support class (no
+	 * random transfer), learns that class's full skill tree, gives it the mage gear loadout (magic weapon +
+	 * robe + spiritshots, so its casts hit faster), tops up its bars and guarantees it can heal. Unlike
+	 * {@link #outfit}, it does NOT register auto-hunt skills - a buddy never hunts; the PhantomBuddyManager
+	 * casts its buffs/heals by hand on the player it is partied with.
+	 * @param phantom the buddy
+	 * @param level the target level (should be 40+ so a 2nd-class buff kit is available)
+	 * @param role which support class to become
+	 */
+	private void outfitBuddy(Player phantom, int level, BuddyRole role)
+	{
+		if (level > 1)
+		{
+			final long currentExp = phantom.getExp();
+			final long targetExp = ExperienceData.getInstance().getExpForLevel(level);
+			if (targetExp > currentExp)
+			{
+				phantom.addExpAndSp(targetExp - currentExp, 0);
+			}
+		}
+		// Become the exact support class straight away (the base Mystic/Cleric template was used to create it).
+		if (phantom.getPlayerClass().getId() != role.classId)
+		{
+			phantom.setPlayerClass(role.classId);
+			phantom.setBaseClass(role.classId);
+		}
+		learnAllSkills(phantom);
+		grantHeal(phantom, level);
+		gear(phantom, level, true); // cast loadout
+		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
+		phantom.setCurrentCp(phantom.getMaxCp());
+	}
+
+	/**
+	 * Ensures a buddy can heal. The Elven Elder learns heals naturally; Prophet and Warcryer do not have one
+	 * in Interlude, so grant a basic Heal (id 1011) scaled to level - the user wants every buddy able to top
+	 * its owner up (to roughly half health), and this keeps that data-driven rather than per-class hard-coding.
+	 */
+	private void grantHeal(Player phantom, int level)
+	{
+		for (int healId : HEAL_SKILL_IDS)
+		{
+			if (phantom.getKnownSkill(healId) != null)
+			{
+				return; // already has a heal
+			}
+		}
+		// Heal (1011) has 18 levels; pick one in step with the buddy's level, capped at the table maximum.
+		final int healLevel = Math.max(1, Math.min(18, level / 4));
+		final Skill heal = SkillData.getInstance().getSkill(1011, healLevel);
+		if (heal != null)
+		{
+			phantom.addSkill(heal, true);
+		}
 	}
 
 	/**
@@ -1073,6 +1244,41 @@ public class PhantomManager implements IXmlReader
 		return _phantoms.size();
 	}
 
+	// ===== Buddy support API (called by PhantomBuddyManager) =====
+
+	/**
+	 * Marks/unmarks a buddy as engaged (partied or claimed by a player). An engaged buddy is exempt from the
+	 * proximity despawn so it can follow its owner out of the town it spawned in (see {@link #deactivate}).
+	 * @return {@code true} if the player is a live buddy phantom and the flag was set
+	 */
+	public boolean setBuddyEngaged(Player buddy, boolean engaged)
+	{
+		final PhantomData data = (buddy == null) ? null : _phantoms.get(buddy.getObjectId());
+		if ((data == null) || !data.role.isBuddy())
+		{
+			return false;
+		}
+		data.buddyEngaged = engaged;
+		return true;
+	}
+
+	/** @return {@code true} if the player is a live buddy phantom managed by this manager. */
+	public boolean isBuddy(Player player)
+	{
+		final PhantomData data = (player == null) ? null : _phantoms.get(player.getObjectId());
+		return (data != null) && data.role.isBuddy();
+	}
+
+	/** Despawns a single buddy (used by PhantomBuddyManager when a party ends / owner logs off / grace runs out). */
+	public void despawnBuddy(Player buddy)
+	{
+		final PhantomData data = (buddy == null) ? null : _phantoms.get(buddy.getObjectId());
+		if ((data != null) && data.role.isBuddy())
+		{
+			despawn(data);
+		}
+	}
+
 	private synchronized void startSupervising()
 	{
 		if (_supervising)
@@ -1094,9 +1300,9 @@ public class PhantomManager implements IXmlReader
 	{
 		for (PhantomData data : _phantoms.values())
 		{
-			if (!data.mage || data.dormant || data.resting || data.dispersing || (data.huntPauseUntil > 0))
+			if (!data.mage || data.role.isBuddy() || data.dormant || data.resting || data.dispersing || (data.huntPauseUntil > 0))
 			{
-				continue; // not hunting right now: fanning out, on a post-kill breather, resting or asleep
+				continue; // buddies never hunt; otherwise skip if fanning out, on a breather, resting or asleep
 			}
 			final Player mage = data.player;
 			try
@@ -1231,9 +1437,9 @@ public class PhantomManager implements IXmlReader
 			final Player phantom = data.player;
 			try
 			{
-				if (data.dormant || data.dispersing || phantom.isDead())
+				if (data.role.isBuddy() || data.dormant || data.dispersing || phantom.isDead())
 				{
-					continue;
+					continue; // buddies are not part of the hunt/deconflict
 				}
 
 				// Resting phantom that just came under threat: stand now, don't wait for the 5s supervise tick.
@@ -1509,6 +1715,14 @@ public class PhantomManager implements IXmlReader
 				if (World.getInstance().findObject(phantom.getObjectId()) == null)
 				{
 					_phantoms.remove(phantom.getObjectId());
+					continue;
+				}
+
+				// Buddies do not hunt/rest/roam: the PhantomBuddyManager owns their behaviour (idle self-buff,
+				// and - once partied - buffing/healing/following the owner). Skip all the hunter logic below.
+				if (data.role.isBuddy())
+				{
+					PhantomBuddyManager.getInstance().supervise(phantom);
 					continue;
 				}
 

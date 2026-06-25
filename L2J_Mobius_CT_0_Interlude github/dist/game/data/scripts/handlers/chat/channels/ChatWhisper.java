@@ -23,6 +23,8 @@ import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.data.xml.FakePlayerData;
 import org.l2jmobius.gameserver.handler.IChatHandler;
 import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
+import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
+import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.holders.player.BlockList;
@@ -98,6 +100,20 @@ public class ChatWhisper implements IChatHandler
 		}
 
 		final Player receiver = World.getInstance().getPlayer(target);
+
+		// Support buddy: a clientless phantom you can whisper to give orders (party / follow / tp / brb / heal).
+		// Routed before the offline-mode guard since a buddy has no client. The buddy answers with a whisper.
+		if ((receiver != null) && PhantomManager.getInstance().isBuddy(receiver))
+		{
+			activeChar.sendPacket(new CreatureSay(activeChar, type, "->" + receiver.getName(), text));
+			final String reply = PhantomBuddyManager.getInstance().handleWhisper(activeChar, receiver, text);
+			if ((reply != null) && !reply.isEmpty())
+			{
+				activeChar.sendPacket(new CreatureSay(receiver, ChatType.WHISPER, receiver.getName(), reply));
+			}
+			return;
+		}
+
 		if ((receiver != null) && !receiver.isSilenceMode(activeChar.getObjectId()))
 		{
 			if (GeneralConfig.JAIL_DISABLE_CHAT && receiver.isJailed() && !activeChar.isGM())

@@ -120,6 +120,7 @@ import org.l2jmobius.gameserver.managers.DimensionalRiftManager;
 import org.l2jmobius.gameserver.managers.EventDropManager;
 import org.l2jmobius.gameserver.managers.FakePlayerBehaviorManager;
 import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
+import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
 import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.managers.FishingChampionshipManager;
 import org.l2jmobius.gameserver.managers.GlobalVariablesManager;
@@ -293,6 +294,7 @@ public class GameServer
 		RouteData.getInstance();
 		FakePlayerBehaviorManager.getInstance();
 		PhantomManager.getInstance();
+		PhantomBuddyManager.getInstance();
 		StaticObjectData.getInstance();
 		CastleManager.getInstance().loadInstances();
 		SchemeBufferTable.getInstance();

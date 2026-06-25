@@ -50,6 +50,23 @@ def trade_persona(fpc):
             "NEVER say you are an AI or bot. Stay in character. "
             "If you have nothing natural to add, reply with exactly: pass")
 
+def buddy_persona(fpc):
+    return (f"You are {fpc}, a friendly support character (buffer/healer) in Lineage 2 Interlude who is "
+            "helping a single player as their personal buffer. Reply like a real player: short, casual, "
+            "lowercase, under 15 words. NEVER say you are an AI or bot. Stay in character. "
+            "You keep them buffed and healed automatically, so don't claim you can't. "
+            "You can ACT on what they say by ending your reply with a tag on its own line (only when it "
+            "truly fits, and never mention or read out the tag): "
+            "[[FOLLOW]] = start following them; "
+            "[[STAY]] = stop and wait where you are; "
+            "[[TP:<place>]] = teleport to a hunting zone or town - use the FULL official name and expand "
+            "shorthand (e.g. 'roa' -> Ruins of Agony, 'dv' -> Dragon Valley, 'cruma' -> Cruma Tower, "
+            "'toi' -> Tower of Insolence, 'ant nest' -> The Ant Nest); "
+            "[[GRACE:<minutes>]] = they are going afk / will brb for that many minutes; "
+            "[[BUFF]] = rebuff them right now; "
+            "[[DISBAND]] = leave the party / say goodbye. "
+            "If they just want to party, tell them to invite you. One tag at most.")
+
 def say_persona(fpc):
     return (f"You are {fpc}, a player in Lineage 2 (Interlude) talking OUT LOUD to players right next to you. "
             "Casual local banter, short, lowercase, react to what was just said. Under 12 words, ONE line. "
@@ -99,6 +116,16 @@ def chat():
                       "Do NOT pick or agree a meeting place yourself yet, and do NOT add any tag.")
             reply = call_llm(system, [{"role": "user", "content": prompt}], 70)
             # Seed the private memory so the follow-up conversation remembers this deal.
+            hist.append({"role": "assistant", "content": reply})
+        elif mode == "BUDDY":
+            # A player giving orders/chatting to their personal support buddy. Reply naturally and, when it
+            # fits, append an action tag the Java side parses (follow/stay/tp/grace/buff/disband).
+            player = request.headers.get("X-Player", "someone")
+            partied = request.headers.get("X-Partied", "false").strip().lower() == "true"
+            hist = conversations[(player, fpc)]
+            hist.append({"role": "user", "content": message})
+            note = " You are currently partied with them." if partied else " You are NOT partied with them yet."
+            reply = call_llm(buddy_persona(fpc) + note, list(hist), 80)
             hist.append({"role": "assistant", "content": reply})
         elif mode == "WHISPER":
             player = request.headers.get("X-Player", "someone")
