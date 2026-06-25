@@ -134,9 +134,16 @@ public class PhantomBuddyManager implements IXmlReader
 
 	protected PhantomBuddyManager()
 	{
+		load();
+	}
+
+	@Override
+	public void load()
+	{
 		// Reuse the real gatekeeper destination data so a buddy teleports to the exact spot a gatekeeper would
 		// drop the player (Ruins of Agony, Cruma Tower, ...). All town teleporter lists are scanned into one
 		// name -> location index.
+		_destinations.clear();
 		parseDatapackDirectory("data/teleporters/town", false);
 		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _destinations.size() + " teleport destinations for buddies.");
 	}
