@@ -1,24 +1,76 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <list xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="xsd/FakePlayerBehavior.xsd">
-	<profile name="loiter" type="WANDER" radius="150" run="false" pauseMin="25" pauseMax="80"/>
-	<profile name="mill" type="WANDER" radius="350" run="false" pauseMin="18" pauseMax="45"/>
-	<profile name="visit_giran" type="VISIT" run="false" pauseMin="25" pauseMax="70">
-		<point x="83485" y="147998" z="-3407"/> <!-- Gatekeeper -->
-		<point x="83192" y="146680" z="-3464"/> <!-- Warehouse -->
-		<point x="82651" y="146714" z="-3466"/> <!-- Dimensional Merchants -->
-		<point x="85055" y="146560" z="-3399"/> <!-- Blacksmith / weapon shops -->
-		<point x="85505" y="146208" z="-3399"/> <!-- Grocer -->
-		<point x="81360" y="150016" z="-3528"/> <!-- Mammon -->
+	<profile name="mv_giran_gatekeeper" type="WANDER" radius="240" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_giran_warehouse" type="WANDER" radius="200" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_giran_blacksmith" type="WANDER" radius="200" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_giran_grocer" type="WANDER" radius="180" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_giran_mammon" type="WANDER" radius="180" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_giran_movers" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="83485" y="147998" z="-3407"/>
+		<point x="83192" y="146680" z="-3464"/>
+		<point x="82651" y="146714" z="-3466"/>
+		<point x="85055" y="146560" z="-3399"/>
+		<point x="85505" y="146208" z="-3399"/>
+		<point x="81360" y="150016" z="-3528"/>
 	</profile>
-	<profile name="farmer" type="WANDER" radius="1400" run="true" pauseMin="3" pauseMax="9"/>
-	<profile name="hunter" type="FARM" run="true" pauseMin="2" pauseMax="6"/>
+	<profile name="mv_giran_crowd" type="WANDER" radius="400" run="false" pauseMin="18" pauseMax="45"/>
+	<profile name="mv_ti_gatekeeper" type="WANDER" radius="220" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_ti_movers" type="WANDER" radius="2752" run="false" pauseMin="18" pauseMax="45"/>
+	<profile name="mv_elf_gatekeeper" type="WANDER" radius="220" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_elf_movers" type="WANDER" radius="450" run="false" pauseMin="18" pauseMax="45"/>
+	<profile name="mv_delf_gatekeeper" type="WANDER" radius="220" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_delf_movers" type="WANDER" radius="450" run="false" pauseMin="18" pauseMax="45"/>
+	<profile name="mv_dwarf_gatekeeper" type="WANDER" radius="200" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_dwarf_movers" type="WANDER" radius="400" run="false" pauseMin="18" pauseMax="45"/>
+	<profile name="mv_orc_gatekeeper" type="WANDER" radius="220" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_orc_movers" type="WANDER" radius="450" run="false" pauseMin="18" pauseMax="45"/>
+	<profile name="mv_gludin_gatekeeper" type="WANDER" radius="260" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_gludin_movers" type="WANDER" radius="600" run="false" pauseMin="18" pauseMax="45"/>
+	<profile name="mv_gludio_gatekeeper" type="WANDER" radius="100" run="true" pauseMin="25" pauseMax="120"/>
+	<profile name="mv_giran_sellers" type="WANDER" radius="120" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_giran_buyers" type="WANDER" radius="120" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_giran_crafters" type="WANDER" radius="120" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_gludio_sellers" type="WANDER" radius="120" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_gludio_store_hopper" type="PATROL" run="true" pauseMin="10" pauseMax="30">
+		<point x="-14677" y="123488" z="-3000"/>
+		<point x="-15044" y="123400" z="-3000"/>
+		<point x="-15381" y="123407" z="-3000" delay="20"/>
+		<point x="-15477" y="123812" z="-3000"/>
+		<point x="-15441" y="123935" z="-3000"/>
+		<point x="-14780" y="123915" z="-3000"/>
+		<point x="-14413" y="123701" z="-3000"/>
+	</profile>
+	<profile name="mv_dion_village_runner" type="PATROL" run="true" pauseMin="10" pauseMax="30">
+		<point x="15571" y="142892" z="-2696" delay="60"/>
+		<point x="16789" y="144526" z="-2966"/>
+		<point x="17925" y="145928" z="-3112"/>
+		<point x="18592" y="145300" z="-3120"/>
+		<point x="19134" y="145592" z="-3107"/>
+		<point x="19264" y="146104" z="-3064" delay="60"/>
+		<point x="19272" y="145362" z="-3106"/>
+		<point x="18464" y="144840" z="-3072"/>
+		<point x="18234" y="144685" z="-3040"/>
+		<point x="18120" y="144578" z="-3040" delay="60"/>
+		<point x="18371" y="144154" z="-3061"/>
+		<point x="18868" y="144763" z="-3112"/>
+		<point x="19194" y="144127" z="-3080"/>
+		<point x="20086" y="144170" z="-3080"/>
+		<point x="20379" y="144557" z="-3088"/>
+		<point x="20568" y="144696" z="-3072"/>
+		<point x="20715" y="144751" z="-3064"/>
+		<point x="20765" y="144487" z="-3064" delay="120"/>
+	</profile>
+	<profile name="mv_dion_sellers" type="WANDER" radius="120" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_dion_sellers_gk" type="WANDER" radius="120" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="mv_new_population" type="WANDER" radius="100" run="false" pauseMin="25" pauseMax="80"/>
+	<profile name="loiter" type="WANDER" radius="150" run="false" pauseMin="25" pauseMax="80"/>
 
-	<population name="giran_gatekeeper" x="83384" y="148145" z="-3407" radius="240" count="15" minLevel="1" maxLevel="76" profile="loiter" />
-	<population name="giran_warehouse" x="83192" y="146680" z="-3464" radius="200" count="5" minLevel="1" maxLevel="76" profile="loiter" />
-	<population name="giran_blacksmith" x="85055" y="146560" z="-3399" radius="200" count="3" minLevel="15" maxLevel="76" profile="loiter" />
-	<population name="giran_grocer" x="85467" y="146349" z="-3399" radius="180" count="5" minLevel="1" maxLevel="50" profile="loiter" />
-	<population name="giran_mammon" x="81360" y="150016" z="-3528" radius="180" count="2" minLevel="20" maxLevel="76" profile="loiter" />
-	<population name="giran_movers" x="82718" y="148176" z="-3407" radius="1589" count="10" minLevel="15" maxLevel="76" profile="visit_giran">
+	<population name="giran_gatekeeper" x="83384" y="148145" z="-3407" radius="240" count="15" minLevel="1" maxLevel="76" profile="mv_giran_gatekeeper" />
+	<population name="giran_warehouse" x="83192" y="146680" z="-3464" radius="200" count="5" minLevel="1" maxLevel="76" profile="mv_giran_warehouse" />
+	<population name="giran_blacksmith" x="85055" y="146560" z="-3399" radius="200" count="3" minLevel="15" maxLevel="76" profile="mv_giran_blacksmith" />
+	<population name="giran_grocer" x="85467" y="146349" z="-3399" radius="180" count="5" minLevel="1" maxLevel="50" profile="mv_giran_grocer" />
+	<population name="giran_mammon" x="81360" y="150016" z="-3528" radius="180" count="2" minLevel="20" maxLevel="76" profile="mv_giran_mammon" />
+	<population name="giran_movers" x="82718" y="148176" z="-3407" radius="1589" count="10" minLevel="15" maxLevel="76" profile="mv_giran_movers">
 		<point x="83509" y="148065" z="-3407" />
 		<point x="81164" y="147919" z="-3407" />
 		<point x="81145" y="148403" z="-3407" />
@@ -27,9 +79,9 @@
 		<point x="83502" y="148069" z="-3407" />
 		<point x="83509" y="148058" z="-3407" />
 	</population>
-	<population name="giran_crowd" x="82443" y="148243" z="-3400" radius="400" count="22" minLevel="15" maxLevel="50" profile="mill" />
-	<population name="ti_gatekeeper" x="-83990" y="243336" z="-3700" radius="220" count="3" minLevel="1" maxLevel="18" profile="loiter" race="HUMAN" />
-	<population name="ti_movers" x="-83676" y="243620" z="-3700" radius="2752" count="3" minLevel="1" maxLevel="18" profile="mill" race="HUMAN">
+	<population name="giran_crowd" x="82443" y="148243" z="-3400" radius="400" count="22" minLevel="15" maxLevel="50" profile="mv_giran_crowd" />
+	<population name="ti_gatekeeper" x="-83990" y="243336" z="-3700" radius="220" count="3" minLevel="1" maxLevel="18" profile="mv_ti_gatekeeper" race="HUMAN" />
+	<population name="ti_movers" x="-83676" y="243620" z="-3700" radius="2752" count="3" minLevel="1" maxLevel="18" profile="mv_ti_movers" race="HUMAN">
 		<point x="-83569" y="244668" z="-3700" />
 		<point x="-83495" y="244828" z="-3700" />
 		<point x="-83112" y="244839" z="-3700" />
@@ -47,26 +99,18 @@
 		<point x="-85601" y="241780" z="-3700" />
 		<point x="-83575" y="244662" z="-3700" />
 	</population>
-	<population name="elf_gatekeeper" x="46926" y="51511" z="-2976" radius="220" count="3" minLevel="1" maxLevel="20" profile="loiter" race="ELF" />
-	<population name="elf_movers" x="46926" y="51511" z="-2976" radius="450" count="2" minLevel="1" maxLevel="20" profile="mill" race="ELF" />
-	<population name="delf_gatekeeper" x="12501" y="16768" z="-4500" radius="220" count="4" minLevel="1" maxLevel="20" profile="loiter" race="DARK_ELF" />
-	<population name="delf_movers" x="12501" y="16768" z="-4500" radius="450" count="2" minLevel="1" maxLevel="20" profile="mill" race="DARK_ELF" />
-	<population name="dwarf_gatekeeper" x="115072" y="-178176" z="-880" radius="200" count="11" minLevel="1" maxLevel="20" profile="loiter" race="DWARF" />
-	<population name="dwarf_movers" x="115072" y="-178176" z="-880" radius="400" count="2" minLevel="1" maxLevel="20" profile="mill" race="DWARF" />
-	<population name="orc_gatekeeper" x="-44316" y="-113136" z="-80" radius="220" count="3" minLevel="1" maxLevel="20" profile="loiter" race="ORC" />
-	<population name="orc_movers" x="-44316" y="-113136" z="-80" radius="450" count="1" minLevel="1" maxLevel="20" profile="mill" race="ORC" />
-	<population name="gludin_gatekeeper" x="-83520" y="150560" z="-3000" radius="260" count="12" minLevel="1" maxLevel="30" profile="loiter" />
-	<population name="gludin_movers" x="-83520" y="150560" z="-3000" radius="600" count="1" minLevel="1" maxLevel="30" profile="mill" />
-	<population name="gludio_gatekeeper" x="-12764" y="122682" z="-3000" radius="260" count="5" minLevel="5" maxLevel="35" profile="loiter" />
-	<population name="gludio_movers" x="-14252" y="123341" z="-3000" radius="526" count="5" minLevel="5" maxLevel="35" profile="mill">
-		<point x="-13989" y="122947" z="-3000" />
-		<point x="-14564" y="122918" z="-3000" />
-		<point x="-14660" y="123638" z="-3000" />
-		<point x="-14280" y="123846" z="-3000" />
-		<point x="-14033" y="123742" z="-3000" />
-		<point x="-13989" y="122955" z="-3000" />
-	</population>
-	<population name="Giran Sellers" x="82094" y="148147" z="-3000" radius="649" count="150" minLevel="1" maxLevel="40" profile="loiter" store="SELL" fullStock="true">
+	<population name="elf_gatekeeper" x="46926" y="51511" z="-2976" radius="220" count="3" minLevel="1" maxLevel="20" profile="mv_elf_gatekeeper" race="ELF" />
+	<population name="elf_movers" x="46926" y="51511" z="-2976" radius="450" count="2" minLevel="1" maxLevel="20" profile="mv_elf_movers" race="ELF" />
+	<population name="delf_gatekeeper" x="12501" y="16768" z="-4500" radius="220" count="4" minLevel="1" maxLevel="20" profile="mv_delf_gatekeeper" race="DARK_ELF" />
+	<population name="delf_movers" x="12501" y="16768" z="-4500" radius="450" count="2" minLevel="1" maxLevel="20" profile="mv_delf_movers" race="DARK_ELF" />
+	<population name="dwarf_gatekeeper" x="115072" y="-178176" z="-880" radius="200" count="11" minLevel="1" maxLevel="20" profile="mv_dwarf_gatekeeper" race="DWARF" />
+	<population name="dwarf_movers" x="115072" y="-178176" z="-880" radius="400" count="2" minLevel="1" maxLevel="20" profile="mv_dwarf_movers" race="DWARF" />
+	<population name="orc_gatekeeper" x="-44316" y="-113136" z="-80" radius="220" count="3" minLevel="1" maxLevel="20" profile="mv_orc_gatekeeper" race="ORC" />
+	<population name="orc_movers" x="-44316" y="-113136" z="-80" radius="450" count="1" minLevel="1" maxLevel="20" profile="mv_orc_movers" race="ORC" />
+	<population name="gludin_gatekeeper" x="-83520" y="150560" z="-3000" radius="260" count="12" minLevel="1" maxLevel="30" profile="mv_gludin_gatekeeper" />
+	<population name="gludin_movers" x="-83520" y="150560" z="-3000" radius="600" count="1" minLevel="1" maxLevel="30" profile="mv_gludin_movers" />
+	<population name="gludio_gatekeeper" x="-12726" y="122792" z="-3000" radius="100" count="5" minLevel="5" maxLevel="35" profile="mv_gludio_gatekeeper" />
+	<population name="Giran Sellers" x="82094" y="148147" z="-3000" radius="649" count="150" minLevel="1" maxLevel="40" profile="mv_giran_sellers" store="SELL" fullStock="true">
 		<point x="82590" y="147888" z="-3000" />
 		<point x="82583" y="148357" z="-3000" />
 		<point x="81986" y="148402" z="-3000" />
@@ -75,21 +119,26 @@
 		<point x="81532" y="147858" z="-3000" />
 		<point x="82590" y="147877" z="-3000" />
 	</population>
-	<population name="Giran Buyers" x="81434" y="148096" z="-3000" radius="467" count="100" minLevel="1" maxLevel="40" profile="loiter" store="BUY" fullStock="true">
+	<population name="Giran Buyers" x="81434" y="148096" z="-3000" radius="467" count="100" minLevel="1" maxLevel="40" profile="mv_giran_buyers" store="BUY" fullStock="true">
 		<point x="81671" y="147900" z="-3000" />
 		<point x="81599" y="148350" z="-3000" />
 		<point x="81115" y="148437" z="-3000" />
 		<point x="81119" y="147904" z="-3000" />
 		<point x="81667" y="147889" z="-3000" />
 	</population>
-	<population name="Giran Crafters" x="82359" y="148629" z="-3000" radius="305" count="10" minLevel="1" maxLevel="40" profile="loiter" store="CRAFT" fullStock="true">
+	<population name="Giran Crafters" x="82359" y="148629" z="-3000" radius="305" count="10" minLevel="1" maxLevel="40" profile="mv_giran_crafters" store="CRAFT" fullStock="true">
 		<point x="82177" y="148527" z="-3000" />
 		<point x="82612" y="148538" z="-3000" />
 		<point x="82627" y="148774" z="-3000" />
 		<point x="82207" y="148782" z="-3000" />
 		<point x="82173" y="148523" z="-3000" />
 	</population>
-	<population name="Gludio Sellers" x="-14411" y="123749" z="-3000" radius="100" count="5" minLevel="1" maxLevel="40" profile="loiter" store="SELL" />
+	<population name="Gludio Sellers" x="-14411" y="123749" z="-3000" radius="100" count="5" minLevel="1" maxLevel="20" profile="mv_gludio_sellers" store="SELL" />
+	<population name="Gludio Store hopper" x="-14411" y="123703" z="-3000" radius="100" count="1" minLevel="1" maxLevel="25" profile="mv_gludio_store_hopper" />
+	<population name="Dion Village Runner" x="15580" y="142894" z="-3000" radius="100" count="1" minLevel="1" maxLevel="40" profile="mv_dion_village_runner" route="Dion_village_run" />
+	<population name="Dion Sellers" x="19204" y="145606" z="-3000" radius="100" count="5" minLevel="20" maxLevel="40" profile="mv_dion_sellers" store="SELL" />
+	<population name="Dion Sellers GK" x="15636" y="142960" z="-3000" radius="100" count="7" minLevel="20" maxLevel="40" profile="mv_dion_sellers_gk" store="SELL" />
+	<population name="new_population" x="15602" y="142940" z="-3000" radius="100" count="6" minLevel="25" maxLevel="40" profile="mv_new_population" />
 
 	<default profile="loiter"/>
 </list>
