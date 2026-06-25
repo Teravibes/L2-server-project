@@ -658,8 +658,8 @@ public class PhantomManager implements IXmlReader
 			_phantoms.put(phantom.getObjectId(), data);
 			if (role.isBuddy())
 			{
-				// Buddies don't hunt - they stand where placed until a real player whispers/parties them. The
-				// PhantomBuddyManager owns everything from there (buffing, following, commands). Keep self-buffed.
+				// Buddies don't hunt - they stand where placed (and do nothing, not even self-buff) until a real
+				// player whispers/parties them. PhantomBuddyManager owns everything from there.
 				PhantomBuddyManager.getInstance().onBuddySpawned(data.player, role.name());
 			}
 			else

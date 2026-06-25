@@ -176,9 +176,9 @@ public class PhantomBuddyManager implements IXmlReader
 	}
 
 	/**
-	 * Per-buddy housekeeping on the slow {@link PhantomManager} supervisor tick (~5s): keep the buddy
-	 * self-buffed while idle and enforce the offline/brb grace. Combat-speed work (healing, following) is on
-	 * the fast tick below.
+	 * Per-buddy housekeeping on the slow {@link PhantomManager} supervisor tick (~5s). An idle (unpartied)
+	 * buddy just stands in town doing nothing - it does NOT self-buff until a real player parties it, at which
+	 * point the fast tick ({@link #serveOwner}) takes over buffing/healing/following.
 	 */
 	public void supervise(Player buddy)
 	{
@@ -191,12 +191,6 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			// A dead buddy is of no use; release the party bond and let PhantomManager recycle the corpse.
 			release(state, false);
-			return;
-		}
-		// Idle self-buff upkeep (partied buddies get this on the fast tick).
-		if (state.owner == null)
-		{
-			maintainBuffs(state, buddy, false);
 		}
 	}
 
@@ -657,7 +651,7 @@ public class PhantomBuddyManager implements IXmlReader
 				}
 				if (state.owner == null)
 				{
-					continue; // idle in town; self-buff is handled on the slow supervise tick
+					continue; // idle in town; does nothing (no self-buff) until a player parties it
 				}
 				if (buddy.isDead())
 				{
