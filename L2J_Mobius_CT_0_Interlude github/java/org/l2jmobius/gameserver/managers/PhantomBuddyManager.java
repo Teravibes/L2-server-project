@@ -216,6 +216,42 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			return null;
 		}
+		return parseCommand(state, owner, buddy, message, false);
+	}
+
+	/**
+	 * Handles a party-channel line: every buddy in the speaker's party that is bound to that speaker reacts to
+	 * it with the same commands as a whisper and answers in party chat. Lets you drive your buffers from party
+	 * chat, not only private whisper.
+	 */
+	public void handlePartyChat(Player speaker, String message)
+	{
+		if ((speaker == null) || (message == null) || !speaker.isInParty())
+		{
+			return;
+		}
+		for (Player member : speaker.getParty().getMembers())
+		{
+			final Buddy state = _buddies.get(member.getObjectId());
+			if ((state == null) || (state.owner != speaker))
+			{
+				continue; // not a buddy, or a buddy serving someone else
+			}
+			final String reply = parseCommand(state, speaker, member, message, true);
+			if ((reply != null) && !reply.isEmpty())
+			{
+				partyChat(member, reply);
+			}
+		}
+	}
+
+	/**
+	 * Deterministic command parser shared by the whisper and party-chat paths. Returns the buddy's reply for
+	 * the caller to deliver on the right channel, or {@code null} when the line was handed to the LLM brain
+	 * (which delivers its own reply asynchronously on the same channel).
+	 */
+	private String parseCommand(Buddy state, Player owner, Player buddy, String message, boolean party)
+	{
 		final String text = message.toLowerCase().trim();
 
 		// Party request: the buddy just agrees; the real bond forms when the player sends the invite (which
@@ -294,8 +330,9 @@ public class PhantomBuddyManager implements IXmlReader
 		}
 
 		// Not a recognised command: hand it to the LLM brain (off-thread) for a natural reply that may carry an
-		// action tag. Returns null here; the async task whispers the buddy's reply when it comes back.
-		askBrainAsync(owner, buddy, message);
+		// action tag. Returns null here; the async task delivers the buddy's reply (on this same channel) when
+		// it comes back.
+		askBrainAsync(owner, buddy, message, party);
 		return null;
 	}
 
@@ -303,7 +340,7 @@ public class PhantomBuddyManager implements IXmlReader
 	 * Asks the LLM brain to interpret a free-form whisper (slang, abbreviations, chit-chat) and reply, off the
 	 * network thread. The reply may carry an action tag which is executed and stripped before the buddy speaks.
 	 */
-	private void askBrainAsync(Player owner, Player buddy, String message)
+	private void askBrainAsync(Player owner, Player buddy, String message, boolean party)
 	{
 		final int ownerId = owner.getObjectId();
 		final int buddyId = buddy.getObjectId();
@@ -318,13 +355,23 @@ public class PhantomBuddyManager implements IXmlReader
 			String reply = callBrain(state.npc.getName(), ownerNow.getName(), isPartiedWith(state, ownerNow), message);
 			if ((reply == null) || reply.isEmpty())
 			{
-				whisper(state.npc, ownerNow, "hm? (try: party, follow, stay, a place to tp, or brb)");
-				return;
+				reply = "hm? (try: party, follow, stay, a place to tp, or brb)";
 			}
-			reply = applyBuddyTags(reply, state, ownerNow, state.npc);
+			else
+			{
+				reply = applyBuddyTags(reply, state, ownerNow, state.npc);
+			}
 			if (!reply.isEmpty())
 			{
-				whisper(state.npc, ownerNow, reply);
+				// Answer on the same channel the order came in on.
+				if (party && state.npc.isInParty())
+				{
+					partyChat(state.npc, reply);
+				}
+				else
+				{
+					whisper(state.npc, ownerNow, reply);
+				}
 			}
 		});
 	}
@@ -798,6 +845,15 @@ public class PhantomBuddyManager implements IXmlReader
 		if ((owner != null) && owner.isOnline())
 		{
 			owner.sendPacket(new CreatureSay(buddy, ChatType.WHISPER, buddy.getName(), text));
+		}
+	}
+
+	/** Speaks a line into the buddy's party channel so every member sees it (used when ordered via party chat). */
+	private void partyChat(Player buddy, String text)
+	{
+		if (buddy.isInParty())
+		{
+			buddy.getParty().broadcastCreatureSay(new CreatureSay(buddy, ChatType.PARTY, buddy.getName(), text), buddy);
 		}
 	}
 
