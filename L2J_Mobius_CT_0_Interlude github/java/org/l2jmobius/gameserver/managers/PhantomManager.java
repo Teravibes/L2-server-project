@@ -46,6 +46,7 @@ import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
+import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
@@ -178,6 +179,10 @@ public class PhantomManager implements IXmlReader
 	// nearest mobs the instant they spawn. DISPERSE_MIN_RADIUS_PCT is the closest-to-edge they aim for.
 	private static final long DISPERSE_DURATION = 4500;
 	private static final double DISPERSE_MIN_RADIUS_PCT = 0.55;
+	// Caster looting: after a kill a mage walks to the corpse so the auto-pickup (which it can't reach from
+	// cast range) grabs the drop; the walk ends on arrival or after the cap.
+	private static final int LOOT_WALK_RANGE = 180;
+	private static final long LOOT_WALK_MAX = 6000;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -225,6 +230,8 @@ public class PhantomManager implements IXmlReader
 		long disperseUntil; // when dispersal ends and the auto-hunt starts
 		long huntPauseUntil; // post-kill breather: paused, standing, until this time (0 = hunting)
 		int claimedOid; // object id of the monster this phantom currently owns (0 = none)
+		int lastMobX; // last known position of the engaged mob, so a caster can walk to the loot after a kill
+		int lastMobY;
 
 		PhantomData(Player player, Location home, Population population, boolean mage)
 		{
@@ -1098,12 +1105,33 @@ public class PhantomManager implements IXmlReader
 				{
 					continue; // don't interrupt a cast or fight a stun
 				}
-				if ((mage.getCurrentMpPercent() < MAGE_CAST_MP_PERCENT) && !mage.isInCombat() && !isMonsterNear(mage))
+				// Out of MP: a caster must NOT melee. Disengage and rest to regen; if a mob is on it, back away
+				// first and rest once clear. Stop the hunt so AutoPlay doesn't re-target it while it recovers.
+				if (mage.getCurrentMpPercent() < MAGE_CAST_MP_PERCENT)
 				{
+					// Stop the hunt so AutoPlay doesn't re-target it while it recovers.
+					if (mage.isAutoPlaying())
+					{
+						AutoPlayTaskManager.getInstance().stopAutoPlay(mage);
+						AutoUseTaskManager.getInstance().stopAutoUseTask(mage);
+					}
 					mage.setTarget(null);
-					startRest(mage);
-					data.resting = true;
+					if (mage.isInCombat() || isMonsterNear(mage))
+					{
+						retreatMage(mage); // kite away from the nearest mob; rest once safe
+					}
+					else
+					{
+						startRest(mage);
+						data.resting = true;
+					}
 					continue;
+				}
+				// MP back above the floor: if the OOM handling above had stopped the hunt (recovered while
+				// backing off, without ever sitting), resume it now.
+				if (!mage.isAutoPlaying())
+				{
+					enableAutoHunt(mage, true);
 				}
 				final WorldObject target = mage.getTarget();
 				if (!(target instanceof Monster) || ((Monster) target).isDead())
@@ -1119,21 +1147,9 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
-	/** Holds a mage at casting range to nuke; when out of MP it melees the target instead of standing idle. */
+	/** Holds a mage at casting range so AutoUse can nuke. (Out-of-MP handling lives in {@link #mageCombat}.) */
 	private void positionMage(Player mage, Monster target)
 	{
-		// Out of MP to nuke: a pure caster has no auto-attack action, so AutoPlay leaves it passive and it
-		// would just stand in combat range drinking potions. Melee the target with its weapon until MP comes
-		// back, then casting resumes (the canCast branch below repositions and AutoUse nukes again).
-		if (mage.getCurrentMpPercent() < MAGE_CAST_MP_PERCENT)
-		{
-			if (mage.getAI().getIntention() != Intention.ATTACK)
-			{
-				mage.setRunning();
-				mage.getAI().setIntention(Intention.ATTACK, target);
-			}
-			return;
-		}
 		double dx = mage.getX() - target.getX();
 		double dy = mage.getY() - target.getY();
 		double distance = Math.hypot(dx, dy);
@@ -1154,14 +1170,44 @@ public class PhantomManager implements IXmlReader
 		mage.getAI().setIntention(Intention.MOVE_TO, destination);
 	}
 
-	/**
-	 * Spreads phantoms over the available monsters instead of letting them gang one. Each tick, for every
-	 * phantom engaged on a monster: if a real (client) player is fighting that monster the phantom yields;
-	 * if two phantoms share a monster the farther one yields. A yielded phantom drops its target so the
-	 * native AutoPlay (with respectful hunting on) re-picks a free monster on its next pass. This closes the
-	 * gap in respectful hunting, which only filters at selection time (two phantoms can lock the same mob
-	 * before either aggros it, and a phantom never drops a mob a player engages after it locked on).
-	 */
+	/** Kites a mage one short step directly away from the nearest mob so it can break off and rest when OOM. */
+	private void retreatMage(Player mage)
+	{
+		Monster nearest = null;
+		double best = Double.MAX_VALUE;
+		for (Monster monster : World.getInstance().getVisibleObjectsInRange(mage, Monster.class, REST_DANGER_RANGE))
+		{
+			if (monster.isDead())
+			{
+				continue;
+			}
+			final double distance = mage.calculateDistance2D(monster);
+			if (distance < best)
+			{
+				best = distance;
+				nearest = monster;
+			}
+		}
+		if (nearest == null)
+		{
+			return;
+		}
+		double dx = mage.getX() - nearest.getX();
+		double dy = mage.getY() - nearest.getY();
+		double length = Math.hypot(dx, dy);
+		if (length < 1)
+		{
+			dx = 1;
+			dy = 0;
+			length = 1;
+		}
+		final int x = mage.getX() + (int) ((dx / length) * 300);
+		final int y = mage.getY() + (int) ((dy / length) * 300);
+		final Location destination = GeoEngine.getInstance().getValidLocation(mage, new Location(x, y, mage.getZ()));
+		mage.setRunning();
+		mage.getAI().setIntention(Intention.MOVE_TO, destination);
+	}
+
 	/**
 	 * Authoritative target assignment (runs every {@link #DECONFLICT_INTERVAL}). Two passes:
 	 * <ol>
@@ -1202,10 +1248,13 @@ public class PhantomManager implements IXmlReader
 					continue;
 				}
 
-				// Post-kill breather: standing still; resume hunting when it elapses.
+				// Post-kill breather: a fighter stands still; a mage is walking to its drop. Resume the hunt when
+				// the timer elapses, or as soon as a looting mage reaches the corpse (then AutoPlay's pickup,
+				// which it prioritises over re-targeting, grabs the drop).
 				if (data.huntPauseUntil > 0)
 				{
-					if (now >= data.huntPauseUntil)
+					final boolean reachedLoot = data.mage && (Math.hypot(phantom.getX() - data.lastMobX, phantom.getY() - data.lastMobY) <= LOOT_WALK_RANGE);
+					if (reachedLoot || (now >= data.huntPauseUntil))
 					{
 						data.huntPauseUntil = 0;
 						enableAutoHunt(phantom, data.mage);
@@ -1244,6 +1293,10 @@ public class PhantomManager implements IXmlReader
 					needsTarget.add(data);
 					continue;
 				}
+				// Remember where the mob is, so a caster can walk to its drop after the kill (loot is at the
+				// corpse, well outside a mage's cast-range pickup radius).
+				data.lastMobX = monster.getX();
+				data.lastMobY = monster.getY();
 				final int id = monster.getObjectId();
 				final Player cur = owner.get(id);
 				if (cur == null)
@@ -1332,17 +1385,32 @@ public class PhantomManager implements IXmlReader
 		return best;
 	}
 
-	/** Starts a post-kill breather: stops the auto-hunt and stands the phantom still for a short random pause. */
+	/**
+	 * Starts a post-kill breather: stops the auto-hunt so the phantom does not instantly chain the next pull.
+	 * A fighter stands still for a short random pause (its loot is already underfoot). A mage instead walks to
+	 * the corpse it just dropped from cast range, so it ends the pause standing on the loot and the auto-pickup
+	 * collects it when the hunt resumes.
+	 */
 	private void beginHuntPause(Player phantom, PhantomData data, long now)
 	{
-		data.huntPauseUntil = now + Rnd.get((int) POST_KILL_DELAY_MIN, (int) POST_KILL_DELAY_MAX);
 		if (phantom.isAutoPlaying())
 		{
 			AutoPlayTaskManager.getInstance().stopAutoPlay(phantom);
 			AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
 		}
 		phantom.setTarget(null);
-		phantom.getAI().setIntention(Intention.IDLE);
+		if (data.mage && ((data.lastMobX != 0) || (data.lastMobY != 0)))
+		{
+			data.huntPauseUntil = now + LOOT_WALK_MAX; // ended early on arrival (see the breather-resume check)
+			final Location loot = GeoEngine.getInstance().getValidLocation(phantom, new Location(data.lastMobX, data.lastMobY, phantom.getZ()));
+			phantom.setRunning();
+			phantom.getAI().setIntention(Intention.MOVE_TO, loot);
+		}
+		else
+		{
+			data.huntPauseUntil = now + Rnd.get((int) POST_KILL_DELAY_MIN, (int) POST_KILL_DELAY_MAX);
+			phantom.getAI().setIntention(Intention.IDLE);
+		}
 	}
 
 	/** Begins the initial fan-out: marks the phantom dispersing and sends it toward its area's perimeter. */
@@ -1398,9 +1466,22 @@ public class PhantomManager implements IXmlReader
 	/** @return {@code true} if a real, client-connected player is fighting this monster (phantoms must defer). */
 	private static boolean isContestedByPlayer(Monster monster)
 	{
-		final WorldObject monsterTarget = monster.getTarget();
 		// Phantoms/offline players have no client; only a genuine player counts as "the player is hitting it".
-		return (monsterTarget instanceof Player) && !((Player) monsterTarget).isInOfflineMode();
+		final WorldObject monsterTarget = monster.getTarget();
+		if ((monsterTarget instanceof Player) && !((Player) monsterTarget).isInOfflineMode())
+		{
+			return true;
+		}
+		// getTarget() alone misses it once a phantom has locked the mob (the mob then targets the phantom), so
+		// also honour the aggro list: if any real player has put damage/hate on it, the phantom yields.
+		for (Creature attacker : monster.getAggroList().keySet())
+		{
+			if (attacker.isPlayer() && !attacker.asPlayer().isInOfflineMode())
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Drops a phantom's current target and stops its attack so AutoPlay re-selects a free monster. */
@@ -1613,11 +1694,13 @@ public class PhantomManager implements IXmlReader
 	/** Sits the phantom down to regenerate, pausing the auto-hunt while it rests. */
 	private void startRest(Player phantom)
 	{
+		// Stop both unconditionally: the OOM-mage path may have already stopped AutoPlay on its own, and a
+		// sitting phantom must not keep an AutoUse task trying to act.
 		if (phantom.isAutoPlaying())
 		{
 			AutoPlayTaskManager.getInstance().stopAutoPlay(phantom);
-			AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
 		}
+		AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
 		if (!phantom.isSitting())
 		{
 			phantom.sitDown();
