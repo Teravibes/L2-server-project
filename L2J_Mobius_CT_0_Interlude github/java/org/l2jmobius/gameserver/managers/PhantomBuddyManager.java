@@ -39,6 +39,7 @@ import org.w3c.dom.Document;
 
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.IXmlReader;
+import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.ai.Intention;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
@@ -121,6 +122,8 @@ public class PhantomBuddyManager implements IXmlReader
 		long lastMpWarn;
 		List<Skill> buffs; // beneficial buffs to maintain (lazy)
 		Skill heal; // best heal it knows (lazy)
+		Location pendingDestination; // a place the buddy proposed; teleports only once the owner confirms
+		String pendingDestName;
 
 		Buddy(Player npc)
 		{
@@ -254,11 +257,36 @@ public class PhantomBuddyManager implements IXmlReader
 	{
 		final String text = message.toLowerCase().trim();
 
-		// Party request: the buddy just agrees; the real bond forms when the player sends the invite (which
-		// RequestJoinParty auto-accepts and routes to onInvited).
-		if (containsAny(text, "party", "group", "join me", "wanna pt", "want to pt", "lets party", "let's party"))
+		// Pending teleport confirmation: if the buddy already proposed a place, a yes/no settles it before any
+		// other keyword is parsed (so a bare "go"/"yes" finishes the trip rather than matching something else).
+		if (state.pendingDestination != null)
 		{
-			return "sure, invite me";
+			if (isAffirmative(text))
+			{
+				final Location destination = state.pendingDestination;
+				final String name = state.pendingDestName;
+				state.pendingDestination = null;
+				state.pendingDestName = null;
+				teleportBuddy(state, owner, destination);
+				deliver(state, owner, party, "k, heading to " + name + " now");
+				return null;
+			}
+			if (isNegative(text))
+			{
+				state.pendingDestination = null;
+				state.pendingDestName = null;
+				deliver(state, owner, party, "k, staying put");
+				return null;
+			}
+			// Neither: fall through (they may have changed the subject or named a different place).
+		}
+
+		// Party request: the buddy always agrees - that's the whole point. The real bond forms when the player
+		// sends the invite (RequestJoinParty auto-accepts and routes to onInvited).
+		if (containsAny(text, "party", "group", "join me", "wanna pt", "want to pt", "lets party", "let's party", "lets pt", "lf buff", "can you buff"))
+		{
+			deliver(state, owner, party, isPartiedWith(state, owner) ? "already with you :)" : "sure, invite me");
+			return null;
 		}
 
 		// Follow / stay.
@@ -266,23 +294,27 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			if (!isPartiedWith(state, owner))
 			{
-				return "party me first :)";
+				deliver(state, owner, party, "party me first :)");
+				return null;
 			}
 			state.following = true;
-			return "ok, following you";
+			deliver(state, owner, party, "ok, following you");
+			return null;
 		}
 		if (containsAny(text, "stay", "wait here", "hold here", "stop following"))
 		{
 			state.following = false;
 			buddy.getAI().setIntention(Intention.IDLE);
-			return "k, waiting here";
+			deliver(state, owner, party, "k, waiting here");
+			return null;
 		}
 
 		// Grace extension (brb / give me a minute).
 		if (containsAny(text, "brb", "be right back", "give me", "gimme", "min", "sec", "moment", "afk"))
 		{
 			state.graceUntil = System.currentTimeMillis() + BRB_GRACE;
-			return "np, take your time";
+			deliver(state, owner, party, "np, take your time");
+			return null;
 		}
 
 		// Disband / dismiss.
@@ -291,44 +323,145 @@ public class PhantomBuddyManager implements IXmlReader
 			if (isPartiedWith(state, owner))
 			{
 				release(state, true);
-				return "gl hf o/";
+				deliver(state, owner, party, "gl hf o/");
+				return null;
 			}
-			return "we're not partied";
+			deliver(state, owner, party, "we're not partied");
+			return null;
 		}
 
 		// Re-buff on demand.
 		if (containsAny(text, "buff", "rebuff"))
 		{
-			if (!isPartiedWith(state, owner))
-			{
-				return "party me first :)";
-			}
-			return "buffing you up";
+			deliver(state, owner, party, isPartiedWith(state, owner) ? "buffing you up" : "party me first :)");
+			return null;
 		}
 
-		// Teleport to a named gatekeeper destination, e.g. "going to ruins of agony" / "tp cruma tower".
-		final Location destination = matchDestination(text);
-		if (destination != null)
+		// Teleport to a named gatekeeper destination. An explicit travel order ("tp to X", "go to X", "take me
+		// to X") goes now; a bare mention is treated as a proposal and waits for the owner to confirm, so the
+		// buddy never yanks them somewhere uninvited.
+		final Map.Entry<String, Location> dest = matchDestinationEntry(text);
+		if (dest != null)
 		{
 			if (!isPartiedWith(state, owner))
 			{
-				return "party me first :)";
+				deliver(state, owner, party, "party me first :)");
+				return null;
 			}
-			teleportBuddy(state, owner, destination);
-			return "ok, tping there now";
+			if (isTravelOrder(text))
+			{
+				state.pendingDestination = null;
+				state.pendingDestName = null;
+				teleportBuddy(state, owner, dest.getValue());
+				deliver(state, owner, party, "ok, heading to " + dest.getKey() + " now");
+			}
+			else
+			{
+				state.pendingDestination = dest.getValue();
+				state.pendingDestName = dest.getKey();
+				deliver(state, owner, party, "wanna head to " + dest.getKey() + "? say the word");
+			}
+			return null;
 		}
 
 		// Status query.
 		if (containsAny(text, "mp?", "your mp", "how is your mp", "hp?", "status"))
 		{
-			return "hp " + buddy.getCurrentHpPercent() + "% / mp " + buddy.getCurrentMpPercent() + "%";
+			deliver(state, owner, party, "hp " + buddy.getCurrentHpPercent() + "% / mp " + buddy.getCurrentMpPercent() + "%");
+			return null;
 		}
 
 		// Not a recognised command: hand it to the LLM brain (off-thread) for a natural reply that may carry an
-		// action tag. Returns null here; the async task delivers the buddy's reply (on this same channel) when
-		// it comes back.
+		// action tag. The async task delivers the buddy's reply (on this same channel) when it comes back.
 		askBrainAsync(owner, buddy, message, party);
 		return null;
+	}
+
+	/** Sends a buddy reply after a short, human-like pause, on the channel the order arrived on. */
+	private void deliver(Buddy state, Player owner, boolean party, String text)
+	{
+		if ((text == null) || text.isEmpty())
+		{
+			return;
+		}
+		final long delay = 900 + Rnd.get(1300); // ~0.9-2.2s, so it doesn't fire the instant you hit enter
+		ThreadPool.schedule(() ->
+		{
+			if (state.npc.isDead())
+			{
+				return;
+			}
+			if (party && state.npc.isInParty())
+			{
+				partyChat(state.npc, text);
+			}
+			else
+			{
+				whisper(state.npc, owner, text);
+			}
+		}, delay);
+	}
+
+	/** A short word/phrase a player would use to confirm a proposed teleport. */
+	private static boolean isAffirmative(String text)
+	{
+		if (containsAny(text, "lets go", "let's go", "sounds good", "do it", "go for it", "head there", "take me"))
+		{
+			return true;
+		}
+		for (String word : text.split("[^a-z]+"))
+		{
+			switch (word)
+			{
+				case "yes":
+				case "yep":
+				case "yeah":
+				case "yea":
+				case "ye":
+				case "yup":
+				case "ok":
+				case "okay":
+				case "sure":
+				case "go":
+				case "y":
+				case "alright":
+				case "aight":
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/** A short word/phrase a player would use to decline a proposed teleport. */
+	private static boolean isNegative(String text)
+	{
+		if (containsAny(text, "not yet", "no thanks", "never mind", "nvm", "hold on", "stay here", "stay put"))
+		{
+			return true;
+		}
+		for (String word : text.split("[^a-z]+"))
+		{
+			switch (word)
+			{
+				case "no":
+				case "nah":
+				case "nope":
+				case "wait":
+				case "cancel":
+				{
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+	/** {@code true} when the message is an explicit order to travel now, not just mentioning a place. */
+	private static boolean isTravelOrder(String text)
+	{
+		return containsAny(text, "tp", "teleport", "port to", "port us", "go to", "lets go", "let's go", "take me", "bring me", "head to", "lets head", "move to", "warp", "send us", "lets tp", "go there");
 	}
 
 	/**
@@ -354,7 +487,7 @@ public class PhantomBuddyManager implements IXmlReader
 			}
 			else
 			{
-				reply = applyBuddyTags(reply, state, ownerNow, state.npc);
+				reply = applyBuddyTags(reply, state, ownerNow, state.npc, message);
 			}
 			if (!reply.isEmpty())
 			{
@@ -372,7 +505,7 @@ public class PhantomBuddyManager implements IXmlReader
 	}
 
 	/** Executes any action tag in the brain's reply and returns the cleaned, speakable text. */
-	private String applyBuddyTags(String reply, Buddy state, Player owner, Player buddy)
+	private String applyBuddyTags(String reply, Buddy state, Player owner, Player buddy, String playerMessage)
 	{
 		final boolean partied = isPartiedWith(state, owner);
 		if (partied && TAG_FOLLOW.matcher(reply).find())
@@ -393,10 +526,23 @@ public class PhantomBuddyManager implements IXmlReader
 		final Matcher tp = TAG_TP.matcher(reply);
 		if (partied && tp.find())
 		{
-			final Location destination = matchDestination(tp.group(1));
-			if (destination != null)
+			final Map.Entry<String, Location> dest = matchDestinationEntry(tp.group(1));
+			if (dest != null)
 			{
-				teleportBuddy(state, owner, destination);
+				// Only teleport straight away if the player actually ordered the trip. When the buddy is just
+				// recommending a spot ("cruma's good xp, wanna go?"), stash it and wait for them to confirm
+				// instead of yanking them there mid-sentence.
+				if (isTravelOrder(playerMessage.toLowerCase()))
+				{
+					state.pendingDestination = null;
+					state.pendingDestName = null;
+					teleportBuddy(state, owner, dest.getValue());
+				}
+				else
+				{
+					state.pendingDestination = dest.getValue();
+					state.pendingDestName = dest.getKey();
+				}
 			}
 		}
 		if (partied && TAG_DISBAND.matcher(reply).find())
@@ -478,7 +624,8 @@ public class PhantomBuddyManager implements IXmlReader
 		state.graceUntil = 0;
 		PhantomManager.getInstance().setBuddyEngaged(buddy, true); // exempt from the proximity despawn
 		ensureFollow(state, owner);
-		whisper(buddy, owner, "ok partied, i'll keep you buffed. say a place to tp, or brb if you need a sec");
+		// Greet after a short pause rather than the instant the invite lands, so it feels like a person.
+		deliver(state, owner, false, "ok partied, i'll keep you buffed. say a place to tp, or brb if you need a sec");
 		startTicking();
 		return true;
 	}
@@ -867,7 +1014,8 @@ public class PhantomBuddyManager implements IXmlReader
 		}
 	}
 
-	private Location matchDestination(String text)
+	/** @return the matched destination entry (normalized name -> spot), or {@code null} if no place is named. */
+	private Map.Entry<String, Location> matchDestinationEntry(String text)
 	{
 		final String normalized = normalize(text);
 		// Direct contains: "going to ruins of agony" contains "ruins of agony".
@@ -875,7 +1023,7 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			if (normalized.contains(entry.getKey()))
 			{
-				return entry.getValue();
+				return entry;
 			}
 		}
 		return null;
