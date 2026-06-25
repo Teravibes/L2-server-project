@@ -169,6 +169,15 @@ public class PhantomManager implements IXmlReader
 	private static final int ROAM_MIN_DISTANCE = 400;
 	private static final int ROAM_ATTEMPTS = 10;
 	private static final int IDLE_TARGET_CLEAR_TICKS = 3;
+	// Post-kill breather: after a phantom kills its mob it stands a beat before pulling the next one, instead
+	// of machine-gunning straight through the spawn. (Lost targets without a kill re-acquire immediately.)
+	private static final long POST_KILL_DELAY_MIN = 1200;
+	private static final long POST_KILL_DELAY_MAX = 3200;
+	// Initial dispersal: when a population activates (a real player approaches), phantoms first fan out toward
+	// the perimeter of their area for this long before hunting, so they spread instead of all piling onto the
+	// nearest mobs the instant they spawn. DISPERSE_MIN_RADIUS_PCT is the closest-to-edge they aim for.
+	private static final long DISPERSE_DURATION = 4500;
+	private static final double DISPERSE_MIN_RADIUS_PCT = 0.55;
 
 	// Body slots a phantom is geared in. R_HAND = sword; the rest are LIGHT/HEAVY armor pieces.
 	private static final BodyPart[] GEAR_SLOTS =
@@ -212,6 +221,10 @@ public class PhantomManager implements IXmlReader
 		boolean dormant; // auto-hunt paused because no real player is near
 		boolean resting; // sitting to regenerate HP/MP
 		int idleTargetTicks; // stuck with a target but no movement/attack/cast
+		boolean dispersing; // initial fan-out before hunting begins
+		long disperseUntil; // when dispersal ends and the auto-hunt starts
+		long huntPauseUntil; // post-kill breather: paused, standing, until this time (0 = hunting)
+		int claimedOid; // object id of the monster this phantom currently owns (0 = none)
 
 		PhantomData(Player player, Location home, Population population, boolean mage)
 		{
@@ -527,9 +540,12 @@ public class PhantomManager implements IXmlReader
 			outfit(phantom, level, mage);
 			phantom.refreshOverloaded();
 			enterWorld(phantom, spawnLocation);
-			enableAutoHunt(phantom, mage);
 
-			_phantoms.put(phantom.getObjectId(), new PhantomData(phantom, spawnLocation, population, mage));
+			final PhantomData data = new PhantomData(phantom, spawnLocation, population, mage);
+			_phantoms.put(phantom.getObjectId(), data);
+			// Fan out first; the auto-hunt starts when dispersal ends (see supervise), so a freshly spawned
+			// group spreads over its area instead of all converging on the nearest mobs at once.
+			beginDisperse(phantom, data);
 			startSupervising();
 			LOGGER.info(getClass().getSimpleName() + ": Spawned phantom '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
 			return phantom;
@@ -987,7 +1003,9 @@ public class PhantomManager implements IXmlReader
 		// Fighters auto-attack (action id 2). Mages are pure casters: no auto-attack, so AutoPlay only picks
 		// the target and AutoUse casts their nukes - the mage combat tick keeps them at casting range and
 		// kites them out when they run low on MP (it does the moving AutoPlay won't do for a caster).
-		if (!mage)
+		// Idempotent: this runs again on every re-activation and post-kill resume, so guard against stacking
+		// duplicate auto-attack actions on the same phantom.
+		if (!mage && !phantom.getAutoUseSettings().getAutoActions().contains(AUTO_ATTACK_ACTION))
 		{
 			phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
 		}
@@ -1057,7 +1075,7 @@ public class PhantomManager implements IXmlReader
 		_supervising = true;
 		ThreadPool.scheduleAtFixedRate(this::supervise, SUPERVISE_INTERVAL, SUPERVISE_INTERVAL);
 		ThreadPool.scheduleAtFixedRate(this::mageCombat, MAGE_TICK_INTERVAL, MAGE_TICK_INTERVAL);
-		ThreadPool.scheduleAtFixedRate(this::deconflictTargets, DECONFLICT_INTERVAL, DECONFLICT_INTERVAL);
+		ThreadPool.scheduleAtFixedRate(this::assignTargets, DECONFLICT_INTERVAL, DECONFLICT_INTERVAL);
 		LOGGER.info(getClass().getSimpleName() + ": Phantom supervisor started.");
 	}
 
@@ -1069,9 +1087,9 @@ public class PhantomManager implements IXmlReader
 	{
 		for (PhantomData data : _phantoms.values())
 		{
-			if (!data.mage || data.dormant || data.resting)
+			if (!data.mage || data.dormant || data.resting || data.dispersing || (data.huntPauseUntil > 0))
 			{
-				continue;
+				continue; // not hunting right now: fanning out, on a post-kill breather, resting or asleep
 			}
 			final Player mage = data.player;
 			try
@@ -1144,21 +1162,77 @@ public class PhantomManager implements IXmlReader
 	 * gap in respectful hunting, which only filters at selection time (two phantoms can lock the same mob
 	 * before either aggros it, and a phantom never drops a mob a player engages after it locked on).
 	 */
-	private void deconflictTargets()
+	/**
+	 * Authoritative target assignment (runs every {@link #DECONFLICT_INTERVAL}). Two passes:
+	 * <ol>
+	 * <li>Honor each phantom's current valid target, resolving collisions so the closest phantom keeps a mob
+	 * and the rest are bumped; detect kills (claimed mob now dead) and start a short post-kill breather.</li>
+	 * <li>Give every phantom that has no mob (and is past its breather) the nearest <i>unclaimed</i>, free
+	 * monster, claiming it. This is what stops phantoms ganging up: a freed mob is handed to ONE phantom
+	 * rather than left for the native AutoPlay scan to re-pick simultaneously.</li>
+	 * </ol>
+	 * Also stands a resting phantom up immediately if a threat appears, rather than waiting for the slow tick.
+	 */
+	private void assignTargets()
 	{
-		final Map<Integer, Player> claims = new HashMap<>();
+		final long now = System.currentTimeMillis();
+		final Map<Integer, Player> owner = new HashMap<>();
+		final List<PhantomData> needsTarget = new ArrayList<>();
+
+		// Pass 1: keep valid targets, resolve collisions, detect kills, manage breathers and rest-on-threat.
 		for (PhantomData data : _phantoms.values())
 		{
 			final Player phantom = data.player;
 			try
 			{
-				if (data.dormant || phantom.isDead())
+				if (data.dormant || data.dispersing || phantom.isDead())
 				{
 					continue;
 				}
-				final WorldObject target = phantom.getTarget();
-				if (!(target instanceof Monster) || ((Monster) target).isDead())
+
+				// Resting phantom that just came under threat: stand now, don't wait for the 5s supervise tick.
+				if (data.resting)
 				{
+					if (phantom.isInCombat() || isMonsterNear(phantom))
+					{
+						endRest(phantom);
+						data.resting = false;
+						needsTarget.add(data);
+					}
+					continue;
+				}
+
+				// Post-kill breather: standing still; resume hunting when it elapses.
+				if (data.huntPauseUntil > 0)
+				{
+					if (now >= data.huntPauseUntil)
+					{
+						data.huntPauseUntil = 0;
+						enableAutoHunt(phantom, data.mage);
+						needsTarget.add(data);
+					}
+					continue;
+				}
+
+				final WorldObject target = phantom.getTarget();
+				final boolean liveMonster = (target instanceof Monster) && !((Monster) target).isDead();
+
+				// Did we lose the mob we owned? If it died, take a breather; if merely lost, re-acquire at once.
+				if ((data.claimedOid != 0) && (!liveMonster || (((Monster) target).getObjectId() != data.claimedOid)))
+				{
+					final WorldObject claimed = World.getInstance().findObject(data.claimedOid);
+					final boolean killed = (claimed == null) || ((claimed instanceof Monster) && ((Monster) claimed).isDead());
+					data.claimedOid = 0;
+					if (killed)
+					{
+						beginHuntPause(phantom, data, now);
+						continue;
+					}
+				}
+
+				if (!liveMonster)
+				{
+					needsTarget.add(data);
 					continue;
 				}
 				final Monster monster = (Monster) target;
@@ -1166,29 +1240,158 @@ public class PhantomManager implements IXmlReader
 				if (isContestedByPlayer(monster))
 				{
 					yieldTarget(phantom);
+					data.claimedOid = 0;
+					needsTarget.add(data);
 					continue;
 				}
-				// Otherwise the first (closest) phantom keeps it; later ones yield.
 				final int id = monster.getObjectId();
-				final Player owner = claims.get(id);
-				if (owner == null)
+				final Player cur = owner.get(id);
+				if (cur == null)
 				{
-					claims.put(id, phantom);
+					owner.put(id, phantom);
+					data.claimedOid = id;
 				}
-				else if (phantom.calculateDistance2D(monster) < owner.calculateDistance2D(monster))
+				else if (phantom.calculateDistance2D(monster) < cur.calculateDistance2D(monster))
 				{
-					yieldTarget(owner);
-					claims.put(id, phantom);
+					// This phantom is closer: it keeps the mob, the previous owner is bumped to re-acquire.
+					yieldTarget(cur);
+					final PhantomData curData = _phantoms.get(cur.getObjectId());
+					if (curData != null)
+					{
+						curData.claimedOid = 0;
+						needsTarget.add(curData);
+					}
+					owner.put(id, phantom);
+					data.claimedOid = id;
 				}
 				else
 				{
 					yieldTarget(phantom);
+					data.claimedOid = 0;
+					needsTarget.add(data);
 				}
 			}
 			catch (Exception e)
 			{
-				LOGGER.warning(getClass().getSimpleName() + ": Deconflict error for " + phantom.getName() + ": " + e.getMessage());
+				LOGGER.warning(getClass().getSimpleName() + ": Assign(pass1) error for " + phantom.getName() + ": " + e.getMessage());
 			}
+		}
+
+		// Pass 2: hand each idle phantom the nearest free, unclaimed monster so they spread over the spawn.
+		for (PhantomData data : needsTarget)
+		{
+			final Player phantom = data.player;
+			try
+			{
+				if (data.dormant || data.dispersing || data.resting || (data.huntPauseUntil > 0) || phantom.isDead())
+				{
+					continue;
+				}
+				final Monster mob = nearestFreeMonster(phantom, owner);
+				if (mob != null)
+				{
+					owner.put(mob.getObjectId(), phantom);
+					data.claimedOid = mob.getObjectId();
+					phantom.setTarget(mob);
+					// Fighters engage now; mages just take the target - the mage tick positions and AutoUse nukes.
+					if (!data.mage)
+					{
+						phantom.getAI().setIntention(Intention.ATTACK, mob);
+					}
+				}
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Assign(pass2) error for " + phantom.getName() + ": " + e.getMessage());
+			}
+		}
+	}
+
+	/** @return the nearest live, auto-attackable monster not already claimed this tick (nor fought by a player). */
+	private Monster nearestFreeMonster(Player phantom, Map<Integer, Player> claimed)
+	{
+		Monster best = null;
+		double bestDistance = Double.MAX_VALUE;
+		for (Monster monster : World.getInstance().getVisibleObjectsInRange(phantom, Monster.class, AutoPlayConfig.AUTO_PLAY_LONG_RANGE))
+		{
+			if (monster.isDead() || monster.isAlikeDead() || claimed.containsKey(monster.getObjectId()) || isContestedByPlayer(monster))
+			{
+				continue;
+			}
+			if (!monster.isAutoAttackable(phantom) || !GeoEngine.getInstance().canSeeTarget(phantom, monster))
+			{
+				continue;
+			}
+			final double distance = phantom.calculateDistance2D(monster);
+			if (distance < bestDistance)
+			{
+				bestDistance = distance;
+				best = monster;
+			}
+		}
+		return best;
+	}
+
+	/** Starts a post-kill breather: stops the auto-hunt and stands the phantom still for a short random pause. */
+	private void beginHuntPause(Player phantom, PhantomData data, long now)
+	{
+		data.huntPauseUntil = now + Rnd.get((int) POST_KILL_DELAY_MIN, (int) POST_KILL_DELAY_MAX);
+		if (phantom.isAutoPlaying())
+		{
+			AutoPlayTaskManager.getInstance().stopAutoPlay(phantom);
+			AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
+		}
+		phantom.setTarget(null);
+		phantom.getAI().setIntention(Intention.IDLE);
+	}
+
+	/** Begins the initial fan-out: marks the phantom dispersing and sends it toward its area's perimeter. */
+	private void beginDisperse(Player phantom, PhantomData data)
+	{
+		data.dispersing = true;
+		data.disperseUntil = System.currentTimeMillis() + DISPERSE_DURATION;
+		data.resting = false;
+		data.huntPauseUntil = 0;
+		data.claimedOid = 0;
+		if (phantom.isSitting())
+		{
+			phantom.standUp();
+		}
+		disperseMove(phantom, data);
+	}
+
+	/** Pushes a phantom outward from its group's centre toward the perimeter (with jitter) so the group fans out. */
+	private void disperseMove(Player phantom, PhantomData data)
+	{
+		final Location center = (data.population != null) ? data.population.center : data.home;
+		final int radius = (data.population != null) ? Math.max(ROAM_MIN_DISTANCE + 100, data.population.radius) : ROAM_RADIUS;
+		final double dx = phantom.getX() - center.getX();
+		final double dy = phantom.getY() - center.getY();
+		final double outward = (Math.hypot(dx, dy) < 1) ? (Rnd.nextDouble() * 2 * Math.PI) : Math.atan2(dy, dx);
+		Location fallback = null;
+		for (int attempt = 0; attempt < ROAM_ATTEMPTS; attempt++)
+		{
+			// +-45 degrees of jitter around the outward heading so a clustered group spreads in a fan, not a line.
+			final double angle = outward + ((Rnd.nextDouble() - 0.5) * (Math.PI / 2));
+			final int distance = (int) (radius * (DISPERSE_MIN_RADIUS_PCT + (Rnd.nextDouble() * (1.0 - DISPERSE_MIN_RADIUS_PCT))));
+			final int x = center.getX() + (int) (Math.cos(angle) * distance);
+			final int y = center.getY() + (int) (Math.sin(angle) * distance);
+			final Location destination = GeoEngine.getInstance().getValidLocation(phantom, new Location(x, y, center.getZ()));
+			if (fallback == null)
+			{
+				fallback = destination;
+			}
+			if (GeoEngine.getInstance().canMoveToTarget(phantom.getX(), phantom.getY(), phantom.getZ(), destination.getX(), destination.getY(), destination.getZ(), phantom.getInstanceId()))
+			{
+				phantom.setRunning();
+				phantom.getAI().setIntention(Intention.MOVE_TO, destination);
+				return;
+			}
+		}
+		if (fallback != null)
+		{
+			phantom.setRunning();
+			phantom.getAI().setIntention(Intention.MOVE_TO, fallback);
 		}
 	}
 
@@ -1267,9 +1470,11 @@ public class PhantomManager implements IXmlReader
 				{
 					if (nearest <= WAKE_RANGE)
 					{
-						wake(phantom);
 						data.dormant = false;
 						data.resting = false;
+						data.huntPauseUntil = 0;
+						// Re-spread on re-approach too, then hunt - same reason as the initial spawn.
+						beginDisperse(phantom, data);
 					}
 					continue; // stay parked while no one is near
 				}
@@ -1278,6 +1483,23 @@ public class PhantomManager implements IXmlReader
 					sleep(phantom);
 					data.dormant = true;
 					data.resting = false;
+					continue;
+				}
+
+				// Initial dispersal: fan out, then switch the auto-hunt on once the timer elapses.
+				if (data.dispersing)
+				{
+					if (now >= data.disperseUntil)
+					{
+						data.dispersing = false;
+						enableAutoHunt(phantom, data.mage);
+					}
+					continue; // don't hunt/rest/roam while still spreading out
+				}
+
+				// Post-kill breather is managed by assignTargets (1s): leave it standing, don't roam it here.
+				if (data.huntPauseUntil > 0)
+				{
 					continue;
 				}
 
