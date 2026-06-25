@@ -40,6 +40,8 @@ Map and geodata stay loaded across both modes.
 | **Farm** | Bots seek and fight monsters in zone. Tick **respawn**. |
 | **Shop** | Seated private-store vendors (SELL/BUY/CRAFT/PACKAGE) |
 
+For **Shop** populations, the population's **level range** sets the tier of stock (gear *and* consumables), so a low-level town sells its own grade of shots/mats. Tick **market hub — stock every grade (ignore level)** to make it a hub (e.g. Giran) that carries everything regardless of level.
+
 Movement timing defaults (run/walk, pause range) are set per behavior; tweak under **Movement timing (advanced)**.
 
 ## Routes
