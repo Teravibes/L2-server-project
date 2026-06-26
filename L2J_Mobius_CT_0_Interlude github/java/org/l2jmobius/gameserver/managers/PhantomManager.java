@@ -893,8 +893,11 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
-		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
-		// always, helmet/gloves often skipped) so a group is not a row of identical fully-armored clones.
+		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (helmet/gloves often
+		// skipped) so a group is not a row of identical fully-armored clones - but the chest is ALWAYS worn so
+		// nobody renders bare-torsoed. GEAR_SLOTS visits CHEST before LEGS, so a one-piece robe equipped in the
+		// chest slot (see buildGear) lets us skip the conflicting legs piece.
+		boolean onePieceChest = false;
 		for (BodyPart slot : GEAR_SLOTS)
 		{
 			if (slot == BodyPart.R_HAND)
@@ -913,14 +916,25 @@ public class PhantomManager implements IXmlReader
 			{
 				continue;
 			}
-			if ((slot == BodyPart.LEGS) && (Rnd.get(100) >= 92))
+			if (slot == BodyPart.LEGS)
 			{
-				continue;
+				if (onePieceChest)
+				{
+					continue; // a one-piece robe already covers the legs; a separate legs piece would clash
+				}
+				if (Rnd.get(100) >= 92)
+				{
+					continue;
+				}
 			}
 			final ItemTemplate piece = pickForSlot(set, slot, desired);
 			if (piece != null)
 			{
 				equip(phantom, piece);
+				if ((slot == BodyPart.CHEST) && (piece.getBodyPart() == BodyPart.FULL_ARMOR))
+				{
+					onePieceChest = true;
+				}
 			}
 		}
 		// No broadcast here: gear() runs before the phantom enters the world, so the whole set is in place
@@ -1086,11 +1100,20 @@ public class PhantomManager implements IXmlReader
 				else if (item instanceof Armor)
 				{
 					final BodyPart part = item.getBodyPart();
+					final ArmorType type = ((Armor) item).getItemType();
+					// Mage robes in Interlude are usually ONE-PIECE (FULL_ARMOR, which the client wears in the
+					// chest slot). If we drop those like we do for fighters, a caster can be left with no chest
+					// piece at its grade and render bare-torsoed. So route full-body MAGIC robes into the mage
+					// CHEST pool; gear() then skips the separate legs piece when one is worn.
+					if ((type == ArmorType.MAGIC) && (part == BodyPart.FULL_ARMOR))
+					{
+						MAGE_GEAR.get(BodyPart.CHEST).get(item.getCrystalType()).add(item);
+						continue;
+					}
 					if ((part != BodyPart.CHEST) && (part != BodyPart.LEGS) && (part != BodyPart.GLOVES) && (part != BodyPart.FEET) && (part != BodyPart.HEAD))
 					{
-						continue; // skip FULL_ARMOR (conflicts with separate legs) and non-armor slots
+						continue; // skip FULL_ARMOR fighter plate (conflicts with separate legs) and non-armor slots
 					}
-					final ArmorType type = ((Armor) item).getItemType();
 					if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
 					{
 						FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
