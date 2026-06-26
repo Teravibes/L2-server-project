@@ -68,6 +68,7 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final int SAY_RANGE = 1250; // say: local hearing/broadcast range
 	private static final int MAX_MESSAGES_PER_MINUTE = 8; // global rate cap (throttle 3)
 	private static final long AMBIENT_INTERVAL = 240000; // spontaneous trade line every ~4 min
+	private static final long SHOUT_AMBIENT_INTERVAL = 300000; // spontaneous shout (LFM / chit-chat) every ~5 min
 	private static final AtomicInteger MESSAGES_THIS_MINUTE = new AtomicInteger();
 	private static boolean SOCIAL_STARTED = false;
 
@@ -236,6 +237,7 @@ public class FakePlayerChatManager implements IXmlReader
 		SOCIAL_STARTED = true;
 		ThreadPool.scheduleAtFixedRate(() -> MESSAGES_THIS_MINUTE.set(0), 60000, 60000); // reset rate cap each minute
 		ThreadPool.scheduleAtFixedRate(this::ambientTradeChat, AMBIENT_INTERVAL, AMBIENT_INTERVAL);
+		ThreadPool.scheduleAtFixedRate(this::ambientShoutChat, SHOUT_AMBIENT_INTERVAL, SHOUT_AMBIENT_INTERVAL);
 		LOGGER.info(getClass().getSimpleName() + ": Server-wide social chat enabled.");
 	}
 	
@@ -346,6 +348,17 @@ public class FakePlayerChatManager implements IXmlReader
 			reactToChat(speaker, speaker.getName(), text, false, "SAY");
 		}
 	}
+
+	// Called from ChatShout when a real player uses shout (!) chat - the global world channel for chit-chat
+	// and LFM/looking-for-party ads. Bots banter back or answer the call (party/raid mechanics are not wired
+	// yet, so this is conversational fluff for now).
+	public void overheardShout(Player speaker, String text)
+	{
+		if (SOCIAL_ENABLED && (speaker != null) && (text != null) && !text.isEmpty())
+		{
+			reactToChat(speaker, speaker.getName(), text, false, "SHOUT");
+		}
+	}
 	
 	private void reactToChat(Creature origin, String speakerName, String text, boolean speakerIsBot, String channel)
 	{
@@ -410,14 +423,18 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			sendSayChat(bot, line);
 		}
+		else if (channel.startsWith("SHOUT"))
+		{
+			sendShoutChat(bot, line); // SHOUT and SHOUTAMBIENT broadcast to the global shout channel
+		}
 		else
 		{
 			sendTradeChat(bot, line); // TRADE and AMBIENT both broadcast to global trade
 		}
 		MESSAGES_THIS_MINUTE.incrementAndGet();
-		
-		// bot-to-bot banter (damped); ambient continues as trade banter.
-		reactToChat(bot, bot.getName(), line, true, channel.equals("SAY") ? "SAY" : "TRADE");
+
+		// bot-to-bot banter (damped); ambient continues on the same channel.
+		reactToChat(bot, bot.getName(), line, true, channel.equals("SAY") ? "SAY" : channel.startsWith("SHOUT") ? "SHOUT" : "TRADE");
 	}
 	
 	private boolean hasPlayerInRange(Npc npc, int range)
@@ -444,6 +461,15 @@ public class FakePlayerChatManager implements IXmlReader
 		final CreatureSay cs = new CreatureSay(npc, ChatType.GENERAL, npc.getName(), text);
 		World.getInstance().forEachVisibleObjectInRange(npc, Player.class, SAY_RANGE, player -> player.sendPacket(cs)); // LOCAL
 	}
+
+	private void sendShoutChat(Npc npc, String text)
+	{
+		final CreatureSay cs = new CreatureSay(npc, ChatType.SHOUT, npc.getName(), text);
+		for (Player player : World.getInstance().getPlayers()) // GLOBAL world channel
+		{
+			player.sendPacket(cs);
+		}
+	}
 	
 	private void ambientTradeChat()
 	{
@@ -468,6 +494,33 @@ public class FakePlayerChatManager implements IXmlReader
 		if (!bots.isEmpty())
 		{
 			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "AMBIENT");
+		}
+	}
+
+	/** Spontaneous shout: a random bot posts global chit-chat or an LFM/looking-for-party ad now and then. */
+	private void ambientShoutChat()
+	{
+		if (!SOCIAL_ENABLED || (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE))
+		{
+			return;
+		}
+		final List<Player> players = new ArrayList<>(World.getInstance().getPlayers());
+		if (players.isEmpty())
+		{
+			return; // nobody online to hear it
+		}
+		final Player witness = players.get(Rnd.get(players.size()));
+		final List<Npc> bots = new ArrayList<>();
+		World.getInstance().forEachVisibleObjectInRange(witness, Npc.class, SOCIAL_RANGE, npc ->
+		{
+			if (npc.isFakePlayer() && !isStoreVendor(npc))
+			{
+				bots.add(npc);
+			}
+		});
+		if (!bots.isEmpty())
+		{
+			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "SHOUTAMBIENT");
 		}
 	}
 	

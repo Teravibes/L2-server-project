@@ -24,6 +24,7 @@ app = Flask(__name__)
 conversations = defaultdict(lambda: deque(maxlen=20))  # private whisper memory per (player, bot)
 trade_log = deque(maxlen=12)                            # shared global TRADE memory
 say_log = deque(maxlen=12)                              # shared local SAY memory
+shout_log = deque(maxlen=12)                            # shared global SHOUT (!) memory
 
 # ===== Guardrails: a single "constitution" prepended to every in-character persona =====
 # Keeps bots in character, resistant to prompt-injection, within a normal player's powers, and PG-13.
@@ -167,6 +168,13 @@ def buddy_persona(fpc, voice):
             "[[BUFF]] = rebuff them right now; "
             "[[DISBAND]] = leave the party / say goodbye. One tag at most.")
 
+def shout_persona(fpc, voice):
+    return (GLOBAL_RULES + "\n\n" + voice + "\n\n"
+            f"You are the player '{fpc}', reading the global '!' shout channel - the busy world chat. It's full "
+            "of random chit-chat, jokes, questions, and people looking for party members (LFM/LFP) for hunting "
+            "zones or raid bosses. ONE line, like real shout chat. Only chime in when it makes sense for you. "
+            "If you have nothing to add, reply with exactly: pass")
+
 def say_persona(fpc, voice):
     return (GLOBAL_RULES + "\n\n" + voice + "\n\n"
             f"You are the player '{fpc}', talking OUT LOUD to players right next to you. "
@@ -258,6 +266,30 @@ def chat():
                 [{"role": "user", "content": f"People near you just said:\n{context}\n\nReact with ONE short line."}], 60, temperature))
             if reply:
                 say_log.append(f"{fpc}: {reply}")
+        elif mode in ("SHOUT", "SHOUTAMBIENT"):
+            # Global '!' world chat: chit-chat and LFM/looking-for-party ads. (Party/raid mechanics aren't
+            # wired yet - this is conversational fluff for now.)
+            speaker = request.headers.get("X-Speaker", "")
+            overheard = f"{speaker}: {message}" if speaker else message
+            if message and overheard not in shout_log:
+                shout_log.append(overheard)
+            context = "\n".join(shout_log) if shout_log else "(channel is quiet)"
+            if mode == "SHOUTAMBIENT":
+                prompt = (f"Recent shout chat:\n{context}\n\n"
+                          "Post ONE spontaneous shout of your own: EITHER a bit of random chit-chat / banter / a "
+                          "question, OR an LFM/LFP ad looking for party members for a hunting spot or a raid boss "
+                          "(e.g. 'LFM 2 more dd cruma pst', 'LF buffer for raid pst', 'anyone wanna party giran?'). "
+                          "ONE short line.")
+            else:
+                who = speaker or "someone"
+                prompt = (f"Recent shout chat:\n{context}\n\n"
+                          f"{who} just shouted: \"{message}\"\n"
+                          "If it's something you'd naturally react to - banter, answer a question, respond to their "
+                          "LFM, or join the chatter - reply with ONE short line. If it has nothing to do with you, "
+                          "reply with exactly: pass")
+            reply = sanitize(clean_reply(call_llm(shout_persona(fpc, voice) + loc_note, [{"role": "user", "content": prompt}], 60, temperature)))
+            if reply:
+                shout_log.append(f"{fpc}: {reply}")
         else:  # TRADE or AMBIENT
             speaker = request.headers.get("X-Speaker", "")
             overheard = f"{speaker}: {message}" if speaker else message
