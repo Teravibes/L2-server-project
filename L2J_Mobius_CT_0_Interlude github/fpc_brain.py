@@ -273,6 +273,9 @@ def chat():
     fpc = request.headers.get("X-FPC", "a player")
     mode = request.headers.get("X-Mode", "WHISPER").upper()
     location = request.headers.get("X-Location", "").strip()
+    # A real player (not a bot) is addressing a public channel; when set, the bot must answer instead of
+    # being allowed to stay silent with "pass" - so players don't get ignored on shout.
+    human = request.headers.get("X-Human", "false").strip().lower() == "true"
     # Where the bot actually is, so it can answer "where are you?" truthfully instead of inventing a spot.
     loc_note = (f" You are currently {location} in the game world; if asked where you are or where to "
                 "meet, answer truthfully with that.") if location else ""
@@ -359,6 +362,14 @@ def chat():
                           "question, OR an LFM/LFP ad looking for party members for a hunting spot or a raid boss "
                           "(e.g. 'LFM 2 more dd cruma pst', 'LF buffer for raid pst', 'anyone wanna party giran?'). "
                           "ONE short line.")
+            elif human:
+                # A real player is talking on the global world channel - always answer, never pass.
+                who = speaker or "someone"
+                prompt = (f"Recent shout chat:\n{context}\n\n"
+                          f"{who} just shouted to everyone: \"{message}\"\n"
+                          "A real player is talking on the world channel. Reply with ONE short, natural line - "
+                          "greet them, answer their question, or banter back. Always say something; do NOT "
+                          "reply 'pass'.")
             else:
                 who = speaker or "someone"
                 prompt = (f"Recent shout chat:\n{context}\n\n"

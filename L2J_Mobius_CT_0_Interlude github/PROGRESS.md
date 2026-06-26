@@ -45,7 +45,7 @@ Action tags from brain replies (e.g. `[[MEET:gatekeeper]]`, `[[SHOP:SELL:Soulsho
 
 **Java side: `managers/FakePlayerChatManager.java`**
 - `overheardTradeChat` / `overheardSay` / `overheardShout` → picks nearby bots → HTTP to brain → broadcasts reply.
-- **Shout** — bots banter on `!` channel; spontaneous shout ~every 5 min posts chit-chat or an LFM ad.
+- **Shout** — bots banter on `!` channel; spontaneous shout ~every 5 min posts chit-chat or an LFM ad. A **real player's** shout reaches bots **world-wide** (global channel, not the `SOCIAL_RANGE` proximity used by trade/say) and is **guaranteed a reply** — the first eligible non-vendor bot always answers (brain told not to `pass` via `X-Human`), so shouting from inside a vendor crowd no longer gets ignored. Bot-to-bot shout stays local + free to `pass`.
 - **Whisper** — whispering a bot by its generated name works; it replies and knows its nearest town.
 - **"Come meet me"** — ask a roaming bot to meet you at a landmark (gatekeeper/warehouse/shop) and it walks there, then waits up to ~8 min.
 - **Trade-ad negotiation** — WTS/WTB in trade chat makes a nearby bot PM you with a price. You haggle + pick the meet spot over whisper; only then does the bot walk there and open a real seated vendor store. Bot stays whisper-able mid-deal for renegotiation or cancel. AFK vendors are intentionally silent.

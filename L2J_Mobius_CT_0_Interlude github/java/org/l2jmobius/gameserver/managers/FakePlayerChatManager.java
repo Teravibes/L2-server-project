@@ -356,7 +356,59 @@ public class FakePlayerChatManager implements IXmlReader
 	{
 		if (SOCIAL_ENABLED && (speaker != null) && (text != null) && !text.isEmpty())
 		{
-			reactToChat(speaker, speaker.getName(), text, false, "SHOUT");
+			// Shout is a GLOBAL world channel, so a real player's shout should reach bots anywhere - not
+			// just the (mostly store-vendor) crowd within SOCIAL_RANGE. Pull from a world-wide pool and
+			// guarantee at least one bot answers a human.
+			reactToPlayerShout(speaker, text);
+		}
+	}
+
+	/**
+	 * A real player shouted on the global '!' channel. Gather non-vendor fake players world-wide, then
+	 * schedule a guaranteed first reply (the brain is told not to "pass" to a human) plus up to one extra
+	 * bot on the usual chance. Bot-to-bot shout banter still flows through {@link #reactToChat} (local).
+	 */
+	private void reactToPlayerShout(Player speaker, String text)
+	{
+		if (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE)
+		{
+			return;
+		}
+		final String speakerName = speaker.getName();
+		final List<Npc> bots = new ArrayList<>();
+		final Set<String> seenNames = new HashSet<>();
+		for (WorldObject object : World.getInstance().getVisibleObjects()) // world-wide: shout is global
+		{
+			if (object.isNpc())
+			{
+				final Npc npc = object.asNpc();
+				// Dedupe by name; AFK store vendors stay silent.
+				if (npc.isFakePlayer() && !isStoreVendor(npc) && !npc.getName().equals(speakerName) && seenNames.add(npc.getName()))
+				{
+					bots.add(npc);
+				}
+			}
+		}
+		if (bots.isEmpty())
+		{
+			return;
+		}
+		Collections.shuffle(bots);
+		int repliers = 0;
+		for (Npc bot : bots)
+		{
+			if (repliers >= MAX_REPLIERS)
+			{
+				break;
+			}
+			// The first eligible bot always answers a real player's shout; any extra rolls the normal chance.
+			if ((repliers > 0) && (Rnd.get(100) >= REPLY_CHANCE_TO_PLAYER))
+			{
+				continue;
+			}
+			repliers++;
+			final Npc replier = bot;
+			ThreadPool.schedule(() -> botSpeaks(replier, speakerName, text, "SHOUT", true), Rnd.get(MIN_DELAY, MAX_DELAY));
 		}
 	}
 	
@@ -399,11 +451,11 @@ public class FakePlayerChatManager implements IXmlReader
 			}
 			repliers++;
 			final Npc replier = bot;
-			ThreadPool.schedule(() -> botSpeaks(replier, speakerName, text, channel), Rnd.get(MIN_DELAY, MAX_DELAY));
+			ThreadPool.schedule(() -> botSpeaks(replier, speakerName, text, channel, !speakerIsBot), Rnd.get(MIN_DELAY, MAX_DELAY));
 		}
 	}
-	
-	private void botSpeaks(Npc bot, String speakerName, String overheard, String channel)
+
+	private void botSpeaks(Npc bot, String speakerName, String overheard, String channel, boolean human)
 	{
 		if (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE)
 		{
@@ -414,7 +466,7 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return;
 		}
-		final String line = askBrainPublic(bot.getName(), speakerName, overheard, channel, nearestLocation(bot));
+		final String line = askBrainPublic(bot.getName(), speakerName, overheard, channel, nearestLocation(bot), human);
 		if ((line == null) || line.isEmpty())
 		{
 			return;
@@ -493,7 +545,7 @@ public class FakePlayerChatManager implements IXmlReader
 		});
 		if (!bots.isEmpty())
 		{
-			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "AMBIENT");
+			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "AMBIENT", false);
 		}
 	}
 
@@ -520,7 +572,7 @@ public class FakePlayerChatManager implements IXmlReader
 		});
 		if (!bots.isEmpty())
 		{
-			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "SHOUTAMBIENT");
+			botSpeaks(bots.get(Rnd.get(bots.size())), "", "", "SHOUTAMBIENT", false);
 		}
 	}
 	
@@ -529,12 +581,17 @@ public class FakePlayerChatManager implements IXmlReader
 		return callBridge(fpcName, "WHISPER", playerName, "", message, location, "");
 	}
 
-	private String askBrainPublic(String fpcName, String speakerName, String overheard, String mode, String location)
+	private String askBrainPublic(String fpcName, String speakerName, String overheard, String mode, String location, boolean human)
 	{
-		return callBridge(fpcName, mode, "", speakerName, overheard, location, "");
+		return callBridge(fpcName, mode, "", speakerName, overheard, location, "", human);
 	}
 
 	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location, String deal)
+	{
+		return callBridge(fpcName, mode, playerName, speakerName, body, location, deal, false);
+	}
+
+	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location, String deal, boolean human)
 	{
 		try
 		{
@@ -547,6 +604,7 @@ public class FakePlayerChatManager implements IXmlReader
 				.header("X-Speaker", speakerName) //
 				.header("X-Location", location == null ? "" : location) //
 				.header("X-Deal", deal == null ? "" : deal) //
+				.header("X-Human", human ? "true" : "false") //
 				.header("Content-Type", "text/plain; charset=utf-8") //
 				.POST(HttpRequest.BodyPublishers.ofString(body)) //
 				.build();
