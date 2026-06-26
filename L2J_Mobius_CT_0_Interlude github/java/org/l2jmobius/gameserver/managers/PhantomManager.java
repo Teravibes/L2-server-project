@@ -1132,7 +1132,11 @@ public class PhantomManager implements IXmlReader
 
 				if (item instanceof Weapon)
 				{
-					if (item.isMagicWeapon())
+					// Caster pool = two-handed magic STAVES only (lrhand). Physical blades flagged
+					// is_magic_weapon (e.g. Hell Knife dagger) otherwise leak in, and a caster holding a melee
+					// blade renders with no chest/legs even when the armor itself is fine (confirmed: Elemental
+					// Tunic renders with a staff, vanishes with a Hell Knife). Staves always render with robes.
+					if (item.isMagicWeapon() && (item.getBodyPart() == BodyPart.LR_HAND))
 					{
 						MAGE_GEAR.get(BodyPart.R_HAND).get(item.getCrystalType()).add(item);
 					}
