@@ -210,9 +210,28 @@ The buddy system uses **real `Player` objects** ("phantoms"), not NPCs, so they 
 
 **Tick interval:** 1s. Support range 900px, follow range 250px, danger range 700px.
 
-### Admin tools
-- ✅ `//record_route <name>` / `//stop_route` / `//list_routes` — walk a path in-game to record bot waypoints (~150-unit intervals), saved to `data/routes/<name>.xml`.
-- ✅ `//fakechat <playername> <fpcname> <message>` — trigger a bot response to a player for testing.
+### Admin tools & in-game panels
+
+**Rates panel** — open with `//rates` or the **Rates** button on the Server menu (`//admin` → Server tab).
+- Preset buttons (1x / 3x / 5x / 10x / 20x) for XP, SP, Party XP, Adena, Drop Amount, Drop Chance, Spoil, Raid Drop, Quest XP, Quest Adena.
+- Custom row: type any key + value and hit Set.
+- Changes apply **live** to running memory and are written back to `Rates.ini` immediately (survive `//reload config`).
+- Keys: `xp` `sp` `partyxp` `partysp` `adena` `drop` `dropamount` `dropchance` `spoil` `raidrop` `questxp` `questadena`
+- Direct command: `//setrate xp 5`
+
+**Reload panel** — `//reload` or the **Reload** button on the Server menu. Standard Mobius reloads plus a **Living World** section:
+
+| Button | Command | What it does |
+|---|---|---|
+| FPC Chat | `//reload fakeplayerchat` | Reloads `FakePlayerChatData.xml` (canned chat lines) — instant, no bot disruption |
+| FPC World | `//reloadfakeplayers` | Despawns all managed bots, re-parses `FakePlayerBehavior.xml`, redeploys fresh bots (~15s delay) |
+| Rates | — | Opens the Rates panel directly |
+
+> **FPC World** is the key one: edit the XML in the visual editor, copy to the server, hit FPC World — no restart needed. The Java-side `FakePlayerBehaviorManager.reload()` method handles the despawn + redeploy cycle.
+
+**Other admin commands:**
+- `//record_route <name>` / `//stop_route` / `//list_routes` — walk a path in-game to record bot waypoints (~150-unit intervals), saved to `data/routes/<name>.xml`.
+- `//fakechat <playername> <fpcname> <message>` — trigger a bot response to a player for testing.
 
 ### Whisper to generated bots
 - ✅ Procedurally named bots are now registered as talkable via `talkableBotName()` — whispering a generated bot name works.
@@ -229,7 +248,7 @@ The buddy system uses **real `Player` objects** ("phantoms"), not NPCs, so they 
 ## 8. Suggested next steps
 
 1. **Field behavior tuning**: smarter hunting, polygon-bounded roaming, persistent respawn identity.
-2. **Editor niceties**: 2-click map calibration; edit profiles/assigns in-tool; live in-game reload.
+2. **Editor niceties**: 2-click map calibration; edit profiles/assigns in-tool. (Live reload via `//reloadfakeplayers` is done.)
 3. **Route editor integration**: surface recorded routes in the FPC editor as PATROL path overlays.
 4. **Population tuning pass**: review the 26 field zones + town clusters + buddy spawn points with real play feedback.
 5. **Buddy role expansion**: add SE (Spirit Expert) and PP (Prophet variant) buddy archetypes with their specific buff sets.
@@ -257,7 +276,8 @@ The buddy system uses **real `Player` objects** ("phantoms"), not NPCs, so they 
 | Phantom manager | `java/.../gameserver/managers/PhantomManager.java` |
 | Buddy populations | `dist/game/data/PhantomPopulations.xml` |
 | Party chat dispatch | `dist/game/data/scripts/handlers/chat/channels/ChatParty.java` |
-| Admin commands | `java/.../gameserver/handlers/admincommandhandlers/AdminFpcRoute.java`, `AdminFakePlayers.java` |
+| Admin commands | `dist/.../admin/AdminFakePlayers.java`, `AdminFpcRoute.java`, `AdminRates.java` |
+| Admin HTML panels | `dist/game/data/html/admin/rates.htm`, `reload.htm` (Living World section) |
 | Config | `java/.../gameserver/config/custom/FakePlayersConfig.java`, `dist/game/config/Custom/FakePlayers.ini` |
 | Behavior data | `dist/game/data/FakePlayerBehavior.xml` (+ `data/xsd/FakePlayerBehavior.xsd`) |
 | Visual editor | `tools/fpc-editor/index.html` (+ `README.md`) |
