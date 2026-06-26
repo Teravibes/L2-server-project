@@ -228,6 +228,18 @@ def chat():
             note = " You are currently partied with them." if partied else " You are NOT partied with them yet."
             reply = sanitize(call_llm(buddy_persona(fpc, voice) + note, list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
+        elif mode == "BUDDYCHAT":
+            # The buddy spontaneously opens a bit of small talk in party chat (started server-side on a long
+            # random timer), so it doesn't feel like a silent bot.
+            player = request.headers.get("X-Player", "someone")
+            hist = conversations[(player, fpc)]
+            prompt = ("Out of nowhere, start a little casual small talk with your partymate - a quick comment, "
+                      "question or banter (the grind, a drop, taking a break, how they're doing, etc). Keep it "
+                      "natural and ONE short line. Do not repeat your last lines. Do NOT add any tag.")
+            reply = sanitize(call_llm(buddy_persona(fpc, voice) + " You are currently partied with them.",
+                list(hist) + [{"role": "user", "content": prompt}], 50, temperature))
+            if reply:
+                hist.append({"role": "assistant", "content": reply})
         elif mode == "WHISPER":
             player = request.headers.get("X-Player", "someone")
             hist = conversations[(player, fpc)]

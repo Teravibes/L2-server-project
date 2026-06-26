@@ -90,6 +90,12 @@ public class PhantomBuddyManager implements IXmlReader
 	// Grace before despawning an engaged buddy whose owner went offline; "brb"/"5 min" extends it.
 	private static final long OFFLINE_GRACE = 120000;
 	private static final long BRB_GRACE = 360000;
+	// Proactive party chatter: now and then a partied buddy opens some small talk in party chat (only with the
+	// LLM brain online) so it doesn't feel like a silent bot. Long, jittered gap; downtime only. If the moment
+	// is bad (owner fighting / resting) it retries after CHATTER_RETRY instead of waiting a whole window.
+	private static final long CHATTER_MIN = 7 * 60000L;
+	private static final long CHATTER_MAX = 18 * 60000L;
+	private static final long CHATTER_RETRY = 60000;
 	// LLM brain bridge (optional). When a whisper isn't a recognised command, it is sent here for a natural
 	// reply that can carry an action tag ([[FOLLOW]] / [[STAY]] / [[TP:place]] / [[GRACE:n]] / [[BUFF]] /
 	// [[DISBAND]]). If the brain is offline the buddy just falls back to a short canned line.
@@ -124,6 +130,7 @@ public class PhantomBuddyManager implements IXmlReader
 		Skill heal; // best heal it knows (lazy)
 		Location pendingDestination; // a place the buddy proposed; teleports only once the owner confirms
 		String pendingDestName;
+		long nextChatter; // when the buddy may next open small talk in party chat (0 = not scheduled)
 
 		Buddy(Player npc)
 		{
@@ -579,6 +586,83 @@ public class PhantomBuddyManager implements IXmlReader
 		return null;
 	}
 
+	/** Picks the next time this buddy may open small talk: a long, jittered gap so it stays occasional. */
+	private static void scheduleNextChatter(Buddy state, long now)
+	{
+		state.nextChatter = now + CHATTER_MIN + Rnd.get((int) (CHATTER_MAX - CHATTER_MIN));
+	}
+
+	/**
+	 * When its chatter window is up and it's a calm moment, the buddy starts a little small talk in party chat
+	 * (off-thread, via the LLM brain - silent if the brain is offline). Keeps a partied buddy from feeling like
+	 * a mute bot. A bad moment (owner fighting / buddy resting or casting) just defers it a minute.
+	 */
+	private void maybeChatter(Buddy state, Player buddy, Player owner, long now)
+	{
+		if ((state.nextChatter == 0) || (now < state.nextChatter))
+		{
+			return;
+		}
+		if (!owner.isOnline() || owner.isInCombat() || buddy.isCastingNow() || buddy.isSitting() || isMonsterNear(buddy))
+		{
+			state.nextChatter = now + CHATTER_RETRY; // not a good moment; try again shortly
+			return;
+		}
+		scheduleNextChatter(state, now); // set the next window now so a slow brain call can't double-fire
+		final int buddyId = buddy.getObjectId();
+		final int ownerId = owner.getObjectId();
+		ThreadPool.execute(() ->
+		{
+			final Buddy s = _buddies.get(buddyId);
+			final Player o = (Player) World.getInstance().findObject(ownerId);
+			if ((s == null) || (o == null) || s.npc.isDead() || !s.npc.isInParty())
+			{
+				return;
+			}
+			String line = callBrainChatter(s.npc.getName(), o.getName());
+			if (line != null)
+			{
+				line = ANY_TAG.matcher(line).replaceAll("").trim(); // chatter carries no action tags
+			}
+			if ((line != null) && !line.isEmpty() && s.npc.isInParty())
+			{
+				partyChat(s.npc, line);
+			}
+		});
+	}
+
+	/** Asks the brain (BUDDYCHAT mode) for a spontaneous small-talk opener; null if the brain is offline. */
+	private String callBrainChatter(String buddyName, String ownerName)
+	{
+		try
+		{
+			final HttpRequest request = HttpRequest.newBuilder() //
+				.uri(URI.create(BRAIN_URL)) //
+				.timeout(Duration.ofSeconds(20)) //
+				.header("X-FPC", buddyName) //
+				.header("X-Mode", "BUDDYCHAT") //
+				.header("X-Player", ownerName) //
+				.header("X-Partied", "true") //
+				.header("Content-Type", "text/plain; charset=utf-8") //
+				.POST(HttpRequest.BodyPublishers.ofString("")) //
+				.build();
+			final HttpResponse<String> response = BRAIN_HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+			if (response.statusCode() == 200)
+			{
+				final String reply = response.body().trim();
+				if (!reply.isEmpty())
+				{
+					return reply;
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.fine(getClass().getSimpleName() + ": Brain bridge unreachable: " + e.getMessage());
+		}
+		return null;
+	}
+
 	/**
 	 * Forms the party server-side and binds the buddy to its owner. Called by {@code RequestJoinParty} when a
 	 * player invites a buddy (a clientless player cannot answer the normal invite dialog, so we accept here).
@@ -616,6 +700,7 @@ public class PhantomBuddyManager implements IXmlReader
 		state.owner = owner;
 		state.following = true;
 		state.graceUntil = 0;
+		scheduleNextChatter(state, System.currentTimeMillis());
 		PhantomManager.getInstance().setBuddyEngaged(buddy, true); // exempt from the proximity despawn
 		ensureFollow(state, owner);
 		// Greet after a short pause rather than the instant the invite lands, so it feels like a person.
@@ -712,6 +797,9 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			return true;
 		}
+
+		// Occasionally open some small talk in party chat (async, never blocks the support work below).
+		maybeChatter(state, buddy, owner, now);
 
 		final boolean ownerInRange = buddy.calculateDistance2D(owner) <= SUPPORT_RANGE;
 
@@ -829,7 +917,10 @@ public class PhantomBuddyManager implements IXmlReader
 		final boolean danger = owner.isInCombat() || isMonsterNear(buddy);
 		if (buddy.isSitting())
 		{
-			if ((mp >= MP_OK_PERCENT) || danger)
+			// Stand when MP is back up, a threat appears, or the owner has wandered out of support range (so a
+			// resting buddy isn't left sitting in the dust when you run off).
+			final boolean ownerFar = buddy.calculateDistance2D(owner) > SUPPORT_RANGE;
+			if ((mp >= MP_OK_PERCENT) || danger || ownerFar)
 			{
 				buddy.standUp();
 				return false;
