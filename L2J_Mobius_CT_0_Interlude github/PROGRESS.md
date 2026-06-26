@@ -14,6 +14,7 @@ Four systems run on top of Mobius's bare-bones fake-player feature:
 2. **NPC fake players** — data-driven NPCs filling towns and hunting zones, edited from a visual tool.
 3. **Real-Player phantoms** — clientless `Player` objects that auto-hunt in field zones.
 4. **Personal support buddies** — a phantom you party as your own buffer/healer.
+5. **Recruited combat parties** — shout an LFM/LFP and a full party of level-matched phantoms (tank / DD / archer / dagger / nuker / healer / buffer) walks over and joins you.
 
 ---
 
@@ -40,6 +41,7 @@ Four systems run on top of Mobius's bare-bones fake-player feature:
 | OFFER | Bot's opening negotiation pitch |
 | BUDDY | Personal support bot with action tags |
 | BUDDYCHAT | Buddy spontaneous party-chat small talk |
+| LFP | Classify a free-form shout into wanted party roles |
 
 Action tags from brain replies (e.g. `[[MEET:gatekeeper]]`, `[[SHOP:SELL:Soulshot D-grade:500]]`, `[[BUFF]]`, `[[FOLLOW]]`, `[[TP:ruins of agony]]`) are parsed by Java to trigger behavior, then stripped before display.
 
@@ -148,6 +150,30 @@ All three carry a Heal so every buddy can top you up. Place at **level 40+** for
 
 ---
 
+## 5b. System E — Recruited Combat Parties
+
+Shout an **LFM/LFP** and a full party assembles itself: for each role you call for, a level-matched combat phantom spawns just out of sight, **walks over**, asks for an invite, and joins you. It generalises the buddy (bind / follow / party / grace) into combat roles and adds a recruitment layer on top.
+
+**Roles** (`PhantomManager.PartyRole`): `TANK`, `WARRIOR` (melee DD), `ARCHER` (bow), `DAGGER`, `NUKER` (mage DD), `HEALER` (Elder kit + **Resurrection**), `BUFFER` (Prophet kit). Combat roles get a fixed class per level tier (1st at 20+, 2nd at 40+), gear, the full skill tree, and matching shots; archer/dagger swap in a bow/dagger of grade. Healer/buffer reuse the proven buddy outfit. A bad class id degrades to a plain fighter/mage rather than crashing.
+
+**Two ways to find them (both work; the second needs no AI):**
+- **Brain on** — a free-form call ("need a box + someone to tank cruma") is sent to the brain's new `LFP` mode, which classifies it into roles.
+- **Brain off** — a keyword parse of the shout (`lfm/lfp/lf/need` + role words + counts, e.g. "lfm 2 dd healer") extracts the roles directly.
+
+**Recruitment feel:** members spawn ~1.9–2.6k units away, out of line of sight, answer the shout on `!` ("healer here, omw"), and jog in via engine pathfinding — so it reads as real players who saw your call, not NPCs popping in. Arrivals are staggered. They match **your exact level**.
+
+**Once partied:**
+- **Assist (default)** — every member focus-fires *your* current target. Skills + soulshots fire through the native AutoUse (the member is flagged auto-playing so AutoUse casts, but the target is the leader's, not the engine scanner's).
+- **`attack freely`** — flips a member to hunt nearby mobs on its own (real AutoPlay scanner); leashes back if it strays.
+- **Healer** heals the most-hurt party member (<60%) and **raises** fallen real players; **buffer** keeps the whole party buffed.
+- **Follows** you, survives an offline **grace** window ("brb" extends it), despawns on disband.
+
+**Drive from whisper or party chat** (deterministic, brain-off): `assist`, `attack freely`, `follow`, `hold`/`stop`, `gather`, `brb`, `status`, `bye`/`disband`. A party-chat order hits every recruited member at once.
+
+**Key files:** `PhantomPartyManager.java` (new), `PhantomManager.java` (`PartyRole`, `spawnPartyMember`, recruit API + supervisor guards), `FakePlayerChatManager.java` (`overheardShout` LFP parse + `LFP` brain call), `RequestJoinParty.java` / `ChatWhisper.java` / `ChatParty.java` dispatch, `fpc_brain.py` (`LFP` mode).
+
+---
+
 ## 6. The Editor — `tools/fpc-editor/index.html`
 
 Single HTML file, no install. Edits both `FakePlayerBehavior.xml` (NPC mode) and `PhantomPopulations.xml` (Phantom mode).
@@ -235,6 +261,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 - ✅ Visual editor: geodata map, polygon zones, route drawing + editing, drag waypoints, named routes, market-hub toggle, phantom mode
 - ✅ Real-Player phantoms: auto-hunt, class/skill progression, gear, dormancy, claim-based targeting, initial dispersal, post-kill breather, caster looting, OOM-mage rest
 - ✅ Personal support buddies: party an Elder/Prophet/Warcryer that buffs, heals (<50%), follows, watches MP (sit <25% / stand ≥70%), teleports (confirm-first), grace period; drive from whisper or party chat; proactive small talk; works brain-off (deterministic)
+- ✅ Recruited combat parties: shout LFM/LFP → level-matched tank/DD/archer/dagger/nuker/healer/buffer spawn off-screen, walk in, auto-join; assist-leader (default) or `attack freely`; healer heals + resurrects, buffer buffs the party; whisper/party-chat group commands; brain-on (free-form `LFP` classify) and brain-off (keyword) both work
 - ✅ Rates panel (`//rates`) with live apply + save to ini
 - ✅ Reload panel Living World section (`//reloadfakeplayers`, `//reload fakeplayerchat`)
 - ✅ Admin route recorder (`//record_route`)
@@ -248,7 +275,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 - **Field hunting feel** — bots can still cluster / move sluggishly in some zones; pathfinding + combat tuning deprioritized.
 - **Map image calibration** — must be supplied by user; calibration is bounds-based (a friendlier 2-click calibration was discussed but not built).
 - **Buddy on disband** — despawns where it stands; could walk/TP back to town first (deferred).
-- **Shout LFM** — conversational fluff only; doesn't wire a real party together yet.
+- **Shout LFM** — now actually recruits a party (System E). Remaining rough edges: combat roles below ~lvl 20 fall back to a base fighter/mage (no role class yet); archer/dagger soulshot auto-fire depends on the swapped weapon registering shots; assist re-issues `ATTACK` so very fast target-swapping by the leader can look twitchy; recruits despawn where they stand on disband.
 - **Phantom/buddy tuning constants** — heal/MP/buff-refresh/roam/dispersal values are constants in the manager files; should be lifted into a config file for runtime tuning.
 
 ---
@@ -277,6 +304,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 | Route data loader | `java/.../data/xml/RouteData.java` |
 | Phantom manager | `java/.../managers/PhantomManager.java` |
 | Buddy manager | `java/.../managers/PhantomBuddyManager.java` |
+| Party recruit manager | `java/.../managers/PhantomPartyManager.java` |
 | Appearance factory | `java/.../managers/FakePlayerAppearanceFactory.java` |
 | Store factory / manager | `java/.../managers/FakePlayerStoreFactory.java`, `FakePlayerStoreManager.java` |
 | Appearance holder | `java/.../model/actor/holders/npc/FakePlayerAppearance.java` |

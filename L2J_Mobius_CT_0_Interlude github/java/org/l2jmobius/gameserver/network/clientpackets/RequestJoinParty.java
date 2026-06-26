@@ -23,6 +23,7 @@ package org.l2jmobius.gameserver.network.clientpackets;
 import org.l2jmobius.gameserver.config.GeneralConfig;
 import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
 import org.l2jmobius.gameserver.managers.PhantomManager;
+import org.l2jmobius.gameserver.managers.PhantomPartyManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.holders.player.BlockList;
@@ -74,6 +75,19 @@ public class RequestJoinParty extends ClientPacket
 			invited.addString(target.getName());
 			requestor.sendPacket(invited);
 			if (!PhantomBuddyManager.getInstance().onInvited(requestor, target))
+			{
+				requestor.sendMessage(target.getName() + " could not join your party right now.");
+			}
+			return;
+		}
+
+		// Recruited combat party member (answered an LFM/LFP shout and walked over): same server-side accept.
+		if (PhantomPartyManager.getInstance().isRecruit(target))
+		{
+			final SystemMessage invited = new SystemMessage(SystemMessageId.YOU_HAVE_INVITED_S1_TO_YOUR_PARTY);
+			invited.addString(target.getName());
+			requestor.sendPacket(invited);
+			if (!PhantomPartyManager.getInstance().onInvited(requestor, target))
 			{
 				requestor.sendMessage(target.getName() + " could not join your party right now.");
 			}

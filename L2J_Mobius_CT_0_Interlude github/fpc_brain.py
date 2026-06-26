@@ -293,6 +293,18 @@ def chat():
                       "'gemstone d' -> Gemstone D; 'iron ore' -> Iron Ore. If there is no clear item, reply: NONE")
             reply = call_llm(system + knowledge_note(message, k=3, allow={"item"}),
                 [{"role": "user", "content": message}], 20, 0.0)
+        elif mode == "LFP":
+            # Classify a free-form shout into the party roles the player is looking for. Java already caught the
+            # explicit "lfm 2 dd healer" case with keywords; this handles natural calls ("need a box and someone
+            # to tank for cruma"). Output ONLY role tokens it can use, repeated per count, comma-separated.
+            system = ("You read a Lineage 2 shout and decide which PARTY ROLES the player is looking for. "
+                      "Reply with ONLY a comma-separated list using EXACTLY these tokens: "
+                      "tank, dd, archer, dagger, nuker, healer, buffer. Repeat a token for each one wanted "
+                      "(e.g. two damage dealers -> 'dd, dd'). Map synonyms: box/support->buffer or healer as fits; "
+                      "ee/bishop/cleric->healer; pp/prophet/wc/bd/sws->buffer; sorc/mage->nuker; "
+                      "knight/pally->tank; rogue/th->dagger; hawkeye/bow->archer; warrior/glad/wl->dd. "
+                      "If the line is NOT looking for party members, reply with exactly: NONE")
+            reply = call_llm(system, [{"role": "user", "content": message}], 30, 0.0)
         elif mode == "OFFER":
             # The bot is proactively PMing the player about their trade post to set up a real deal.
             player = request.headers.get("X-Player", "someone")

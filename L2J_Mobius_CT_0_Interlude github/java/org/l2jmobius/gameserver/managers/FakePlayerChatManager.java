@@ -26,6 +26,7 @@ import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
+import org.l2jmobius.gameserver.managers.PhantomManager.PartyRole;
 import org.l2jmobius.gameserver.data.SpawnTable;
 import org.l2jmobius.gameserver.data.holders.FakePlayerChatHolder;
 import org.l2jmobius.gameserver.data.xml.FakePlayerData;
@@ -354,13 +355,109 @@ public class FakePlayerChatManager implements IXmlReader
 	// yet, so this is conversational fluff for now).
 	public void overheardShout(Player speaker, String text)
 	{
-		if (SOCIAL_ENABLED && (speaker != null) && (text != null) && !text.isEmpty())
+		if (!SOCIAL_ENABLED || (speaker == null) || (text == null) || text.isEmpty())
 		{
-			// Shout is a GLOBAL world channel, so a real player's shout should reach bots anywhere - not
-			// just the (mostly store-vendor) crowd within SOCIAL_RANGE. Pull from a world-wide pool and
-			// guarantee at least one bot answers a human.
-			reactToPlayerShout(speaker, text);
+			return;
 		}
+
+		// LFM/LFP: a real player looking for party members. Parse the wanted roles and recruit a party that walks
+		// over (works brain-off via keywords; with the brain online a free-form call is classified for its roles).
+		// On a recruit we do NOT also run plain shout banter - the answer IS the bots showing up.
+		final List<PartyRole> roles = parseLfpRoles(text);
+		if (!roles.isEmpty())
+		{
+			PhantomPartyManager.getInstance().recruitFromShout(speaker, roles);
+			return;
+		}
+		if (looksLikeLfp(text))
+		{
+			final Player who = speaker;
+			ThreadPool.execute(() ->
+			{
+				final List<PartyRole> aiRoles = askBrainLfp(text);
+				if (!aiRoles.isEmpty())
+				{
+					PhantomPartyManager.getInstance().recruitFromShout(who, aiRoles);
+				}
+				else
+				{
+					reactToPlayerShout(who, text); // brain says it wasn't really an LFP -> normal banter
+				}
+			});
+			return;
+		}
+
+		// Shout is a GLOBAL world channel, so a real player's shout should reach bots anywhere - not
+		// just the (mostly store-vendor) crowd within SOCIAL_RANGE. Pull from a world-wide pool and
+		// guarantee at least one bot answers a human.
+		reactToPlayerShout(speaker, text);
+	}
+
+	// LFM/LFP triggers - a line must contain one of these to be treated as a party call (so ordinary chat that
+	// happens to mention "tank" or "healer" is not mistaken for recruiting).
+	private static final Pattern LFP_TRIGGER = Pattern.compile("\\b(lfm|lfp|lfg|lf|looking for|need|recruit|wanna pt|party up|join.*pt|more for|ppl for|pst)\\b", Pattern.CASE_INSENSITIVE);
+
+	/** @return {@code true} if the shout reads like a party call (has an LFM/LFP trigger). */
+	private static boolean looksLikeLfp(String text)
+	{
+		return LFP_TRIGGER.matcher(text).find();
+	}
+
+	/**
+	 * Deterministically extracts the roles a player is shouting for ("lfm 2 dd + healer" -> WARRIOR, WARRIOR,
+	 * HEALER). A line needs an LFM/LFP trigger AND at least one recognised role word; numbers before a role
+	 * repeat it. Returns an empty list when the line is not an explicit role request.
+	 */
+	private static List<PartyRole> parseLfpRoles(String text)
+	{
+		if (!looksLikeLfp(text))
+		{
+			return new ArrayList<>();
+		}
+		final List<PartyRole> roles = new ArrayList<>();
+		int pendingCount = 1;
+		for (String token : text.toLowerCase().split("[^a-z0-9]+"))
+		{
+			if (token.isEmpty())
+			{
+				continue;
+			}
+			if (token.matches("\\d+"))
+			{
+				pendingCount = Math.max(1, Math.min(6, Integer.parseInt(token)));
+				continue;
+			}
+			final PartyRole role = PartyRole.fromToken(token);
+			if (role != null)
+			{
+				for (int i = 0; (i < pendingCount) && (roles.size() < 8); i++)
+				{
+					roles.add(role);
+				}
+			}
+			pendingCount = 1; // a number only applies to the role word right after it
+		}
+		return roles;
+	}
+
+	/** Asks the brain (LFP mode) to classify a free-form party call into role tokens; empty when it isn't one. */
+	private List<PartyRole> askBrainLfp(String text)
+	{
+		final List<PartyRole> roles = new ArrayList<>();
+		final String reply = callBridge("", "LFP", "", "", text, "", "");
+		if (reply == null)
+		{
+			return roles;
+		}
+		for (String token : reply.toLowerCase().split("[^a-z]+"))
+		{
+			final PartyRole role = PartyRole.fromToken(token);
+			if ((role != null) && (roles.size() < 8))
+			{
+				roles.add(role);
+			}
+		}
+		return roles;
 	}
 
 	/**

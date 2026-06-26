@@ -275,6 +275,125 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
+	/**
+	 * A recruited combat party member. Unlike a {@link BuddyRole} buddy (which idles in a town until partied),
+	 * a party member is spawned on demand off-screen when a real player shouts an LFM/LFP, walks to the player,
+	 * and is then invited into the party. {@link PhantomPartyManager} owns its behaviour from spawn.
+	 * <ul>
+	 * <li>{@code mage} - caster gear loadout (magic weapon + robe + spiritshots).</li>
+	 * <li>{@code supportAs} - non-NONE roles reuse the proven {@link #outfitBuddy} support outfit (no auto-hunt;
+	 * the manager casts heals/buffs by hand). Combat roles use {@link #outfitCombat} (a fixed class + auto-skills).</li>
+	 * </ul>
+	 * Combat class ids are standard Interlude occupations resolved per level tier; if a template is missing the
+	 * spawner falls back to a plain fighter/mage, so a bad id degrades instead of crashing.
+	 */
+	public enum PartyRole
+	{
+		TANK(false, BuddyRole.NONE),
+		WARRIOR(false, BuddyRole.NONE),
+		ARCHER(false, BuddyRole.NONE),
+		DAGGER(false, BuddyRole.NONE),
+		NUKER(true, BuddyRole.NONE),
+		HEALER(true, BuddyRole.ELDER), // Elven Elder kit (heals + recharge); granted Resurrection on spawn
+		BUFFER(true, BuddyRole.PROPHET); // Prophet fighter-buff kit
+
+		final boolean mage;
+		final BuddyRole supportAs;
+
+		PartyRole(boolean mage, BuddyRole supportAs)
+		{
+			this.mage = mage;
+			this.supportAs = supportAs;
+		}
+
+		/** @return {@code true} for HEALER/BUFFER: outfit via the support path, behaviour driven by hand. */
+		public boolean isSupport()
+		{
+			return supportAs.isBuddy();
+		}
+
+		/**
+		 * Resolves the loose tokens a player shouts ("healer", "dd", "box", "tank", "ee") to a role.
+		 * @return the matched role, or {@code null} if the word names no role
+		 */
+		public static PartyRole fromToken(String token)
+		{
+			switch (token)
+			{
+				case "tank":
+				case "tanker":
+				case "knight":
+				case "pally":
+				case "paladin":
+				{
+					return TANK;
+				}
+				case "dd":
+				case "fighter":
+				case "warrior":
+				case "melee":
+				case "glad":
+				case "gladiator":
+				case "wl":
+				case "warlord":
+				{
+					return WARRIOR;
+				}
+				case "archer":
+				case "bow":
+				case "hawkeye":
+				case "ranger":
+				{
+					return ARCHER;
+				}
+				case "dagger":
+				case "rogue":
+				case "th":
+				case "dwarf":
+				case "assassin":
+				{
+					return DAGGER;
+				}
+				case "nuker":
+				case "mage":
+				case "nuke":
+				case "sorc":
+				case "sorcerer":
+				case "wizard":
+				case "ss":
+				{
+					return NUKER;
+				}
+				case "healer":
+				case "heal":
+				case "ee":
+				case "elder":
+				case "bishop":
+				case "se":
+				case "shillien":
+				case "cleric":
+				{
+					return HEALER;
+				}
+				case "buffer":
+				case "buff":
+				case "pp":
+				case "prophet":
+				case "wc":
+				case "warcryer":
+				case "bd":
+				case "sws":
+				{
+					return BUFFER;
+				}
+				default:
+				{
+					return null;
+				}
+			}
+		}
+	}
+
 	/** A deployment group: where/how many phantoms spawn, their level range, and whether to respawn. */
 	private static class Population
 	{
@@ -309,6 +428,7 @@ public class PhantomManager implements IXmlReader
 		int lastMobX; // last known position of the engaged mob, so a caster can walk to the loot after a kill
 		int lastMobY;
 		volatile boolean buddyEngaged; // buddy is partied/claimed by a player: skip the proximity despawn (grace)
+		volatile boolean recruited; // recruited combat party member: PhantomPartyManager owns it; skip ALL hunter logic
 
 		PhantomData(Player player, Location home, Population population, boolean mage, BuddyRole role)
 		{
@@ -1342,6 +1462,298 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
+	// ===== Recruited party-member API (called by PhantomPartyManager / RequestJoinParty) =====
+
+	/**
+	 * Spawns a single recruited combat party member of a given role at a location, brought to {@code level}.
+	 * Combat roles get a fixed class (per level tier), gear, learned skills and the native AutoUse task (so they
+	 * cast/shot/pot on whatever target the party manager assigns); support roles reuse the buddy outfit and are
+	 * cast by hand. The member does NOT auto-hunt and is exempt from the proximity despawn - PhantomPartyManager
+	 * owns it from here (walk-in, party-join, follow, assist, disband).
+	 * @return the spawned member, or {@code null} on failure (caller should fall back gracefully)
+	 */
+	public Player spawnPartyMember(Location location, int level, PartyRole role)
+	{
+		if (_phantoms.size() >= MAX_PHANTOMS)
+		{
+			return null;
+		}
+		final int groundZ = GeoEngine.getInstance().getHeight(location.getX(), location.getY(), location.getZ());
+		final Location spawnLocation = new Location(location.getX(), location.getY(), groundZ);
+		try
+		{
+			final boolean mage = role.mage;
+			final int classId = role.isSupport() ? role.supportAs.classId : Math.max(0, roleClassId(role, level));
+			PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
+			PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
+			if (template == null) // bad/missing class id: degrade to a plain fighter/mage base
+			{
+				playerClass = mage ? PlayerClass.getPlayerClass(10) : PlayerClass.FIGHTER;
+				template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
+			}
+			if (template == null)
+			{
+				playerClass = PlayerClass.FIGHTER;
+				template = PlayerTemplateData.getInstance().getTemplate(playerClass);
+			}
+			if (template == null)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": No template available for party member role " + role + ".");
+				return null;
+			}
+
+			final boolean female = Rnd.nextBoolean();
+			final PlayerAppearance appearance = new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
+			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance);
+			if (phantom == null)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null for party member (duplicate name / db error?).");
+				return null;
+			}
+			phantom.setDietMode(true); // ignore the weight of the potion/shot stack (see createAndSpawn)
+			phantom.setOnlineStatus(true, false);
+
+			if (role.isSupport())
+			{
+				outfitBuddy(phantom, level, role.supportAs);
+				if (role == PartyRole.HEALER)
+				{
+					grantRes(phantom, level); // every healer can raise a fallen party member
+				}
+			}
+			else
+			{
+				outfitCombat(phantom, level, role);
+			}
+			phantom.refreshOverloaded();
+			enterWorld(phantom, spawnLocation);
+
+			// role=NONE + recruited: skips every hunter path; population=null so the proximity deactivate never
+			// touches it. PhantomPartyManager drives it from onMemberSpawned onward.
+			final PhantomData data = new PhantomData(phantom, spawnLocation, null, mage, BuddyRole.NONE);
+			data.recruited = true;
+			_phantoms.put(phantom.getObjectId(), data);
+
+			// Combat roles fire skills/shots/potions through the native AutoUse task on the party manager's
+			// assigned target. No AutoPlay here: the manager picks the target (assist), not the engine's scanner.
+			if (!role.isSupport())
+			{
+				if (!mage && !phantom.getAutoUseSettings().getAutoActions().contains(AUTO_ATTACK_ACTION))
+				{
+					phantom.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
+				}
+				// AutoUse only fires offensive skills while the player "is auto-playing" (see AutoUseTaskManager).
+				// We set the flag without starting the AutoPlay target-scanner: in assist mode PhantomPartyManager
+				// picks the target (the leader's) and AutoUse casts the role's skills + shots on it. Free mode
+				// starts the real scanner via setRecruitHunting.
+				phantom.setAutoPlaying(true);
+				AutoUseTaskManager.getInstance().startAutoUseTask(phantom);
+			}
+			startSupervising();
+			LOGGER.info(getClass().getSimpleName() + ": Spawned " + role + " party member '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
+			return phantom;
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to spawn party member role " + role + ": " + e.getMessage());
+			return null;
+		}
+	}
+
+	/** @return {@code true} if the player is a live recruited party member managed by PhantomPartyManager. */
+	public boolean isRecruit(Player player)
+	{
+		final PhantomData data = (player == null) ? null : _phantoms.get(player.getObjectId());
+		return (data != null) && data.recruited;
+	}
+
+	/**
+	 * Toggles a recruited member's "free hunt" mode. ON starts the native AutoPlay scanner (the member grabs
+	 * its own nearby mobs); OFF stops it so the party manager's assist (focus the leader's target) takes over.
+	 */
+	public void setRecruitHunting(Player member, boolean hunting)
+	{
+		final PhantomData data = (member == null) ? null : _phantoms.get(member.getObjectId());
+		if ((data == null) || !data.recruited)
+		{
+			return;
+		}
+		if (hunting)
+		{
+			final AutoPlaySettingsHolder settings = member.getAutoPlaySettings();
+			settings.setNextTargetMode(TARGET_MODE_MONSTER);
+			settings.setShortRange(false);
+			settings.setRespectfulHunting(true);
+			settings.setPickup(true);
+			AutoPlayTaskManager.getInstance().startAutoPlay(member); // also sets isAutoPlaying(true)
+		}
+		else
+		{
+			// Back to assist: stop the scanner but KEEP the auto-playing flag so AutoUse still casts the member's
+			// skills on the target PhantomPartyManager assigns (stopAutoPlay clears the flag, so re-set it).
+			AutoPlayTaskManager.getInstance().stopAutoPlay(member);
+			member.setAutoPlaying(true);
+		}
+	}
+
+	/** Despawns a recruited member (party disbanded / owner gone / grace elapsed / member dead). */
+	public void despawnRecruit(Player member)
+	{
+		final PhantomData data = (member == null) ? null : _phantoms.get(member.getObjectId());
+		if ((data != null) && data.recruited)
+		{
+			AutoPlayTaskManager.getInstance().stopAutoPlay(member);
+			AutoUseTaskManager.getInstance().stopAutoUseTask(member);
+			despawn(data);
+		}
+	}
+
+	/**
+	 * Outfits a combat party member: brings it to {@code level}, learns its (already-correct, template-set)
+	 * class's full skill tree, gears it, swaps in a bow/dagger for the ranged/rogue roles, and registers its
+	 * offensive skills with AutoUse. Unlike {@link #outfit} there is no random class transfer - the member was
+	 * created directly from its role's class template.
+	 */
+	private void outfitCombat(Player phantom, int level, PartyRole role)
+	{
+		if (level > 1)
+		{
+			final long currentExp = phantom.getExp();
+			final long targetExp = ExperienceData.getInstance().getExpForLevel(level);
+			if (targetExp > currentExp)
+			{
+				phantom.addExpAndSp(targetExp - currentExp, 0);
+			}
+		}
+		learnAllSkills(phantom);
+		gear(phantom, level, role.mage); // sword/robe loadout + grade-matched shots + potions
+		if (role == PartyRole.ARCHER)
+		{
+			equipRoleWeapon(phantom, WeaponType.BOW, level);
+		}
+		else if (role == PartyRole.DAGGER)
+		{
+			equipRoleWeapon(phantom, WeaponType.DAGGER, level);
+		}
+		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
+		phantom.setCurrentCp(phantom.getMaxCp());
+		registerAutoSkills(phantom);
+	}
+
+	/**
+	 * Replaces the fighter sword with a grade-appropriate weapon of {@code type} (bow / dagger) so an Archer
+	 * actually shoots and a Dagger actually stabs. The grade matches what {@link #gear} handed shots for, so the
+	 * soulshots still auto-fire. If no such weapon exists in the datapack the member simply keeps its sword.
+	 */
+	private void equipRoleWeapon(Player phantom, WeaponType type, int level)
+	{
+		final ItemTemplate weapon = findWeapon(type, gradeForLevel(level));
+		if (weapon != null)
+		{
+			equip(phantom, weapon); // equipItem replaces the conflicting R_HAND/LR_HAND slot
+		}
+	}
+
+	/** Cheapest tradeable weapon of a type at the desired grade, stepping down a grade if none exists. */
+	private static ItemTemplate findWeapon(WeaponType type, CrystalType desired)
+	{
+		CrystalType grade = desired;
+		while (grade != null)
+		{
+			ItemTemplate best = null;
+			for (ItemTemplate item : ItemData.getInstance().getAllItems())
+			{
+				if ((item == null) || !(item instanceof Weapon) || !item.isTradeable() || (item.getReferencePrice() <= 0))
+				{
+					continue;
+				}
+				if ((((Weapon) item).getItemType() == type) && (item.getCrystalType() == grade) && ((best == null) || (item.getReferencePrice() < best.getReferencePrice())))
+				{
+					best = item;
+				}
+			}
+			if (best != null)
+			{
+				return best;
+			}
+			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
+		}
+		return null;
+	}
+
+	/** Standard Interlude occupation id for a combat role at its level tier (base / 1st / 2nd class). */
+	private static int roleClassId(PartyRole role, int level)
+	{
+		final int tier = (level < 20) ? 0 : (level < 40) ? 1 : 2;
+		switch (role)
+		{
+			case TANK:
+			{
+				return new int[]
+				{
+					0,
+					4,
+					5
+				}[tier]; // Human Fighter / Knight / Paladin
+			}
+			case WARRIOR:
+			{
+				return new int[]
+				{
+					0,
+					1,
+					2
+				}[tier]; // Human Fighter / Warrior / Gladiator
+			}
+			case ARCHER:
+			{
+				return new int[]
+				{
+					0,
+					7,
+					9
+				}[tier]; // Human Fighter / Rogue / Hawkeye
+			}
+			case DAGGER:
+			{
+				return new int[]
+				{
+					0,
+					7,
+					8
+				}[tier]; // Human Fighter / Rogue / Treasure Hunter
+			}
+			case NUKER:
+			{
+				return new int[]
+				{
+					10,
+					11,
+					12
+				}[tier]; // Human Mage / Wizard / Sorcerer
+			}
+			default:
+			{
+				return -1;
+			}
+		}
+	}
+
+	/** Grants Resurrection (1016) to a healer so it can raise dead party members, scaled to its level. */
+	private void grantRes(Player phantom, int level)
+	{
+		if (phantom.getKnownSkill(1016) != null)
+		{
+			return;
+		}
+		final int resLevel = Math.max(1, Math.min(9, level / 8));
+		final Skill res = SkillData.getInstance().getSkill(1016, resLevel);
+		if (res != null)
+		{
+			phantom.addSkill(res, true);
+		}
+	}
+
 	private synchronized void startSupervising()
 	{
 		if (_supervising)
@@ -1363,9 +1775,9 @@ public class PhantomManager implements IXmlReader
 	{
 		for (PhantomData data : _phantoms.values())
 		{
-			if (!data.mage || data.role.isBuddy() || data.dormant || data.resting || data.dispersing || (data.huntPauseUntil > 0))
+			if (!data.mage || data.role.isBuddy() || data.recruited || data.dormant || data.resting || data.dispersing || (data.huntPauseUntil > 0))
 			{
-				continue; // buddies never hunt; otherwise skip if fanning out, on a breather, resting or asleep
+				continue; // buddies/recruits never auto-hunt; otherwise skip if fanning out, on a breather, resting or asleep
 			}
 			final Player mage = data.player;
 			try
@@ -1500,9 +1912,9 @@ public class PhantomManager implements IXmlReader
 			final Player phantom = data.player;
 			try
 			{
-				if (data.role.isBuddy() || data.dormant || data.dispersing || phantom.isDead())
+				if (data.role.isBuddy() || data.recruited || data.dormant || data.dispersing || phantom.isDead())
 				{
-					continue; // buddies are not part of the hunt/deconflict
+					continue; // buddies and recruited party members are not part of the hunt/deconflict
 				}
 
 				// Resting phantom that just came under threat: stand now, don't wait for the 5s supervise tick.
@@ -1778,6 +2190,14 @@ public class PhantomManager implements IXmlReader
 				if (World.getInstance().findObject(phantom.getObjectId()) == null)
 				{
 					_phantoms.remove(phantom.getObjectId());
+					continue;
+				}
+
+				// Recruited combat party members are driven entirely by PhantomPartyManager (follow / assist /
+				// support / sustain). They never hunt, rest, roam or proximity-despawn on their own.
+				if (data.recruited)
+				{
+					PhantomPartyManager.getInstance().supervise(phantom);
 					continue;
 				}
 

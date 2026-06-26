@@ -19,6 +19,7 @@ package handlers.chat.channels;
 import org.l2jmobius.gameserver.config.GeneralConfig;
 import org.l2jmobius.gameserver.handler.IChatHandler;
 import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
+import org.l2jmobius.gameserver.managers.PhantomPartyManager;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.network.SystemMessageId;
 import org.l2jmobius.gameserver.network.enums.ChatType;
@@ -60,6 +61,9 @@ public class ChatParty implements IChatHandler
 
 		// Let any support buddies in the party react to party-chat orders (party / follow / stay / tp / brb).
 		PhantomBuddyManager.getInstance().handlePartyChat(activeChar, text);
+
+		// Recruited combat party members react too: "assist", "attack freely", "follow", "hold", "brb", "bye".
+		PhantomPartyManager.getInstance().handlePartyChat(activeChar, text);
 	}
 	
 	@Override

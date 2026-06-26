@@ -24,6 +24,7 @@ import org.l2jmobius.gameserver.data.xml.FakePlayerData;
 import org.l2jmobius.gameserver.handler.IChatHandler;
 import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
 import org.l2jmobius.gameserver.managers.PhantomBuddyManager;
+import org.l2jmobius.gameserver.managers.PhantomPartyManager;
 import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
@@ -107,6 +108,18 @@ public class ChatWhisper implements IChatHandler
 		{
 			activeChar.sendPacket(new CreatureSay(activeChar, type, "->" + receiver.getName(), text));
 			final String reply = PhantomBuddyManager.getInstance().handleWhisper(activeChar, receiver, text);
+			if ((reply != null) && !reply.isEmpty())
+			{
+				activeChar.sendPacket(new CreatureSay(receiver, ChatType.WHISPER, receiver.getName(), reply));
+			}
+			return;
+		}
+
+		// Recruited combat party member: whisper it orders (assist / attack freely / follow / hold / brb / bye).
+		if ((receiver != null) && PhantomManager.getInstance().isRecruit(receiver))
+		{
+			activeChar.sendPacket(new CreatureSay(activeChar, type, "->" + receiver.getName(), text));
+			final String reply = PhantomPartyManager.getInstance().handleWhisper(activeChar, receiver, text);
 			if ((reply != null) && !reply.isEmpty())
 			{
 				activeChar.sendPacket(new CreatureSay(receiver, ChatType.WHISPER, receiver.getName(), reply));
