@@ -191,6 +191,25 @@ Ten distinct modes — each with tailored persona and token budget:
 
 Action tags (e.g. `[[MEET:gatekeeper]]`, `[[SHOP:SELL:Soulshot D-grade:500]]`, `[[BUFF]]`, `[[FOLLOW]]`) are parsed by the Java side to trigger behavior, then stripped before display.
 
+### Buddy / support bot system (Phantom system — fully wired)
+The buddy system uses **real `Player` objects** ("phantoms"), not NPCs, so they can join parties, cast skills, and teleport.
+
+- ✅ **Party invite auto-accept**: invite a buddy → `RequestJoinParty` hooks `PhantomBuddyManager.onInvited()`, buddy joins instantly.
+- ✅ **Follow / stay**: buddy trails owner at ≤250px; `[[FOLLOW]]` / `[[STAY]]` tags toggle it.
+- ✅ **Auto-heal**: heals owner at <50% HP, self-heals at <40%. Heal priority: Bishop Heal 1218→1217→1015→1011.
+- ✅ **Buff maintenance**: re-casts all beneficial buffs every 20s refresh window; `[[BUFF]]` forces an immediate cycle.
+- ✅ **MP management**: warns at 25% MP, sits at a safe spot to recover, stands again at 70%.
+- ✅ **Teleport**: `[[TP:destination]]` teleports buddy to named location (gatekeeper list).
+- ✅ **Grace / AFK**: `[[GRACE:n]]` extends offline tolerance; "brb" gives 6-minute grace before buddy disbands.
+- ✅ **Disband**: `[[DISBAND]]` cleanly releases buddy from party.
+- ✅ **LLM chat**: whisper to buddy → `PhantomBuddyManager.handleWhisper()` → brain BUDDY mode; spontaneous BUDDYCHAT chatter every 7–18 min.
+- ✅ **Party chat commands**: buddy listens to party channel (`ChatParty` → `handlePartyChat()`).
+- ✅ **Buddy roles/populations** (`PhantomPopulations.xml`): `BUDDY_ELDER` (Elven Elder — mage buffs/heals/recharge), `BUDDY_PROPHET` (fighter buffs), `BUDDY_WARCRYER` (Orc buffs). Deployed in towns (Giran etc.) at level 70.
+
+**Key files:** `PhantomBuddyManager.java` (1154 lines), `PhantomManager.java` (76KB), `PhantomPopulations.xml`, `ChatWhisper.java` / `ChatParty.java` dispatch.
+
+**Tick interval:** 1s. Support range 900px, follow range 250px, danger range 700px.
+
 ### Admin tools
 - ✅ `//record_route <name>` / `//stop_route` / `//list_routes` — walk a path in-game to record bot waypoints (~150-unit intervals), saved to `data/routes/<name>.xml`.
 - ✅ `//fakechat <playername> <fpcname> <message>` — trigger a bot response to a player for testing.
@@ -202,19 +221,18 @@ Action tags (e.g. `[[MEET:gatekeeper]]`, `[[SHOP:SELL:Soulshot D-grade:500]]`, `
 
 ## 7. Known issues / rough edges
 
-- **Field hunting feel**: bots can still cluster / move sluggishly in some zones — pathfinding + combat tuning is a rabbit hole; deprioritized.
-- **Buddy bot Java wiring**: brain BUDDY/BUDDYCHAT modes are implemented; Java-side party invite, follow, and buff dispatch not yet wired.
+- **Field hunting feel**: bots can still cluster / move sluggishly in some zones — pathfinding + combat tuning deprioritized.
 - **Map image calibration**: must be supplied by the user; calibration is bounds-based (a friendlier 2-click calibration was discussed but not built).
 
 ---
 
 ## 8. Suggested next steps
 
-1. **Buddy/support bot Java wiring**: hook BUDDY mode into party invite, `/follow`, buff dispatch (Bishop/SE/PP archetypes), and `[[TP:location]]` teleport.
-2. **Field behavior tuning**: smarter hunting, polygon-bounded roaming, persistent respawn identity.
-3. **Editor niceties**: 2-click map calibration; edit profiles/assigns in-tool; live in-game reload.
-4. **Route editor integration**: surface recorded routes in the FPC editor as PATROL path overlays.
-5. **Population tuning pass**: review the 26 field zones + town clusters with real play feedback.
+1. **Field behavior tuning**: smarter hunting, polygon-bounded roaming, persistent respawn identity.
+2. **Editor niceties**: 2-click map calibration; edit profiles/assigns in-tool; live in-game reload.
+3. **Route editor integration**: surface recorded routes in the FPC editor as PATROL path overlays.
+4. **Population tuning pass**: review the 26 field zones + town clusters + buddy spawn points with real play feedback.
+5. **Buddy role expansion**: add SE (Spirit Expert) and PP (Prophet variant) buddy archetypes with their specific buff sets.
 
 ---
 
@@ -235,6 +253,10 @@ Action tags (e.g. `[[MEET:gatekeeper]]`, `[[SHOP:SELL:Soulshot D-grade:500]]`, `
 | Store packets | `java/.../gameserver/network/serverpackets/FakePlayerStoreList{Sell,Buy}.java`, `FakePlayerRecipeShop*.java` |
 | Render packet | `java/.../gameserver/network/serverpackets/FakePlayerInfo.java` |
 | NPC integration | `java/.../gameserver/model/actor/Npc.java` |
+| Buddy manager | `java/.../gameserver/managers/PhantomBuddyManager.java` |
+| Phantom manager | `java/.../gameserver/managers/PhantomManager.java` |
+| Buddy populations | `dist/game/data/PhantomPopulations.xml` |
+| Party chat dispatch | `dist/game/data/scripts/handlers/chat/channels/ChatParty.java` |
 | Admin commands | `java/.../gameserver/handlers/admincommandhandlers/AdminFpcRoute.java`, `AdminFakePlayers.java` |
 | Config | `java/.../gameserver/config/custom/FakePlayersConfig.java`, `dist/game/config/Custom/FakePlayers.ini` |
 | Behavior data | `dist/game/data/FakePlayerBehavior.xml` (+ `data/xsd/FakePlayerBehavior.xsd`) |
