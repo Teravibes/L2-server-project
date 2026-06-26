@@ -22,6 +22,13 @@ The two buttons at the top switch what you're editing:
 
 Map and geodata stay loaded across both modes.
 
+### Support buddies (phantom mode)
+
+In phantom mode, a population's **role** dropdown turns it into a personal **support buddy** instead of a field hunter:
+- **Elder / Prophet / Warcryer** — a support-class buffer/healer that idles in town until you whisper and party it, then keeps you buffed/healed and follows you (see PROGRESS.md "System D").
+- Leave role as **none** for a normal hunting phantom.
+- Place buddies at **level 40+** (their level rolls from the population's level range) so they have a real 2nd-class buff kit. A small count near a town's gatekeeper works well.
+
 ## Working with populations
 
 - **Double-click** the map to add a population, or click **+ Population**.

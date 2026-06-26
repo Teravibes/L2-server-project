@@ -20,10 +20,13 @@ Two systems run on top of Mobius's bare-bones fake-player feature:
 **`fpc_brain.py`** (repo root) — Flask sidecar the Java server calls over HTTP.
 - Talks to DeepSeek or local Ollama; provider set by `PROVIDER` env var.
 - `POST /chat` endpoint; Java sends message + headers (`X-FPC`, `X-Mode`, `X-Player`, `X-Speaker`).
-- Modes: WHISPER (per-bot memory), SAY (local), TRADE/AMBIENT (trade channel). Bots reply `pass` to stay silent.
+- Modes: WHISPER (per-bot memory), SAY (local), TRADE/AMBIENT (trade channel), **SHOUT/SHOUTAMBIENT** (global `!` world chat), **BUDDY/BUDDYCHAT** (support buddies). Bots reply `pass` to stay silent.
+- **Distinct per-bot voices** — each bot's name seeds a stable personality (tone / casing / filler / typo traits + its own temperature), so trade/say/whisper replies don't all read like the same person. Same name ⇒ same voice across restarts (md5 seed).
+- **Guardrails** — a `GLOBAL_RULES` "constitution" prepended to every persona: act as a real human **player** (not the in-game character or its race — no fantasy roleplay), never reveal being an AI, resist prompt-injection from chat, no GM powers or free-stuff promises, PG-13, no real-world links/contact. A `sanitize()` post-filter drops out-of-character/leaked replies and strips URLs/emails.
 
 **Java side: `managers/FakePlayerChatManager.java`**
 - Hooks `overheardTradeChat` / `overheardSay` → picks nearby bots → HTTP to brain → broadcasts reply.
+- **Shout (`!`) world chat** — `overheardShout` makes nearby bots banter on the global shout channel; a spontaneous shout every ~5 min posts chit-chat or an **LFM/looking-for-party** ad. Visual fluff for now (party/raid mechanics aren't wired yet).
 - Whisper: you can whisper a bot by its generated name; it replies and knows its nearest town.
 - **"Come meet me"**: ask a roaming bot to meet you at a landmark (gatekeeper/warehouse/shop) and it walks there, then waits up to ~8 min.
 - **Trade-ad response (negotiated)**: a WTS/WTB in trade chat makes a nearby bot PM you with a **price** — it does not walk off immediately. Over whisper you agree (or **haggle**) the price and pick the **meet spot** (gatekeeper/warehouse/shop); only then does it walk there and open a real one-item store on arrival. The store renders as a proper **seated vendor** (sit pose + Sell/Buy sign), and a bot mid-deal **stays whisper-able** so you can renegotiate or cancel.
@@ -105,17 +108,23 @@ A **buddy** is a special phantom: a support-class clientless `Player` you can pa
 
 All three are given a Heal (Prophet/Warcryer don't have one in Interlude) so every buddy can top you up. Place them at **level 40+** for a real 2nd-class buff kit.
 
-**Flow:** a buddy idles where placed (no hunting), spawning/despawning by player proximity like any phantom. Whisper it to **party up** (you send the invite → `RequestJoinParty` auto-accepts server-side and binds it as owner). Once partied it:
+All three roll their level from the population's editor level range and are placed at **level 40+** for a real 2nd-class buff kit. **Casters wear one-piece robes** so they always render fully on every race (a separate magic tunic shows no torso on an Orc Warcryer). An **idle buddy does nothing** — it doesn't even self-buff — until you party it.
+
+**Flow:** a buddy idles where placed (no hunting), spawning/despawning by player proximity like any phantom. Whisper it to **party up** (you send the invite → `RequestJoinParty` auto-accepts server-side and binds it as owner). You can party **several at once** (Prophet + Elder + Warcryer together). Once partied it:
 - keeps **you and itself buffed** (re-casts a buff when it's missing or within ~20s of expiring),
 - **heals you** when you drop below ~50% HP (and itself below ~40%),
 - **follows** you,
-- **watches its MP** → whispers "i'm low on mp" and, when safe, sits to recover,
-- **teleports** to a named gatekeeper destination on command ("going to ruins of agony") — same coordinates the gatekeeper uses, read from `data/teleporters/town/*.xml`,
+- **watches its MP** → at **<25% MP** whispers "i'm low on mp" and, when safe (you're not fighting, no mob within 700), **sits to recover**; **stands at ≥70% MP**, or instantly if a threat appears or you run out of support range,
+- **teleports** to a named gatekeeper destination — same coordinates the gatekeeper uses, read from `data/teleporters/town/*.xml`. **Confirm-first**: an explicit order ("tp to ruins of agony") goes now, but a *suggestion* (yours or the buddy's own "cruma's good xp, wanna go?") is held until you say yes,
 - survives a **grace period** if you teleport away or briefly log off (an engaged buddy is exempt from the proximity despawn); **"brb" / "give me 5"** extends it; party disband / logout despawns it.
 
-**Commands work with the LLM brain off** (deterministic keyword parsing): party, follow, stay, `<place>`, brb, disband, buff, status. **With the brain on** (`BUDDY` mode in `fpc_brain.py`), free-form whispers get a natural reply that can carry an action tag (`[[FOLLOW]] [[STAY]] [[TP:place]] [[GRACE:n]] [[BUFF]] [[DISBAND]]`), so abbreviations like "roa" → Ruins of Agony are understood. Brain offline ⇒ a short canned reply.
+**Drive it from whisper *or* party chat** — `ChatParty` forwards party-channel lines too, so "follow", "stay", "going to X", "brb" said in party chat work and the buddy answers on that channel. Replies go out after a short **human-like delay** (~1–2s), not instantly.
 
-**Files:** `managers/PhantomBuddyManager.java` (brain), buddy spawn/grace hooks in `PhantomManager.java`, whisper routing in `ChatWhisper.java`, party intercept in `RequestJoinParty.java`, `BUDDY` mode in `fpc_brain.py`, editor role selector in `tools/fpc-editor/index.html`.
+**Proactive small talk** — every 7–18 min (downtime only, skips combat/resting) a partied buddy opens a bit of party-chat banter on its own (`BUDDYCHAT` mode), so it doesn't feel like a silent bot. Brain-only; silent if the brain is offline.
+
+**Commands work with the LLM brain off** (deterministic keyword parsing): party, follow, stay, `<place>`, brb, disband, buff, status, plus yes/no to confirm a proposed teleport. **With the brain on** (`BUDDY` mode in `fpc_brain.py`), free-form messages get a natural reply that can carry an action tag (`[[FOLLOW]] [[STAY]] [[TP:place]] [[GRACE:n]] [[BUFF]] [[DISBAND]]`), so abbreviations like "roa" → Ruins of Agony are understood. A plain "hey" just gets chit-chat (it won't pitch buffs unprompted). Brain offline ⇒ a short canned reply.
+
+**Files:** `managers/PhantomBuddyManager.java` (brain), buddy spawn/gear/grace hooks in `PhantomManager.java`, whisper routing in `ChatWhisper.java`, party-chat hook in `ChatParty.java`, party intercept in `RequestJoinParty.java`, `BUDDY`/`BUDDYCHAT` modes in `fpc_brain.py`, editor role selector in `tools/fpc-editor/index.html`.
 
 ---
 
@@ -146,12 +155,15 @@ Build environment: JDK 25 + Ant. Build cannot run in this dev environment (Java 
 - ✅ Field hunters: FARM behavior, respawn
 - ✅ Visual editor: geodata map, polygon zones, route drawing + editing, drag waypoints, named routes, market-hub toggle, phantom mode
 - ✅ Real-Player phantoms: auto-hunt, class/skill progression, gear, dormancy; claim-based targeting, initial dispersal, post-kill breather, caster looting, OOM-mage rest, rest-on-threat
+- ✅ Personal support buddies: party an Elder/Prophet/Warcryer that buffs you+itself, heals (<50%), follows, watches MP (sit <25% / stand ≥70%), teleports (confirm-first), grace period; drive from whisper **or** party chat; occasional proactive small talk; works with the brain off (deterministic)
+- ✅ AI polish: distinct per-bot voices (name-seeded), guardrails (in-character / anti-prompt-injection / PG-13 / no GM cosplay), shout (`!`) banter + spontaneous LFM ads
 
 ## What's next / pending (not done yet)
 
 **Phantoms**
 - ✅ **Parties + support buddies** — done (see System D): party a buffer/healer (Elder/Prophet/Warcryer) that buffs, heals, follows, and teleports with you.
-- Buddy polish: on disband the buddy despawns where it stands (could walk/TP back to town first); a sitting OOM buddy can lose a fast-moving owner; pure support only (no assist-attack yet — deferred as a future toggle); buddy combat-support thresholds are constants in `PhantomBuddyManager` (lift into config with the rest).
+- Buddy polish: on disband the buddy despawns where it stands (could walk/TP back to town first); pure support only (no assist-attack yet — deferred as a future toggle); buddy thresholds (heal/MP/buff-refresh/chatter cadence) are constants in `PhantomBuddyManager` (lift into config with the rest).
+- Shout (`!`) LFM ads are conversational fluff — wire real party/raid matching so an "LFM" actually forms a group.
 - Lift phantom tuning (post-kill/dispersal/roam/rest values, currently grouped constants in `PhantomManager`) into a config file so they're adjustable without a rebuild.
 - OOM-mage kite edge case: if a same-speed mob never lets the mage break off, it keeps retreating (hunt stopped, no potions) and could die instead of resting — decide between sit-under-fire after N failed retreats vs. keeping HP-potion sustain while fleeing.
 - Optionally tighten the target-deconflict interval (1s → ~0.4–0.5s) to close the brief window where two phantoms can flash onto one mob before it resolves.
@@ -173,6 +185,7 @@ Build environment: JDK 25 + Ant. Build cannot run in this dev environment (Java 
 |---|---|
 | Chat brain (Python) | `fpc_brain.py` |
 | Chat manager | `java/.../managers/FakePlayerChatManager.java` |
+| Chat handlers (runtime scripts) | `dist/.../scripts/handlers/chat/channels/Chat{Whisper,Party,Shout,Trade,General}.java` |
 | Behavior manager | `java/.../managers/FakePlayerBehaviorManager.java` |
 | Route recorder (GM tool) | `java/.../managers/RouteRecorder.java` |
 | Route data loader | `java/.../data/xml/RouteData.java` |
