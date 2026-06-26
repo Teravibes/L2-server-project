@@ -149,33 +149,72 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 
 ## 6. Status — what works
 
-- ✅ LLM chat: whisper / say / trade, with silence + reply dedup.
+### Core systems
+- ✅ LLM chat: whisper / say / trade / shout, with silence + reply dedup.
 - ✅ Procedural identities: hundreds of unique names/races/genders/classes/hair/gear from one template.
 - ✅ Town life: idler clusters around NPCs, purposeful VISIT movers, racial villages, Giran market.
-- ✅ Private shops (**visual**): seated SELL/BUY/CRAFT/PACKAGE vendors with title signs; now pinned.
-- ✅ Field hunters: 26 level-bracketed zones, monster-seeking FARM behavior, respawn.
+- ✅ Field hunters: 26 level-bracketed zones, monster-seeking FARM behavior, respawn on death.
 - ✅ Geodata-aware placement (Z-snap) and reduced wall-running.
 - ✅ Visual editor with in-browser geodata map, landmarks, polygon zones, visibility, opacity.
 
+### Functional shops (Phase 2 — DONE)
+- ✅ **Real SELL/BUY/CRAFT stores**: clicking a vendor opens an actual buy/sell window.
+- ✅ Grade-gated dynamic inventory (`FakePlayerStoreFactory`): D-grade common, higher grades progressively rarer; level-capped by vendor level. Prices calculated from datapack reference prices with markup/markdown factors.
+- ✅ Full transaction handling (`FakePlayerStoreManager`): validates purchase, moves adena, transfers item, decrements stock, closes store when sold out.
+- ✅ CRAFT vendors work as finished-goods SELL stores with recipe success rates.
+
+### Trade chat negotiation
+- ✅ **Player posts WTS/WTB** in trade chat → bot detects it (regex), brain translates shorthand ("ssd" → "Soulshot D-grade"), finds matching stock, picks a nearby roaming bot.
+- ✅ Bot sends an opening offer via whisper (brain OFFER mode), then walks to an agreed meet spot (gatekeeper / warehouse / shop area) and opens a temporary deal store.
+- ✅ Negotiation via whisper: haggling supported via `[[SHOP:SELL|BUY:item:price]]` tags (stripped before display).
+- ✅ After deal closes (or stock sells out) bot returns to normal roaming FSM.
+
+### Shout chat / LFM
+- ✅ Bots participate in shout channel: post spontaneous LFM/LFP ads (~every 5 min), answer party recruitment calls.
+- ✅ Shout context uses a 12-message global buffer (separate from local SAY buffer).
+
+### Brain modes (fpc_brain.py)
+Ten distinct modes — each with tailored persona and token budget:
+
+| Mode | Purpose |
+|---|---|
+| WHISPER | Private per-(player,bot) memory conversation |
+| SAY | Local area banter |
+| TRADE | Trade channel ambient chatter |
+| AMBIENT | Global ambient (fallback) |
+| SHOUT | Global world channel banter |
+| SHOUTAMBIENT | Spontaneous LFM/world ads |
+| ITEM | Translate trade-chat shorthand to canonical item name |
+| OFFER | Bot's opening negotiation pitch |
+| BUDDY | Personal support bot with action tags |
+| BUDDYCHAT | Buddy spontaneous party-chat small talk |
+
+Action tags (e.g. `[[MEET:gatekeeper]]`, `[[SHOP:SELL:Soulshot D-grade:500]]`, `[[BUFF]]`, `[[FOLLOW]]`) are parsed by the Java side to trigger behavior, then stripped before display.
+
+### Admin tools
+- ✅ `//record_route <name>` / `//stop_route` / `//list_routes` — walk a path in-game to record bot waypoints (~150-unit intervals), saved to `data/routes/<name>.xml`.
+- ✅ `//fakechat <playername> <fpcname> <message>` — trigger a bot response to a player for testing.
+
+### Whisper to generated bots
+- ✅ Procedurally named bots are now registered as talkable via `talkableBotName()` — whispering a generated bot name works.
+
+---
+
 ## 7. Known issues / rough edges
 
-- **Field hunting feel**: bots can still cluster / move sluggishly in some zones — pathfinding +
-  combat tuning is a rabbit hole; deprioritized in favor of town life.
-- **Shops are visual only**: clicking a vendor does **not** open a real buy/sell window. Functional
-  stores need real store item lists (`PrivateStoreListSell`) + trade handling, and these are NPCs not
-  `Player` objects — a meaty Phase 2.
-- **Map image**: must be supplied by the user (not in server files); calibration is bounds-based
-  (a friendlier 2-click calibration was discussed but not built).
-- **Whisper to generated bots**: trade/say social uses the NPC instance and works; whispering a
-  *generated* name isn't wired (those names aren't registered "talkable").
+- **Field hunting feel**: bots can still cluster / move sluggishly in some zones — pathfinding + combat tuning is a rabbit hole; deprioritized.
+- **Buddy bot Java wiring**: brain BUDDY/BUDDYCHAT modes are implemented; Java-side party invite, follow, and buff dispatch not yet wired.
+- **Map image calibration**: must be supplied by the user; calibration is bounds-based (a friendlier 2-click calibration was discussed but not built).
+
+---
 
 ## 8. Suggested next steps
 
-1. **Vendors permanent / market polish** (mostly done — verify after rebuild).
-2. **Functional shops** (Phase 2): give vendors real sell/buy item lists and handle purchases.
-3. **Field behavior tuning**: smarter hunting, polygon-bounded roaming, persistent respawn identity.
-4. **Editor niceties**: 2-click map calibration; edit profiles/assigns in-tool; live in-game reload.
-5. **In-game coordinate capture** (admin command) to mark anchors/zones from your character position.
+1. **Buddy/support bot Java wiring**: hook BUDDY mode into party invite, `/follow`, buff dispatch (Bishop/SE/PP archetypes), and `[[TP:location]]` teleport.
+2. **Field behavior tuning**: smarter hunting, polygon-bounded roaming, persistent respawn identity.
+3. **Editor niceties**: 2-click map calibration; edit profiles/assigns in-tool; live in-game reload.
+4. **Route editor integration**: surface recorded routes in the FPC editor as PATROL path overlays.
+5. **Population tuning pass**: review the 26 field zones + town clusters with real play feedback.
 
 ---
 
@@ -185,14 +224,20 @@ Workflow: edit visually → **Save XML** → copy to `game/data/` → restart se
 |---|---|
 | Chat brain (Python) | `fpc_brain.py` |
 | Chat manager | `java/.../gameserver/managers/FakePlayerChatManager.java` |
-| Chat handlers | `dist/game/data/scripts/handlers/chat/channels/Chat{Trade,General,Whisper}.java` |
+| Chat handlers | `dist/game/data/scripts/handlers/chat/channels/Chat{Trade,General,Shout,Whisper}.java` |
 | Behavior manager | `java/.../gameserver/managers/FakePlayerBehaviorManager.java` |
 | Appearance factory | `java/.../gameserver/managers/FakePlayerAppearanceFactory.java` |
+| Store factory | `java/.../gameserver/managers/FakePlayerStoreFactory.java` |
+| Store manager | `java/.../gameserver/managers/FakePlayerStoreManager.java` |
 | Appearance holder | `java/.../gameserver/model/actor/holders/npc/FakePlayerAppearance.java` |
+| Store item holder | `java/.../gameserver/model/actor/holders/npc/FakePlayerStoreItem.java` |
+| Craft item holder | `java/.../gameserver/model/actor/holders/npc/FakePlayerCraftItem.java` |
+| Store packets | `java/.../gameserver/network/serverpackets/FakePlayerStoreList{Sell,Buy}.java`, `FakePlayerRecipeShop*.java` |
 | Render packet | `java/.../gameserver/network/serverpackets/FakePlayerInfo.java` |
 | NPC integration | `java/.../gameserver/model/actor/Npc.java` |
+| Admin commands | `java/.../gameserver/handlers/admincommandhandlers/AdminFpcRoute.java`, `AdminFakePlayers.java` |
 | Config | `java/.../gameserver/config/custom/FakePlayersConfig.java`, `dist/game/config/Custom/FakePlayers.ini` |
 | Behavior data | `dist/game/data/FakePlayerBehavior.xml` (+ `data/xsd/FakePlayerBehavior.xsd`) |
 | Visual editor | `tools/fpc-editor/index.html` (+ `README.md`) |
 
-Development branch: `claude/compassionate-dijkstra-mmfu13`.
+Development branch: `claude/progress-readme-review-bnpov2`.
