@@ -27,6 +27,7 @@ import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
@@ -50,6 +51,7 @@ import org.l2jmobius.gameserver.model.WorldObject;
 import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.appearance.PlayerAppearance;
+import org.l2jmobius.gameserver.model.actor.enums.creature.Race;
 import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoPlaySettingsHolder;
 import org.l2jmobius.gameserver.model.actor.holders.player.AutoUseSettingsHolder;
@@ -209,6 +211,12 @@ public class PhantomManager implements IXmlReader
 	// loadouts: fighters (sword + light/heavy armor) and mages (magic weapon + robe).
 	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> FIGHTER_GEAR = new EnumMap<>(BodyPart.class);
 	private static final Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> MAGE_GEAR = new EnumMap<>(BodyPart.class);
+	// Caster armor item ids that have NO Orc-Mystic model in the client and so render invisibly on an Orc
+	// (Warcryer) - chest/legs vanish. There is no server-side attribute to detect this (identical items render
+	// differently), so it is a tested deny-list: an Orc caster is geared from everything EXCEPT these. Add ids
+	// here as the debug gear log turns up more offenders. Confirmed so far: 445 Paradia Tunic (chest),
+	// 474 Stockings of Mana (legs).
+	private static final Set<Integer> ORC_CASTER_ARMOR_SKIP = Set.of(445, 474);
 	private static volatile boolean _gearBuilt = false;
 
 	/**
@@ -917,6 +925,8 @@ public class PhantomManager implements IXmlReader
 
 		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
 		// always, helmet/gloves often skipped) so a group is not a row of identical fully-armored clones.
+		// Orc casters (Warcryer) skip the armor ids that have no orc model and would render invisibly.
+		final Set<Integer> skip = (mage && (phantom.getRace() == Race.ORC)) ? ORC_CASTER_ARMOR_SKIP : null;
 		for (BodyPart slot : GEAR_SLOTS)
 		{
 			if (slot == BodyPart.R_HAND)
@@ -939,7 +949,7 @@ public class PhantomManager implements IXmlReader
 			{
 				continue;
 			}
-			final ItemTemplate piece = pickForSlot(set, slot, desired);
+			final ItemTemplate piece = pickForSlot(set, slot, desired, skip);
 			if (piece != null)
 			{
 				equip(phantom, piece);
@@ -962,6 +972,16 @@ public class PhantomManager implements IXmlReader
 	/** A random candidate item for a slot at the desired grade, stepping down if a grade has none. */
 	private static ItemTemplate pickForSlot(Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> set, BodyPart slot, CrystalType desired)
 	{
+		return pickForSlot(set, slot, desired, null);
+	}
+
+	/**
+	 * A random candidate item for a slot at the desired grade, stepping down if a grade has none. Item ids in
+	 * {@code exclude} are skipped (used to keep non-orc-rendering armor off Orc casters); if a whole grade is
+	 * excluded it falls through to a lower grade.
+	 */
+	private static ItemTemplate pickForSlot(Map<BodyPart, EnumMap<CrystalType, List<ItemTemplate>>> set, BodyPart slot, CrystalType desired, Set<Integer> exclude)
+	{
 		final EnumMap<CrystalType, List<ItemTemplate>> byGrade = set.get(slot);
 		if (byGrade == null)
 		{
@@ -970,9 +990,25 @@ public class PhantomManager implements IXmlReader
 		for (int ordinal = desired.ordinal(); ordinal >= 0; ordinal--)
 		{
 			final List<ItemTemplate> list = byGrade.get(CrystalType.values()[ordinal]);
-			if ((list != null) && !list.isEmpty())
+			if ((list == null) || list.isEmpty())
+			{
+				continue;
+			}
+			if ((exclude == null) || exclude.isEmpty())
 			{
 				return list.get(Rnd.get(list.size()));
+			}
+			final List<ItemTemplate> allowed = new ArrayList<>(list.size());
+			for (ItemTemplate candidate : list)
+			{
+				if (!exclude.contains(candidate.getId()))
+				{
+					allowed.add(candidate);
+				}
+			}
+			if (!allowed.isEmpty())
+			{
+				return allowed.get(Rnd.get(allowed.size()));
 			}
 		}
 		return null;
