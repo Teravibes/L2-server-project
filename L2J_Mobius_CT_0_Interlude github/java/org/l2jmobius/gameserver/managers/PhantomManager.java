@@ -775,6 +775,28 @@ public class PhantomManager implements IXmlReader
 		gear(phantom, level, true); // cast loadout
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
+		logBuddyGear(phantom, role);
+	}
+
+	/**
+	 * TEMP DEBUG: logs every piece a buddy has equipped (slot item name / id / bodypart), to diagnose the Orc
+	 * Warcryer bare-torso render. Remove once the gearing is sorted.
+	 */
+	private void logBuddyGear(Player phantom, BuddyRole role)
+	{
+		final StringBuilder sb = new StringBuilder();
+		sb.append("BUDDY GEAR [").append(role).append(' ').append(phantom.getName()).append(", race=").append(phantom.getRace()).append(", class=").append(phantom.getPlayerClass()).append(", lvl ").append(phantom.getLevel()).append("] equipped:");
+		boolean any = false;
+		for (Item item : phantom.getInventory().getPaperdollItems())
+		{
+			any = true;
+			sb.append(" {").append(item.getTemplate().getName()).append(" id=").append(item.getId()).append(" bodypart=").append(item.getTemplate().getBodyPart()).append("}");
+		}
+		if (!any)
+		{
+			sb.append(" (nothing)");
+		}
+		LOGGER.info(getClass().getSimpleName() + ": " + sb);
 	}
 
 	/**
