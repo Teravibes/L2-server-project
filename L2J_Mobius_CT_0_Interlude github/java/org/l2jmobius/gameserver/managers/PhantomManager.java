@@ -1096,11 +1096,7 @@ public class PhantomManager implements IXmlReader
 
 				if (item instanceof Weapon)
 				{
-					// Caster pool = two-handed magic STAVES only. Several physical blades (e.g. Hell Knife,
-					// Sword of Valhalla) are flagged is_magic_weapon and would otherwise leak in; a robe-wearing
-					// caster holding one renders with no chest/legs (worst on the Orc Warcryer). Staves are the
-					// two-handed lrhand magic weapons that always render correctly with robes.
-					if (item.isMagicWeapon() && (item.getBodyPart() == BodyPart.LR_HAND))
+					if (item.isMagicWeapon())
 					{
 						MAGE_GEAR.get(BodyPart.R_HAND).get(item.getCrystalType()).add(item);
 					}
