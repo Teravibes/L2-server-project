@@ -50,6 +50,8 @@ Action tags from brain replies (e.g. `[[MEET:gatekeeper]]`, `[[SHOP:SELL:Soulsho
 - **"Come meet me"** — ask a roaming bot to meet you at a landmark (gatekeeper/warehouse/shop) and it walks there, then waits up to ~8 min.
 - **Trade-ad negotiation** — WTS/WTB in trade chat makes a nearby bot PM you with a price. You haggle + pick the meet spot over whisper; only then does the bot walk there and open a real seated vendor store. Bot stays whisper-able mid-deal for renegotiation or cancel. AFK vendors are intentionally silent.
 
+**Knowledge grounding** — `knowledge/*.txt` tagged fact files (Interlude zones, towns, buffs, classes, party basics, item shorthand). On startup the brain loads them; per chat it scores facts by tag overlap with the player's message (level numbers matched against a zone's `level lo hi` band get a boost) and injects the top few into the system prompt under a "Game facts you can rely on" block. Used by WHISPER/SAY/SHOUT/BUDDY (all facts) and TRADE/ITEM (filtered to `item`/`buff` for canonical item-name resolution). When nothing matches, nothing is injected — unrelated chat is unchanged. Stops bots inventing zones/levels/items. Adapted from the `l2-smartbot` project's tag-fact idea, corrected for Interlude. See `knowledge/README.md`.
+
 Run: `python fpc_brain.py` (needs API key env). Listens on `127.0.0.1:5000`. Java falls back to canned replies if offline.
 
 ---
@@ -267,6 +269,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 | Area | Path |
 |---|---|
 | Chat brain (Python) | `fpc_brain.py` |
+| Chat knowledge base | `knowledge/*.txt` (+ `knowledge/README.md`) |
 | Chat manager | `java/.../managers/FakePlayerChatManager.java` |
 | Chat handlers (runtime scripts) | `dist/.../scripts/handlers/chat/channels/Chat{Whisper,Party,Shout,Trade,General}.java` |
 | Behavior manager | `java/.../managers/FakePlayerBehaviorManager.java` |

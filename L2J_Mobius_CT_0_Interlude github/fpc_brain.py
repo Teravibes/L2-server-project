@@ -48,6 +48,8 @@ GLOBAL_RULES = (
     "Keep it PG-13: no slurs, hate, harassment, sexual content, or real-world politics/religion - game banter "
     "only. Stay inside the game world: no real-world links, emails, phone numbers, personal info or "
     "out-of-game contact. "
+    "If you are unsure about a zone, level range, NPC, quest or item, stay vague rather than inventing "
+    "specifics. "
     "Keep replies short, like real chat."
 )
 
@@ -119,6 +121,80 @@ def sanitize(text):
     t = _URL_RE.sub("", t)
     t = _EMAIL_RE.sub("", t)
     return t.strip()
+
+# ===== L2 knowledge base: grounded facts injected into prompts so bots don't invent =====
+# Tagged plain-text fact files under knowledge/*.txt. Each non-empty, non-'#' line is:
+#   [tag tokens here] The fact text the bot can rely on.
+# retrieve() scores facts by how many tag tokens overlap the player's message (a level number in the
+# message that falls inside a 'level <lo> <hi>' band gets a small boost) and returns the best few.
+# Pure stdlib, no extra deps; when nothing matches it injects nothing, so behavior is unchanged.
+KNOWLEDGE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
+_KB = []  # list of (set(tag_tokens), fact_text)
+_KB_LINE_RE = re.compile(r"^\s*\[([^\]]*)\]\s*(.+?)\s*$")
+_STOP = {"the", "a", "an", "is", "are", "of", "to", "in", "at", "and", "or", "for", "with", "you",
+         "i", "me", "my", "it", "that", "this", "do", "where", "what", "how", "good", "best",
+         "should", "go", "level", "lvl", "any", "some", "can", "get"}
+
+def load_knowledge():
+    """(Re)load all knowledge/*.txt fact files into _KB. Safe to call when the folder is missing."""
+    _KB.clear()
+    try:
+        files = sorted(f for f in os.listdir(KNOWLEDGE_DIR) if f.endswith(".txt"))
+    except OSError:
+        print("Knowledge base: no knowledge/ folder, running without grounded facts.")
+        return
+    for fn in files:
+        try:
+            with open(os.path.join(KNOWLEDGE_DIR, fn), encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    m = _KB_LINE_RE.match(line)
+                    if not m:
+                        continue
+                    tags = {t for t in m.group(1).lower().split() if t}
+                    if tags:
+                        _KB.append((tags, m.group(2).strip()))
+        except OSError:
+            continue
+    print(f"Knowledge base: {len(_KB)} facts from {len(files)} file(s).")
+
+def _kb_tokens(text):
+    return [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if w not in _STOP]
+
+def retrieve(message, k=4, allow=None):
+    """Top-k grounded fact texts whose tags overlap the message. `allow`, if given, limits results to
+    facts whose tag set intersects that category-hint set (e.g. {'item', 'buff'})."""
+    words = set(_kb_tokens(message))
+    if not words:
+        return []
+    nums = {w for w in words if w.isdigit()}
+    scored = []
+    for tags, fact in _KB:
+        if allow and not (tags & allow):
+            continue
+        overlap = words & tags
+        if not overlap:
+            continue
+        score = len(overlap)
+        if nums and "level" in tags:  # boost a location whose level band contains the asked level
+            band = [int(t) for t in tags if t.isdigit()]
+            if len(band) >= 2 and any(min(band) <= int(n) <= max(band) for n in nums):
+                score += 2
+        scored.append((score, fact))
+    scored.sort(key=lambda s: s[0], reverse=True)
+    return [f for _, f in scored[:k]]
+
+def knowledge_note(message, k=4, allow=None):
+    """A system-prompt block of grounded facts for `message`, or '' when nothing relevant matches."""
+    facts = retrieve(message, k, allow)
+    if not facts:
+        return ""
+    return ("\n\nGame facts you can rely on (do not contradict these, and do not invent zones, level "
+            "ranges, NPCs, quests or items beyond what you actually know):\n- " + "\n- ".join(facts))
+
+load_knowledge()
 
 def whisper_persona(fpc, voice):
     return (GLOBAL_RULES + "\n\n" + voice + "\n\n"
@@ -212,7 +288,8 @@ def chat():
                       "Examples: 'ssd' -> Soulshot D-grade; 'ss c' -> Soulshot C-grade; 'bsps' -> Blessed Spiritshot; "
                       "'spsd' -> Spiritshot D-grade; 'soe' -> Scroll of Escape; 'ewd' -> Enchant Weapon D-grade; "
                       "'gemstone d' -> Gemstone D; 'iron ore' -> Iron Ore. If there is no clear item, reply: NONE")
-            reply = call_llm(system, [{"role": "user", "content": message}], 20, 0.0)
+            reply = call_llm(system + knowledge_note(message, k=3, allow={"item"}),
+                [{"role": "user", "content": message}], 20, 0.0)
         elif mode == "OFFER":
             # The bot is proactively PMing the player about their trade post to set up a real deal.
             player = request.headers.get("X-Player", "someone")
@@ -234,7 +311,8 @@ def chat():
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})
             note = " You are currently partied with them." if partied else " You are NOT partied with them yet."
-            reply = sanitize(call_llm(buddy_persona(fpc, voice) + note, list(hist), 80, temperature))
+            reply = sanitize(call_llm(buddy_persona(fpc, voice) + note + knowledge_note(message),
+                list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
         elif mode == "BUDDYCHAT":
             # The buddy spontaneously opens a bit of small talk in party chat (started server-side on a long
@@ -253,7 +331,8 @@ def chat():
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})
             recent = "\n".join(trade_log) if trade_log else "(nothing recent)"
-            system = whisper_persona(fpc, voice) + loc_note + f"\n\nRecent public trade chat you saw:\n{recent}"
+            system = (whisper_persona(fpc, voice) + loc_note + knowledge_note(message)
+                      + f"\n\nRecent public trade chat you saw:\n{recent}")
             reply = sanitize(call_llm(system, list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
         elif mode == "SAY":
@@ -262,7 +341,7 @@ def chat():
             if message and overheard not in say_log:
                 say_log.append(overheard)
             context = "\n".join(say_log) if say_log else "(quiet)"
-            reply = sanitize(call_llm(say_persona(fpc, voice) + loc_note,
+            reply = sanitize(call_llm(say_persona(fpc, voice) + loc_note + knowledge_note(message),
                 [{"role": "user", "content": f"People near you just said:\n{context}\n\nReact with ONE short line."}], 60, temperature))
             if reply:
                 say_log.append(f"{fpc}: {reply}")
@@ -287,7 +366,7 @@ def chat():
                           "If it's something you'd naturally react to - banter, answer a question, respond to their "
                           "LFM, or join the chatter - reply with ONE short line. If it has nothing to do with you, "
                           "reply with exactly: pass")
-            reply = sanitize(clean_reply(call_llm(shout_persona(fpc, voice) + loc_note, [{"role": "user", "content": prompt}], 60, temperature)))
+            reply = sanitize(clean_reply(call_llm(shout_persona(fpc, voice) + loc_note + knowledge_note(message), [{"role": "user", "content": prompt}], 60, temperature)))
             if reply:
                 shout_log.append(f"{fpc}: {reply}")
         else:  # TRADE or AMBIENT
@@ -307,7 +386,7 @@ def chat():
                           "answer their question, make/counter an offer, haggle, or banter. "
                           "Do NOT just post your own unrelated WTS/WTB ad. "
                           "If it has nothing to do with you, reply with exactly: pass")
-            reply = sanitize(clean_reply(call_llm(trade_persona(fpc, voice) + loc_note, [{"role": "user", "content": prompt}], 60, temperature)))
+            reply = sanitize(clean_reply(call_llm(trade_persona(fpc, voice) + loc_note + knowledge_note(message, allow={"item", "buff"}), [{"role": "user", "content": prompt}], 60, temperature)))
             if reply:
                 trade_log.append(f"{fpc}: {reply}")
         print(f"[{PROVIDER}:{mode}:{fpc}] '{message}' -> '{reply}'")

@@ -1,0 +1,39 @@
+# Lineage 2 Interlude hunting locations by level. Adapted from C4 zone knowledge and corrected for Interlude.
+# Format: [location level <lo> <hi> <name tokens>] Description naming the zone and its level range.
+# The <lo>/<hi> numbers let the bot match "where do I grind at 40?" to the right zones.
+
+[location level 1 8 talking island cedrics training hall] Cedric's Training Hall is a very low level Talking Island area around levels 1-8; never recommend it to high level players.
+[location level 2 10 talking island ruins] The Ruins of Despair and Ruins of Agony on Talking Island are early zones around levels 2-12.
+[location level 8 18 elven fortress elf] Elven Fortress in the Elven Territory is around levels 8-18.
+[location level 16 20 school dark arts dark elf] The School of Dark Arts is a Dark Elven area around levels 16-20.
+[location level 19 30 abandoned coal mines dwarven] Abandoned Coal Mines in Dwarven Territory is around levels 19-30.
+[location level 18 35 orc barracks gludin] Orc Barracks near Gludin is around levels 18-35.
+[location level 16 33 abandoned camp gludin] Abandoned Camp near Gludin is a hunting ground around levels 16-33.
+[location level 22 40 ant nest wasteland] The Ant Nest is a dungeon around levels 22-40.
+[location level 22 40 wasteland gludio] The Wasteland near Gludio is a hunting area around levels 22-40.
+[location level 20 40 execution grounds dion undead] Execution Grounds near Dion is a level 20-40 area with many undead.
+[location level 22 40 cruma marshlands dion] Cruma Marshlands near Dion is around levels 22-40.
+[location level 35 50 cruma tower giran] Cruma Tower near Giran is a multi-floor dungeon around levels 35-50.
+[location level 30 70 partisan hideaway dion] Partisan Hideaway in Dion Territory spans roughly levels 30-70.
+[location level 46 52 tanor canyon dion] Tanor Canyon near Dion is around levels 46-52.
+[location level 30 65 dragon valley dv giran] Dragon Valley near Giran is a broad hunting area around levels 30-65.
+[location level 60 75 lair antharas dragon valley] The Lair of Antharas is a high level area around levels 60-75.
+[location level 38 43 hardins academy giran] Hardin's Academy near Giran is around levels 38-43.
+[location level 45 56 enchanted valley hunter village] Enchanted Valley near Hunter's Village is around levels 45-56.
+[location level 40 55 forest mirrors hunter village] Forest of Mirrors near Hunter's Village is around levels 40-55.
+[location level 41 48 timak outpost oren] Timak Outpost near Oren is around levels 41-48.
+[location level 40 70 ivory tower crater oren] The Ivory Tower Crater near Oren spans roughly levels 40-70.
+[location level 40 50 sea spores oren] Sea of Spores near Oren is around levels 40-50.
+[location level 35 60 plains lizardmen oren] Plains of the Lizardmen near Oren is around levels 35-60.
+[location level 50 56 forest outlaw aden] Forest of the Dead and outlaw forests near Aden are around levels 50-56.
+[location level 55 80 field massacre aden] Field of Massacre near Aden is around levels 55-80.
+[location level 60 79 tower insolence toi aden] The Tower of Insolence (ToI) is a high level Aden dungeon around levels 60-79.
+[location level 45 70 cemetery aden undead] The Cemetery near Aden is around levels 45-70.
+[location level 60 75 forbidden gateway aden] The Forbidden Gateway near Aden is around levels 60-75.
+[location level 54 79 giants cave aden] Giant's Cave near Aden is around levels 54-79.
+[location level 40 51 alligator island heine] Alligator Island near Heine is around levels 40-51.
+[location level 43 65 devils isle heine] Devil's Isle near Heine is around levels 43-65.
+[location level 63 73 cursed village rune] The Cursed Village near Rune is around levels 63-73.
+[location level 70 80 valley saints rune] The Valley of Saints near Rune is around levels 70-80.
+[location level 66 78 wall argos hunter] The Wall of Argos is a high level area around levels 66-78.
+[location level 60 80 antharas lair giants cave] High level grinding spots include Giant's Cave, Tower of Insolence and Forbidden Gateway around levels 60-80.
