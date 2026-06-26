@@ -167,6 +167,7 @@ import handlers.chat.commands.admin.AdminPremium;
 import handlers.chat.commands.admin.AdminPunishment;
 import handlers.chat.commands.admin.AdminQuest;
 import handlers.chat.commands.admin.AdminRegions;
+import handlers.chat.commands.admin.AdminRates;
 import handlers.chat.commands.admin.AdminReload;
 import handlers.chat.commands.admin.AdminRepairChar;
 import handlers.chat.commands.admin.AdminRes;
@@ -382,6 +383,7 @@ public class MasterHandler
 			AdminPunishment.class,
 			AdminQuest.class,
 			AdminRegions.class,
+			AdminRates.class,
 			AdminReload.class,
 			AdminRepairChar.class,
 			AdminRes.class,
