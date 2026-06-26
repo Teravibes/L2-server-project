@@ -1101,26 +1101,29 @@ public class PhantomManager implements IXmlReader
 				{
 					final BodyPart part = item.getBodyPart();
 					final ArmorType type = ((Armor) item).getItemType();
-					// Mage robes in Interlude are usually ONE-PIECE (FULL_ARMOR, which the client wears in the
-					// chest slot). If we drop those like we do for fighters, a caster can be left with no chest
-					// piece at its grade and render bare-torsoed. So route full-body MAGIC robes into the mage
-					// CHEST pool; gear() then skips the separate legs piece when one is worn.
-					if ((type == ArmorType.MAGIC) && (part == BodyPart.FULL_ARMOR))
+					if (type == ArmorType.MAGIC)
 					{
-						MAGE_GEAR.get(BodyPart.CHEST).get(item.getCrystalType()).add(item);
-						continue;
+						// Casters wear ONE-PIECE robes (FULL_ARMOR, worn in the chest slot) - those have a model
+						// for every race and always render. Separate magic chest "tunics" / leg "stockings" are
+						// deliberately NOT pooled: worn alone they render with no torso on some races (e.g. the
+						// Orc Warcryer), which is the bare-chest bug. Magic gloves/boots/helm are fine for variety.
+						if (part == BodyPart.FULL_ARMOR)
+						{
+							MAGE_GEAR.get(BodyPart.CHEST).get(item.getCrystalType()).add(item);
+						}
+						else if ((part == BodyPart.GLOVES) || (part == BodyPart.FEET) || (part == BodyPart.HEAD))
+						{
+							MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
+						}
 					}
-					if ((part != BodyPart.CHEST) && (part != BodyPart.LEGS) && (part != BodyPart.GLOVES) && (part != BodyPart.FEET) && (part != BodyPart.HEAD))
+					else if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
 					{
-						continue; // skip FULL_ARMOR fighter plate (conflicts with separate legs) and non-armor slots
-					}
-					if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
-					{
-						FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
-					}
-					else if (type == ArmorType.MAGIC)
-					{
-						MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
+						// Fighters wear separate LIGHT/HEAVY pieces; full plate (FULL_ARMOR) is skipped so it never
+						// conflicts with the separate legs piece.
+						if ((part == BodyPart.CHEST) || (part == BodyPart.LEGS) || (part == BodyPart.GLOVES) || (part == BodyPart.FEET) || (part == BodyPart.HEAD))
+						{
+							FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
+						}
 					}
 				}
 			}
