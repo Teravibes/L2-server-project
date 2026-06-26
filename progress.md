@@ -108,7 +108,9 @@ A **buddy** is a special phantom: a support-class clientless `Player` you can pa
 
 All three are given a Heal (Prophet/Warcryer don't have one in Interlude) so every buddy can top you up. Place them at **level 40+** for a real 2nd-class buff kit.
 
-All three roll their level from the population's editor level range and are placed at **level 40+** for a real 2nd-class buff kit. **Casters wear one-piece robes** so they always render fully on every race (a separate magic tunic shows no torso on an Orc Warcryer). An **idle buddy does nothing** — it doesn't even self-buff — until you party it.
+All three roll their level from the population's editor level range and are placed at **level 40+** for a real 2nd-class buff kit. An **idle buddy does nothing** — it doesn't even self-buff — until you party it.
+
+> Known issue: the **Orc Warcryer** can render with no torso (separate magic tunics have no orc model). A robe-only gearing attempt was reverted as it didn't resolve it — to be revisited.
 
 **Flow:** a buddy idles where placed (no hunting), spawning/despawning by player proximity like any phantom. Whisper it to **party up** (you send the invite → `RequestJoinParty` auto-accepts server-side and binds it as owner). You can party **several at once** (Prophet + Elder + Warcryer together). Once partied it:
 - keeps **you and itself buffed** (re-casts a buff when it's missing or within ~20s of expiring),

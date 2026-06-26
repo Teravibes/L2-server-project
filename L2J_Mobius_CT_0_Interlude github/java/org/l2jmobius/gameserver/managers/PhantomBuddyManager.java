@@ -79,6 +79,10 @@ public class PhantomBuddyManager implements IXmlReader
 	private static final int SELF_HEAL_PERCENT = 40;
 	// Re-cast a buff when it is missing or has less than this many seconds left, so it never fully drops.
 	private static final int BUFF_REFRESH_SECONDS = 20;
+	// Chant of Life is a short (~10s) HP-regen buff; maintaining it like a normal buff means recasting it
+	// constantly. Treat it as needed only while the target is actually hurt (below this HP%).
+	private static final int CHANT_OF_LIFE_ID = 1229;
+	private static final int CHANT_OF_LIFE_HP_PERCENT = 80;
 	// MP watch: warn + (when safe) sit at the low mark; stand again once recovered to the high mark.
 	private static final int MP_LOW_PERCENT = 25;
 	private static final int MP_OK_PERCENT = 70;
@@ -882,6 +886,11 @@ public class PhantomBuddyManager implements IXmlReader
 		for (Skill buff : buffs)
 		{
 			if (buddy.getCurrentMp() < buff.getMpConsume())
+			{
+				continue;
+			}
+			// Don't keep re-applying the short Chant of Life on a healthy target; only top it up when hurt.
+			if ((buff.getId() == CHANT_OF_LIFE_ID) && (target.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT))
 			{
 				continue;
 			}

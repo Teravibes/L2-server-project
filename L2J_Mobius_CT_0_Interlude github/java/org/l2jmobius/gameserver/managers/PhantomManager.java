@@ -893,11 +893,8 @@ public class PhantomManager implements IXmlReader
 		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
 		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
 
-		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (helmet/gloves often
-		// skipped) so a group is not a row of identical fully-armored clones - but the chest is ALWAYS worn so
-		// nobody renders bare-torsoed. GEAR_SLOTS visits CHEST before LEGS, so a one-piece robe equipped in the
-		// chest slot (see buildGear) lets us skip the conflicting legs piece.
-		boolean onePieceChest = false;
+		// Armor pieces: a varied at-or-below-grade piece per slot. Completeness varies (chest almost
+		// always, helmet/gloves often skipped) so a group is not a row of identical fully-armored clones.
 		for (BodyPart slot : GEAR_SLOTS)
 		{
 			if (slot == BodyPart.R_HAND)
@@ -916,25 +913,14 @@ public class PhantomManager implements IXmlReader
 			{
 				continue;
 			}
-			if (slot == BodyPart.LEGS)
+			if ((slot == BodyPart.LEGS) && (Rnd.get(100) >= 92))
 			{
-				if (onePieceChest)
-				{
-					continue; // a one-piece robe already covers the legs; a separate legs piece would clash
-				}
-				if (Rnd.get(100) >= 92)
-				{
-					continue;
-				}
+				continue;
 			}
 			final ItemTemplate piece = pickForSlot(set, slot, desired);
 			if (piece != null)
 			{
 				equip(phantom, piece);
-				if ((slot == BodyPart.CHEST) && (piece.getBodyPart() == BodyPart.FULL_ARMOR))
-				{
-					onePieceChest = true;
-				}
 			}
 		}
 		// No broadcast here: gear() runs before the phantom enters the world, so the whole set is in place
@@ -1100,30 +1086,18 @@ public class PhantomManager implements IXmlReader
 				else if (item instanceof Armor)
 				{
 					final BodyPart part = item.getBodyPart();
-					final ArmorType type = ((Armor) item).getItemType();
-					if (type == ArmorType.MAGIC)
+					if ((part != BodyPart.CHEST) && (part != BodyPart.LEGS) && (part != BodyPart.GLOVES) && (part != BodyPart.FEET) && (part != BodyPart.HEAD))
 					{
-						// Casters wear ONE-PIECE robes (FULL_ARMOR, worn in the chest slot) - those have a model
-						// for every race and always render. Separate magic chest "tunics" / leg "stockings" are
-						// deliberately NOT pooled: worn alone they render with no torso on some races (e.g. the
-						// Orc Warcryer), which is the bare-chest bug. Magic gloves/boots/helm are fine for variety.
-						if (part == BodyPart.FULL_ARMOR)
-						{
-							MAGE_GEAR.get(BodyPart.CHEST).get(item.getCrystalType()).add(item);
-						}
-						else if ((part == BodyPart.GLOVES) || (part == BodyPart.FEET) || (part == BodyPart.HEAD))
-						{
-							MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
-						}
+						continue; // skip FULL_ARMOR (conflicts with separate legs) and non-armor slots
 					}
-					else if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
+					final ArmorType type = ((Armor) item).getItemType();
+					if ((type == ArmorType.LIGHT) || (type == ArmorType.HEAVY))
 					{
-						// Fighters wear separate LIGHT/HEAVY pieces; full plate (FULL_ARMOR) is skipped so it never
-						// conflicts with the separate legs piece.
-						if ((part == BodyPart.CHEST) || (part == BodyPart.LEGS) || (part == BodyPart.GLOVES) || (part == BodyPart.FEET) || (part == BodyPart.HEAD))
-						{
-							FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
-						}
+						FIGHTER_GEAR.get(part).get(item.getCrystalType()).add(item);
+					}
+					else if (type == ArmorType.MAGIC)
+					{
+						MAGE_GEAR.get(part).get(item.getCrystalType()).add(item);
 					}
 				}
 			}
