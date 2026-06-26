@@ -1262,6 +1262,30 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		return nearest == null ? null : new Location(nearest.getX(), nearest.getY(), nearest.getZ());
 	}
 
+	/**
+	 * Despawns all managed bots, clears state, reloads FakePlayerBehavior.xml and redeploys.
+	 * Safe to call from the admin command handler on the game thread.
+	 * @return number of bots that were removed before redeployment.
+	 */
+	public int reload()
+	{
+		// Despawn every bot we own.
+		int removed = 0;
+		for (int objectId : new java.util.ArrayList<>(_bots.keySet()))
+		{
+			final org.l2jmobius.gameserver.model.WorldObject obj = World.getInstance().findObject(objectId);
+			if (obj instanceof Npc)
+			{
+				((Npc) obj).deleteMe();
+				removed++;
+			}
+		}
+		_bots.clear();
+		_started = false;
+		load();
+		return removed;
+	}
+
 	public static FakePlayerBehaviorManager getInstance()
 	{
 		return SingletonHolder.INSTANCE;

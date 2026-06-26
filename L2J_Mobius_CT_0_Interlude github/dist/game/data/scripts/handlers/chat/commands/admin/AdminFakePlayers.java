@@ -20,8 +20,10 @@
  */
 package handlers.chat.commands.admin;
 
+import org.l2jmobius.gameserver.data.xml.AdminData;
 import org.l2jmobius.gameserver.data.xml.FakePlayerData;
 import org.l2jmobius.gameserver.handler.IAdminCommandHandler;
+import org.l2jmobius.gameserver.managers.FakePlayerBehaviorManager;
 import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
@@ -33,13 +35,22 @@ public class AdminFakePlayers implements IAdminCommandHandler
 {
 	private static final String[] ADMIN_COMMANDS =
 	{
-		"admin_fakechat"
+		"admin_fakechat",
+		"admin_reloadfakeplayers"
 	};
 	
 	@Override
 	public boolean onCommand(String command, Player activeChar)
 	{
-		if (command.startsWith("admin_fakechat"))
+		if (command.equals("admin_reloadfakeplayers"))
+		{
+			activeChar.sendSysMessage("Reloading fake players — despawning current bots...");
+			final int removed = FakePlayerBehaviorManager.getInstance().reload();
+			final String msg = activeChar.getName() + ": Reloaded fake players (" + removed + " bots despawned, redeploying from XML).";
+			AdminData.getInstance().broadcastMessageToGMs(msg);
+			activeChar.sendSysMessage("Done. " + removed + " bots removed — new bots deploy in ~15s.");
+		}
+		else if (command.startsWith("admin_fakechat"))
 		{
 			final String[] words = command.substring(15).split(" ");
 			if (words.length < 3)
