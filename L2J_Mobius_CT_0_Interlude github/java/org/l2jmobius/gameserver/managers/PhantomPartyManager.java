@@ -1157,32 +1157,26 @@ public class PhantomPartyManager
 			return false; // melee roles don't sit for MP
 		}
 		final int mp = npc.getCurrentMpPercent();
-		final boolean threat = isMonsterNear(npc);
+		// "threat" must mean "something is actually attacking ME" - not just "a monster exists nearby". While the
+		// party farms there is always a live mob within DANGER_RANGE, so the old isMonsterNear() check left a
+		// caster permanently "in danger" and it never sat - it just drained to empty (see the gameserver log:
+		// threat=true every tick from 45% down to 1%). A real support sits to recharge between casts and only
+		// pops up when a mob comes at it directly, which is exactly what underAttack() detects.
+		final boolean threat = underAttack(npc);
 		final boolean ownerFar = npc.calculateDistance2D(owner) > SUPPORT_RANGE;
-		// DIAGNOSTIC: full snapshot of a party caster's MP / sitting state (matches the buddy "BUDDY-MP" trace).
-		LOGGER.info("===== PARTY-MP [mp-watch] " + npc.getName() + " (" + state.role + ") ====="
-			+ " mp=" + mp + "% (" + (int) npc.getCurrentMp() + "/" + (int) npc.getMaxMp() + ")"
-			+ " sitBelow<" + MP_REST_SIT + " standAt>=" + MP_REST_STAND
-			+ " | threat=" + threat + " ownerFar=" + ownerFar + " (dist=" + (int) npc.calculateDistance2D(owner) + ")"
-			+ " sitting=" + npc.isSitting() + " sitInProgress=" + npc.isSittingProgress()
-			+ " castingNow=" + npc.isCastingNow() + " attackingNow=" + npc.isAttackingNow()
-			+ " attackDisabled=" + npc.isAttackDisabled() + " immobilized=" + npc.isImmobilized()
-			+ " outOfControl=" + npc.isOutOfControl() + " paralyzed=" + npc.isParalyzed());
 		if (npc.isSitting())
 		{
 			if ((mp >= MP_REST_STAND) || threat || ownerFar)
 			{
-				LOGGER.info("===== PARTY-MP [stand] " + npc.getName() + " ===== standing (recovered=" + (mp >= MP_REST_STAND) + " threat=" + threat + " ownerFar=" + ownerFar + ")");
+				LOGGER.info("===== PARTY-MP [stand] " + npc.getName() + " ===== standing (recovered=" + (mp >= MP_REST_STAND) + " underAttack=" + threat + " ownerFar=" + ownerFar + " mp=" + mp + "%)");
 				npc.standUp();
 				return false;
 			}
-			LOGGER.info("===== PARTY-MP [resting] " + npc.getName() + " ===== still sitting, mp=" + mp + "%");
 			return true;
 		}
 		// Sit to top MP back up during downtime whenever it isn't near full and it's safe and the leader is close.
 		if ((mp < MP_REST_SIT) && !threat && !ownerFar)
 		{
-			LOGGER.info("===== PARTY-MP [sit-attempt] " + npc.getName() + " ===== conditions met -> sitDown(false)");
 			// sitDown(false) bypasses the "Cannot sit while casting" guard (a clientless caster's cast flag can
 			// linger and otherwise blocks the sit forever - it warns but never actually sits).
 			npc.abortCast();
@@ -1190,11 +1184,11 @@ public class PhantomPartyManager
 			npc.sitDown(false);
 			if (npc.isSitting())
 			{
-				LOGGER.info("===== PARTY-MP [sit-OK] " + npc.getName() + " ===== now sitting (sitInProgress=" + npc.isSittingProgress() + ")");
+				LOGGER.info("===== PARTY-MP [sit] " + npc.getName() + " ===== sitting to recover MP (mp=" + mp + "%)");
 			}
 			else
 			{
-				LOGGER.info("===== PARTY-MP [sit-FAILED] " + npc.getName() + " ===== sitDown(false) rejected:"
+				LOGGER.info("===== PARTY-MP [sit-FAILED] " + npc.getName() + " ===== sitDown(false) rejected at mp=" + mp + "%:"
 					+ " sitInProgress=" + npc.isSittingProgress()
 					+ " castingNow=" + npc.isCastingNow()
 					+ " attackingNow=" + npc.isAttackingNow()
@@ -1205,7 +1199,6 @@ public class PhantomPartyManager
 			}
 			return true;
 		}
-		LOGGER.info("===== PARTY-MP [no-sit] " + npc.getName() + " ===== not sitting (mp=" + mp + "% threat=" + threat + " ownerFar=" + ownerFar + ")");
 		return false;
 	}
 
@@ -1300,6 +1293,24 @@ public class PhantomPartyManager
 		for (Monster monster : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, DANGER_RANGE))
 		{
 			if (!monster.isDead())
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
+	 * @return {@code true} if a live monster is actually engaged on {@code npc} (targeting it), i.e. something is
+	 *         coming at the support itself. Unlike {@link #isMonsterNear(Player)} (any mob in the area), this stays
+	 *         {@code false} while the party simply farms nearby, so a caster can sit to recover MP between casts and
+	 *         only stands when a mob turns on it.
+	 */
+	private static boolean underAttack(Player npc)
+	{
+		for (Monster monster : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, DANGER_RANGE))
+		{
+			if (!monster.isDead() && (monster.getTarget() == npc))
 			{
 				return true;
 			}
