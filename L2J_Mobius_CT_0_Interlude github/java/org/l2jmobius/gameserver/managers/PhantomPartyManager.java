@@ -26,8 +26,10 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -70,6 +72,16 @@ import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
 public class PhantomPartyManager
 {
 	private static final Logger LOGGER = Logger.getLogger(PhantomPartyManager.class.getName());
+
+	/**
+	 * Raid combat trace. When on, the manager logs (to the gameserver log) a periodic snapshot of every party with a
+	 * raid boss engaged - boss HP and who it's hating, plus each member's role/HP/MP/action - and event lines for
+	 * taunts, heals, res and deaths. Raid-only, so it's silent during normal farming. Toggle live with
+	 * {@code //phantom debug on|off}. Defaults on so the first pull after a rebuild is already traced.
+	 */
+	public static volatile boolean DEBUG = true;
+	private static final long RAID_LOG_INTERVAL = 1500; // throttle for the periodic snapshot
+	private long _lastRaidLog;
 
 	private static final long TICK_INTERVAL = 1000;
 	private static final int MAX_PER_REQUEST = 6; // never spawn more than this from one shout, slots permitting
@@ -812,6 +824,11 @@ public class PhantomPartyManager
 		if (state.deadSince == 0)
 		{
 			state.deadSince = now; // open the res window
+			if (DEBUG)
+			{
+				final Monster boss = engagedRaid(state);
+				dbg("DEATH " + roleLabel(npc) + " '" + npc.getName() + "' died" + ((boss != null) ? (" | boss '" + boss.getName() + "' was hating " + describe(boss.getMostHated())) : ""));
+			}
 			return;
 		}
 		// Window elapsed, or there's no longer a party/owner to be raised by: let the corpse go.
@@ -836,6 +853,18 @@ public class PhantomPartyManager
 	private void tick()
 	{
 		final long now = System.currentTimeMillis();
+		if (DEBUG && ((now - _lastRaidLog) >= RAID_LOG_INTERVAL))
+		{
+			_lastRaidLog = now;
+			try
+			{
+				logRaidSnapshot();
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Raid snapshot log error: " + e.getMessage());
+			}
+		}
 		for (Member state : _members.values())
 		{
 			final Player npc = state.npc;
@@ -869,6 +898,95 @@ public class PhantomPartyManager
 				LOGGER.warning(getClass().getSimpleName() + ": Party tick error for " + (npc == null ? "?" : npc.getName()) + ": " + e.getMessage());
 			}
 		}
+	}
+
+	// ===== Raid combat trace (toggle with //phantom debug on|off; raid-only so it's silent during farming) =====
+
+	private void dbg(String line)
+	{
+		if (DEBUG)
+		{
+			LOGGER.info("PARTY-RAID " + line);
+		}
+	}
+
+	/** One snapshot per engaged party: the boss (HP + who it's hating) and every member's role/HP/MP/action. */
+	private void logRaidSnapshot()
+	{
+		final Set<Integer> seenParties = new HashSet<>();
+		for (Member state : _members.values())
+		{
+			final Player owner = state.owner;
+			if (!state.partied || (owner == null) || !owner.isOnline() || !owner.isInParty())
+			{
+				continue;
+			}
+			if (!seenParties.add(owner.getObjectId()))
+			{
+				continue; // already logged this party this pass
+			}
+			final Monster boss = engagedRaid(state);
+			if (boss == null)
+			{
+				continue;
+			}
+			dbg("=== boss '" + boss.getName() + "' hp=" + boss.getCurrentHpPercent() + "% hating=" + describe(boss.getMostHated()) + " ===");
+			for (Player member : owner.getParty().getMembers())
+			{
+				dbg("  " + roleLabel(member) + " '" + member.getName() + "' hp=" + member.getCurrentHpPercent() + "% mp=" + member.getCurrentMpPercent() + "% " + action(member));
+			}
+		}
+	}
+
+	/** A live raid boss in combat near this member, or {@code null} - the boss to report on / the trigger for the trace. */
+	private Monster engagedRaid(Member state)
+	{
+		for (Monster mob : World.getInstance().getVisibleObjectsInRange(state.npc, Monster.class, ASSIST_MAX_RANGE))
+		{
+			if (!mob.isDead() && mob.isRaid() && mob.isInCombat())
+			{
+				return mob;
+			}
+		}
+		return null;
+	}
+
+	/** Role tag for a party member: its recruited role, or PLAYER for a real human (the leader). */
+	private String roleLabel(Player member)
+	{
+		final Member m = _members.get(member.getObjectId());
+		return (m != null) ? m.role.name() : "PLAYER";
+	}
+
+	/** Short label for who a creature is (name + role), used for the boss's most-hated target. */
+	private String describe(Creature who)
+	{
+		if (who == null)
+		{
+			return "none";
+		}
+		return who.isPlayer() ? (roleLabel((Player) who) + " '" + who.getName() + "'") : who.getName();
+	}
+
+	private static String action(Player npc)
+	{
+		if (npc.isDead())
+		{
+			return "DEAD";
+		}
+		if (npc.isSitting())
+		{
+			return "sitting";
+		}
+		if (npc.isCastingNow())
+		{
+			return "casting";
+		}
+		if (npc.isAttackingNow())
+		{
+			return "attacking";
+		}
+		return "idle";
 	}
 
 	/** A recruit on its way over: keep walking to the leader, ask for the invite on arrival, give up on timeout. */
@@ -1110,6 +1228,10 @@ public class PhantomPartyManager
 		// to Aura of Hate (a self-centred AoE) when the victim is inside its affect radius (tank stands in the pack).
 		if (castable(npc, state.aggression) && (npc.calculateDistance2D(victim) <= state.aggression.getCastRange()))
 		{
+			if (DEBUG && victim.isRaid())
+			{
+				dbg("TAUNT " + npc.getName() + " casts Aggression on '" + victim.getName() + "' (was hating " + describe(victim.getMostHated()) + ")");
+			}
 			npc.setTarget(victim);
 			npc.setRunning();
 			npc.doCast(state.aggression);
@@ -1117,6 +1239,10 @@ public class PhantomPartyManager
 		}
 		if (castable(npc, state.auraOfHate) && (npc.calculateDistance2D(victim) <= state.auraOfHate.getAffectRange()))
 		{
+			if (DEBUG && victim.isRaid())
+			{
+				dbg("TAUNT " + npc.getName() + " casts Aura of Hate near '" + victim.getName() + "' (was hating " + describe(victim.getMostHated()) + ")");
+			}
 			npc.setTarget(victim); // AURA taunt centres its effect on the caster; a valid hostile target satisfies the cast
 			npc.doCast(state.auraOfHate);
 			return true;
@@ -1262,6 +1388,7 @@ public class PhantomPartyManager
 				{
 					return; // getting up first; res on the next tick
 				}
+				dbg("RES " + npc.getName() + " rezzing " + roleLabel(corpse) + " '" + corpse.getName() + "'");
 				npc.setTarget(corpse);
 				npc.doCast(res);
 				return;
@@ -1285,6 +1412,10 @@ public class PhantomPartyManager
 				if (!readyToCast(npc))
 				{
 					return; // getting up first; heal on the next tick
+				}
+				if (DEBUG && raid)
+				{
+					dbg("HEAL " + npc.getName() + " -> " + roleLabel(worst) + " '" + worst.getName() + "' (hp " + worst.getCurrentHpPercent() + "%) with " + heal.getName());
 				}
 				npc.setTarget(worst);
 				npc.doCast(heal);
@@ -1416,14 +1547,7 @@ public class PhantomPartyManager
 	/** {@code true} if a live raid boss is in combat near the party - drives pre-emptive healing and no MP-sitting. */
 	private boolean raidEngaged(Member state)
 	{
-		for (Monster mob : World.getInstance().getVisibleObjectsInRange(state.npc, Monster.class, ASSIST_MAX_RANGE))
-		{
-			if (!mob.isDead() && mob.isRaid() && mob.isInCombat())
-			{
-				return true;
-			}
-		}
-		return false;
+		return engagedRaid(state) != null;
 	}
 
 	private boolean maintainPartyBuffs(Member state)

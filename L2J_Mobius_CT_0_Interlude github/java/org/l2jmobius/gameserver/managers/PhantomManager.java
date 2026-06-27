@@ -1261,6 +1261,33 @@ public class PhantomManager implements IXmlReader
 		equipJewelry(phantom, BodyPart.LR_FINGER, grade, 2);
 	}
 
+	/**
+	 * One-time debug dump of a recruited member's actual equipped loadout (with enchant levels) and, for a tank,
+	 * whether it actually knows its taunt skills at this level - so a raid trace can rule the gear/skills in or out.
+	 */
+	private void logLoadout(Player phantom, PartyRole role, int level)
+	{
+		final StringBuilder sb = new StringBuilder();
+		for (Item item : phantom.getInventory().getItems())
+		{
+			if (item.isEquipped())
+			{
+				sb.append(item.getTemplate().getName());
+				if (item.getEnchantLevel() > 0)
+				{
+					sb.append(" +").append(item.getEnchantLevel());
+				}
+				sb.append(", ");
+			}
+		}
+		String extra = "";
+		if (role == PartyRole.TANK)
+		{
+			extra = " | taunts known: Aggression=" + (phantom.getKnownSkill(28) != null) + " AuraOfHate=" + (phantom.getKnownSkill(18) != null);
+		}
+		LOGGER.info("PARTY-RAID GEAR " + role + " '" + phantom.getName() + "' lvl" + level + " grade=" + gradeForLevel(level) + extra + " | equipped: " + sb);
+	}
+
 	/** Best-in-grade weapon for a party role: bow/dagger for the ranged/rogue roles, magic staff for casters, else a sword. */
 	private static ItemTemplate partyWeapon(PartyRole role, boolean mage, CrystalType grade)
 	{
@@ -1851,6 +1878,10 @@ public class PhantomManager implements IXmlReader
 			}
 			startSupervising();
 			LOGGER.info(getClass().getSimpleName() + ": Spawned " + role + " party member '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
+			if (PhantomPartyManager.DEBUG)
+			{
+				logLoadout(phantom, role, level);
+			}
 			return phantom;
 		}
 		catch (Exception e)

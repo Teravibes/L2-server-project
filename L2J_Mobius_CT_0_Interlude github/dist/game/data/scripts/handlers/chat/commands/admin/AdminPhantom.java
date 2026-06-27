@@ -22,6 +22,7 @@ package handlers.chat.commands.admin;
 
 import org.l2jmobius.gameserver.handler.IAdminCommandHandler;
 import org.l2jmobius.gameserver.managers.PhantomManager;
+import org.l2jmobius.gameserver.managers.PhantomPartyManager;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.actor.Player;
 
@@ -33,6 +34,7 @@ import org.l2jmobius.gameserver.model.actor.Player;
  * (default 1) brought to the given level (default 1).</li>
  * <li>{@code //phantom clear} - despawn all phantoms.</li>
  * <li>{@code //phantom count} - report how many are active.</li>
+ * <li>{@code //phantom debug [on|off]} - toggle the raid combat trace (logs to the gameserver console).</li>
  * </ul>
  * @author Claude
  */
@@ -49,7 +51,7 @@ public class AdminPhantom implements IAdminCommandHandler
 		final String[] words = command.split(" ");
 		if (words.length < 2)
 		{
-			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | clear | count");
+			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | clear | count | debug [on|off]");
 			return false;
 		}
 
@@ -109,9 +111,23 @@ public class AdminPhantom implements IAdminCommandHandler
 				activeChar.sendSysMessage("Active phantoms: " + PhantomManager.getInstance().getCount());
 				break;
 			}
+			case "debug":
+			{
+				// Toggle the raid combat trace (//phantom debug on|off). Logs go to the gameserver log, raid-only.
+				if (words.length > 2)
+				{
+					PhantomPartyManager.DEBUG = words[2].equalsIgnoreCase("on") || words[2].equalsIgnoreCase("true") || words[2].equals("1");
+				}
+				else
+				{
+					PhantomPartyManager.DEBUG = !PhantomPartyManager.DEBUG; // no arg = flip it
+				}
+				activeChar.sendSysMessage("Phantom raid debug trace: " + (PhantomPartyManager.DEBUG ? "ON" : "OFF") + " (logs to the gameserver console).");
+				break;
+			}
 			default:
 			{
-				activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | clear | count");
+				activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | clear | count | debug [on|off]");
 				return false;
 			}
 		}

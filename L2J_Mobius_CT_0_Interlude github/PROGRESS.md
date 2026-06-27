@@ -259,6 +259,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 | `//phantom spawn [count] [level]` | Spawn phantoms manually |
 | `//phantom clear` | Despawn all phantoms |
 | `//phantom count` | Show active phantom count |
+| `//phantom debug [on\|off]` | Toggle the raid combat trace (logs boss aggro / member HP-MP-action / taunt / heal / res / death to the gameserver console; raid-only, so silent during farming) |
 
 ---
 
