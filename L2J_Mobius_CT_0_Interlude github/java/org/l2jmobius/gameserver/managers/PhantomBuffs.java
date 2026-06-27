@@ -20,9 +20,13 @@
  */
 package org.l2jmobius.gameserver.managers;
 
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
 
 import org.l2jmobius.gameserver.model.actor.Player;
+import org.l2jmobius.gameserver.model.skill.Skill;
 
 /**
  * Shared buff plan for support phantoms (personal buddies + recruited buffers): decides which buffs a target
@@ -72,8 +76,74 @@ public final class PhantomBuffs
 	private static final Set<Integer> ACUMEN = Set.of(1085, 4355, 4400);
 	private static final Set<Integer> BERSERKER = Set.of(1062, 4352, 4397);
 
+	// Buff names/aliases a player might ask for by name ("give me might", "ww pls"). Maps to a canonical word
+	// matched against the skills the buffer actually knows (so "might" finds "Greater Might" too).
+	private static final Map<String, String> BUFF_ALIASES = new HashMap<>();
+	static
+	{
+		BUFF_ALIASES.put("wind walk", "wind walk");
+		BUFF_ALIASES.put("ww", "wind walk");
+		BUFF_ALIASES.put("haste", "haste");
+		BUFF_ALIASES.put("acumen", "acumen");
+		BUFF_ALIASES.put("might", "might");
+		BUFF_ALIASES.put("shield", "shield");
+		BUFF_ALIASES.put("focus", "focus");
+		BUFF_ALIASES.put("death whisper", "death whisper");
+		BUFF_ALIASES.put("dw", "death whisper");
+		BUFF_ALIASES.put("guidance", "guidance");
+		BUFF_ALIASES.put("empower", "empower");
+		BUFF_ALIASES.put("berserker", "berserker");
+		BUFF_ALIASES.put("zerk", "berserker");
+		BUFF_ALIASES.put("vampiric rage", "vampiric rage");
+		BUFF_ALIASES.put("vamp", "vampiric rage");
+		BUFF_ALIASES.put("concentration", "concentration");
+		BUFF_ALIASES.put("wild magic", "wild magic");
+		BUFF_ALIASES.put("magic barrier", "magic barrier");
+		BUFF_ALIASES.put("clarity", "clarity");
+		BUFF_ALIASES.put("agility", "agility");
+		BUFF_ALIASES.put("regeneration", "regeneration");
+		BUFF_ALIASES.put("regen", "regeneration");
+		BUFF_ALIASES.put("mental shield", "mental shield");
+		BUFF_ALIASES.put("bless the body", "bless the body");
+		BUFF_ALIASES.put("bless the soul", "bless the soul");
+		BUFF_ALIASES.put("prophecy", "prophecy");
+		BUFF_ALIASES.put("chant", "chant");
+		BUFF_ALIASES.put("vampiric", "vampiric rage");
+	}
+
 	private PhantomBuffs()
 	{
+	}
+
+	/**
+	 * @return the canonical name of a buff the message asks for by name (e.g. "give me might" -> "might"), or
+	 *         {@code null} if the line names no known buff. Longest alias wins ("magic barrier" over "shield").
+	 */
+	public static String requestedBuff(String message)
+	{
+		final String m = " " + message.toLowerCase().replaceAll("[^a-z0-9 ]", " ").replaceAll("\\s+", " ").trim() + " ";
+		String best = null;
+		for (String alias : BUFF_ALIASES.keySet())
+		{
+			if (m.contains(" " + alias + " ") && ((best == null) || (alias.length() > best.length())))
+			{
+				best = alias;
+			}
+		}
+		return (best == null) ? null : BUFF_ALIASES.get(best);
+	}
+
+	/** @return a known buff whose name contains {@code canonicalName} (so "might" finds Greater Might), else null. */
+	public static Skill findKnown(List<Skill> known, String canonicalName)
+	{
+		for (Skill skill : known)
+		{
+			if (skill.getName().toLowerCase().contains(canonicalName))
+			{
+				return skill;
+			}
+		}
+		return null;
 	}
 
 	/** @return {@code true} if a class is a magic user (caster), so it wants caster buffs, not physical ones. */

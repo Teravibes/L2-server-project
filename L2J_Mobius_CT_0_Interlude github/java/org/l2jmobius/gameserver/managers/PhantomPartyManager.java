@@ -137,6 +137,7 @@ public class PhantomPartyManager
 		boolean rebuffing; // "rebuff" order: recast the full kit on the leader regardless of time left
 		int rebuffIdx;
 		boolean healNow; // "heal me" order: heal the leader once even at full HP
+		Skill pendingBuff; // "give me X" order: a specific buff to cast on the leader next tick
 
 		Member(Player npc, PartyRole role)
 		{
@@ -229,7 +230,7 @@ public class PhantomPartyManager
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.FOLLOW, leader);
 		// Answer the shout so it feels like a person reacting to the LFM, then it jogs over.
-		shout(npc, omwLine(role));
+		shout(npc, omwLine(recruit.role));
 	}
 
 	private static String omwLine(PartyRole role)
@@ -393,6 +394,27 @@ public class PhantomPartyManager
 	private boolean tryCommand(Member state, Player owner, String message)
 	{
 		final String text = message.toLowerCase().trim();
+
+		// A specific buff by name ("give me might", "ww pls") - checked first so "give me"/"gimme" aren't eaten by
+		// the grace ("brb") matcher. Grant it if the buffer knows it, else say it doesn't have it.
+		if (state.isSupport())
+		{
+			final String requested = PhantomBuffs.requestedBuff(text);
+			if (requested != null)
+			{
+				final Skill known = PhantomBuffs.findKnown(buffs(state), requested);
+				if (known != null)
+				{
+					state.pendingBuff = known;
+					deliver(state, "sure, " + known.getName().toLowerCase());
+				}
+				else
+				{
+					deliver(state, "i don't have " + requested);
+				}
+				return true;
+			}
+		}
 
 		// Free-hunt vs assist toggle.
 		if (containsAny(text, "attack freely", "free hunt", "go wild", "ffa", "hunt freely", "do your own", "attack anything"))
@@ -936,6 +958,21 @@ public class PhantomPartyManager
 				driveFollow(state, owner);
 			}
 			return;
+		}
+
+		// On-demand specific buff ("give me X"): cast it on the leader (honoured even if their archetype would
+		// normally skip it - they explicitly asked).
+		if (state.pendingBuff != null)
+		{
+			final Skill buff = state.pendingBuff;
+			state.pendingBuff = null;
+			if (!owner.isDead() && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()))
+			{
+				standIfSitting(npc);
+				npc.setTarget(owner);
+				npc.doCast(buff);
+				return;
+			}
 		}
 
 		// On-demand "heal me": one heal on the leader even at full HP.

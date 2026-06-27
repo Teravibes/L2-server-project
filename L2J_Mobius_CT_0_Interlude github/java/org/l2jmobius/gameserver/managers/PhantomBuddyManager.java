@@ -144,6 +144,7 @@ public class PhantomBuddyManager implements IXmlReader
 		boolean rebuffing; // "rebuff" order: recast the whole kit on the owner regardless of time left
 		int rebuffIdx;
 		boolean healNow; // "heal me" order: heal the owner once even at full HP
+		Skill pendingBuff; // "give me X" order: a specific buff to cast on the owner next tick
 
 		Buddy(Player npc)
 		{
@@ -293,6 +294,29 @@ public class PhantomBuddyManager implements IXmlReader
 				return null;
 			}
 			// Neither: fall through (they may have changed the subject or named a different place).
+		}
+
+		// A specific buff by name ("give me might", "ww pls") - checked early so "give me"/"gimme" aren't eaten by
+		// the grace ("brb") matcher. Grant it if the buddy knows it, else say it doesn't have it.
+		final String requested = PhantomBuffs.requestedBuff(text);
+		if (requested != null)
+		{
+			if (!isPartiedWith(state, owner))
+			{
+				deliver(state, owner, party, "party me first :)");
+				return null;
+			}
+			final Skill known = PhantomBuffs.findKnown(buffList(state, buddy), requested);
+			if (known != null)
+			{
+				state.pendingBuff = known;
+				deliver(state, owner, party, "sure, " + known.getName().toLowerCase());
+			}
+			else
+			{
+				deliver(state, owner, party, "i don't have " + requested);
+			}
+			return null;
 		}
 
 		// Party request: the buddy always agrees - that's the whole point. The real bond forms when the player
@@ -852,7 +876,21 @@ public class PhantomBuddyManager implements IXmlReader
 
 		final boolean ownerInRange = buddy.calculateDistance2D(owner) <= SUPPORT_RANGE;
 
-		// On-demand "heal me": heal the owner once even if not hurt.
+		// On-demand specific buff ("give me X"): cast it on the owner (honoured even if archetype would skip it).
+		if (state.pendingBuff != null)
+		{
+			final Skill buff = state.pendingBuff;
+			state.pendingBuff = null;
+			if (ownerInRange && !owner.isDead() && !buddy.isSkillDisabled(buff) && (buddy.getCurrentMp() >= buff.getMpConsume()))
+			{
+				standIfSitting(buddy);
+				buddy.setTarget(owner);
+				buddy.doCast(buff);
+				return true;
+			}
+		}
+
+		// On-demand "heal me": heal the owner once if not hurt.
 		if (state.healNow)
 		{
 			state.healNow = false;
