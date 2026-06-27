@@ -86,8 +86,9 @@ public class PhantomPartyManager
 	private static final int OWNER_HEAL_PERCENT = 60;
 	private static final int SELF_HEAL_PERCENT = 45;
 	private static final int BUFF_REFRESH_SECONDS = 20;
-	private static final int MP_REST_SIT = 80; // a caster sits to recover when below this and safe
-	private static final int MP_REST_STAND = 95; // and stands once topped back up
+	private static final int MP_REST_SIT = 30; // a caster sits to recover when it drops to ~this and is safe
+	private static final int MP_REST_STAND = 100; // and stays seated until MP is fully restored
+	private static final long STAND_SUPPRESS = 30000; // a "stand" order keeps it on its feet this long before auto-rest resumes
 	private static final long OFFLINE_GRACE = 120000;
 	private static final long BRB_GRACE = 360000;
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
@@ -138,6 +139,7 @@ public class PhantomPartyManager
 		int rebuffIdx;
 		boolean healNow; // "heal me" order: heal the leader once even at full HP
 		Skill pendingBuff; // "give me X" order: a specific buff to cast on the leader next tick
+		long noSitUntil; // "stand" order: don't auto-sit for MP until this time (so it doesn't pop straight back down)
 
 		Member(Player npc, PartyRole role)
 		{
@@ -428,6 +430,18 @@ public class PhantomPartyManager
 			setFree(state, false);
 			state.following = true;
 			deliver(state, "k, assisting you");
+			return true;
+		}
+
+		// Stand up on demand (interrupts an MP rest): "stand", "stand up", "get up", "on your feet".
+		if (containsAny(text, "stand up", "stand", "get up", "on your feet", "feet"))
+		{
+			state.noSitUntil = System.currentTimeMillis() + STAND_SUPPRESS; // don't pop straight back down
+			if (state.npc.isSitting())
+			{
+				state.npc.standUp();
+			}
+			deliver(state, "up");
 			return true;
 		}
 
@@ -965,28 +979,36 @@ public class PhantomPartyManager
 		if (state.pendingBuff != null)
 		{
 			final Skill buff = state.pendingBuff;
-			state.pendingBuff = null;
 			if (!owner.isDead() && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()))
 			{
-				standIfSitting(npc);
+				if (!readyToCast(npc))
+				{
+					return; // getting up first; cast on the next tick (pendingBuff kept so the order isn't lost)
+				}
+				state.pendingBuff = null;
 				npc.setTarget(owner);
 				npc.doCast(buff);
 				return;
 			}
+			state.pendingBuff = null; // can't satisfy it right now (dead / oom / disabled) - drop the request
 		}
 
 		// On-demand "heal me": one heal on the leader even at full HP.
 		if (state.healNow)
 		{
-			state.healNow = false;
 			final Skill onDemandHeal = heal(state);
 			if ((onDemandHeal != null) && !owner.isDead() && !npc.isSkillDisabled(onDemandHeal) && (npc.getCurrentMp() >= onDemandHeal.getMpConsume()))
 			{
-				standIfSitting(npc);
+				if (!readyToCast(npc))
+				{
+					return; // getting up first; heal on the next tick (healNow kept so the order isn't lost)
+				}
+				state.healNow = false;
 				npc.setTarget(owner);
 				npc.doCast(onDemandHeal);
 				return;
 			}
+			state.healNow = false; // can't satisfy it right now
 		}
 
 		// On-demand "rebuff": recast the leader's whole kit, one buff per tick, regardless of time left.
@@ -1003,7 +1025,10 @@ public class PhantomPartyManager
 			{
 				if (member.isDead() && (member.getClient() != null) && (npc.calculateDistance2D(member) <= SUPPORT_RANGE))
 				{
-					standIfSitting(npc);
+					if (!readyToCast(npc))
+					{
+						return; // getting up first; res on the next tick
+					}
 					npc.setTarget(member);
 					npc.doCast(res);
 					return;
@@ -1031,7 +1056,10 @@ public class PhantomPartyManager
 			}
 			if ((worst != null) && !npc.isSkillDisabled(heal) && (npc.getCurrentMp() >= heal.getMpConsume()))
 			{
-				standIfSitting(npc);
+				if (!readyToCast(npc))
+				{
+					return; // getting up first; heal on the next tick
+				}
 				npc.setTarget(worst);
 				npc.doCast(heal);
 				return;
@@ -1102,14 +1130,18 @@ public class PhantomPartyManager
 		while (state.rebuffIdx < all.size())
 		{
 			final Skill buff = all.get(state.rebuffIdx);
-			state.rebuffIdx++;
 			if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()) && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE))
 			{
-				standIfSitting(npc);
+				if (!readyToCast(npc))
+				{
+					return true; // getting up first; cast this same buff next tick (index NOT advanced, so it isn't skipped)
+				}
+				state.rebuffIdx++;
 				npc.setTarget(owner);
 				npc.doCast(buff);
 				return true;
 			}
+			state.rebuffIdx++; // this buff isn't wanted/castable - move past it
 		}
 		state.rebuffing = false;
 		return false;
@@ -1133,7 +1165,10 @@ public class PhantomPartyManager
 			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
 			{
-				standIfSitting(npc);
+				if (!readyToCast(npc))
+				{
+					return true; // getting up first; cast on the next tick
+				}
 				npc.setTarget(target);
 				npc.doCast(buff);
 				return true;
@@ -1174,8 +1209,9 @@ public class PhantomPartyManager
 			}
 			return true;
 		}
-		// Sit to top MP back up during downtime whenever it isn't near full and it's safe and the leader is close.
-		if ((mp < MP_REST_SIT) && !threat && !ownerFar)
+		// Sit to recover MP when it drops to the low mark, it's safe, the leader is close, and a recent "stand"
+		// order isn't still holding it on its feet.
+		if ((mp < MP_REST_SIT) && !threat && !ownerFar && (System.currentTimeMillis() >= state.noSitUntil))
 		{
 			// sitDown(false) bypasses the "Cannot sit while casting" guard (a clientless caster's cast flag can
 			// linger and otherwise blocks the sit forever - it warns but never actually sits).
@@ -1280,6 +1316,23 @@ public class PhantomPartyManager
 		{
 			npc.standUp();
 		}
+	}
+
+	/**
+	 * Gate a cast behind standing up. standUp() is a ~2.5s animation and a resting member is paralyzed while
+	 * seated, so a spell fired in the same tick would silently fail (checkUseMagicConditions rejects paralysis).
+	 * @return {@code true} if the member is already standing and may cast now; {@code false} if it just began
+	 *         getting up - the caller must return and retry next tick (without consuming any one-shot order) so the
+	 *         action lands once it is on its feet.
+	 */
+	private static boolean readyToCast(Player npc)
+	{
+		if (npc.isSitting())
+		{
+			npc.standUp();
+			return false;
+		}
+		return true;
 	}
 
 	private boolean isPartiedWith(Member state)

@@ -83,12 +83,13 @@ public class PhantomBuddyManager implements IXmlReader
 	// constantly. Treat it as needed only while the target is actually hurt (below this HP%).
 	private static final int CHANT_OF_LIFE_ID = 1229;
 	private static final int CHANT_OF_LIFE_HP_PERCENT = 80;
-	// MP watch: warn once at the low mark; sit during downtime whenever MP isn't near full (so it actually
-	// recovers in town / between pulls, not only in an emergency), and stand once topped back up.
-	private static final int MP_LOW_PERCENT = 25; // whisper "low on mp" below this
-	private static final int MP_REST_SIT = 80; // sit to recover when below this (and safe)
-	private static final int MP_REST_STAND = 95; // stand once recovered to this
+	// MP watch: mention it and sit when MP drops to ~the low mark, then stay seated until MP is fully restored
+	// (only stands early if attacked, the owner runs off, or it's ordered up / to heal/buff).
+	private static final int MP_LOW_PERCENT = 30; // whisper "low on mp" and sit at this
+	private static final int MP_REST_SIT = 30; // sit to recover when it drops to ~this (and safe)
+	private static final int MP_REST_STAND = 100; // and stay seated until MP is fully restored
 	private static final long MP_WARN_COOLDOWN = 30000;
+	private static final long STAND_SUPPRESS = 30000; // a "stand" order keeps it on its feet this long before auto-rest resumes
 	// Only act on buffs/heals when the owner is close enough that a cast makes sense (else just follow).
 	private static final int SUPPORT_RANGE = 900;
 	private static final int FOLLOW_RANGE = 250;
@@ -145,6 +146,7 @@ public class PhantomBuddyManager implements IXmlReader
 		int rebuffIdx;
 		boolean healNow; // "heal me" order: heal the owner once even at full HP
 		Skill pendingBuff; // "give me X" order: a specific buff to cast on the owner next tick
+		long noSitUntil; // "stand" order: don't auto-sit for MP until this time (so it doesn't pop straight back down)
 
 		Buddy(Player npc)
 		{
@@ -344,6 +346,18 @@ public class PhantomBuddyManager implements IXmlReader
 			state.following = false;
 			buddy.getAI().setIntention(Intention.IDLE);
 			deliver(state, owner, party, "k, waiting here");
+			return null;
+		}
+
+		// Stand up on demand (interrupts an MP rest).
+		if (containsAny(text, "stand up", "stand", "get up", "on your feet", "feet"))
+		{
+			state.noSitUntil = System.currentTimeMillis() + STAND_SUPPRESS; // don't pop straight back down
+			if (buddy.isSitting())
+			{
+				buddy.standUp();
+			}
+			deliver(state, owner, party, "up");
 			return null;
 		}
 
@@ -881,24 +895,37 @@ public class PhantomBuddyManager implements IXmlReader
 		if (state.pendingBuff != null)
 		{
 			final Skill buff = state.pendingBuff;
-			state.pendingBuff = null;
 			if (ownerInRange && !owner.isDead() && !buddy.isSkillDisabled(buff) && (buddy.getCurrentMp() >= buff.getMpConsume()))
 			{
-				standIfSitting(buddy);
+				if (!readyToCast(buddy))
+				{
+					return true; // getting up first; cast next tick (pendingBuff kept so the order isn't lost)
+				}
+				state.pendingBuff = null;
 				buddy.setTarget(owner);
 				buddy.doCast(buff);
 				return true;
 			}
+			state.pendingBuff = null; // can't satisfy it right now (out of range / dead / oom / disabled)
 		}
 
 		// On-demand "heal me": heal the owner once if not hurt.
 		if (state.healNow)
 		{
-			state.healNow = false;
-			if (ownerInRange && !owner.isDead() && tryHeal(state, buddy, owner))
+			if (ownerInRange && !owner.isDead())
 			{
-				return true;
+				if (buddy.isSitting())
+				{
+					buddy.standUp();
+					return true; // getting up first; heal next tick (healNow kept so the order isn't lost)
+				}
+				if (tryHeal(state, buddy, owner))
+				{
+					state.healNow = false;
+					return true;
+				}
 			}
+			state.healNow = false; // can't satisfy it right now
 		}
 
 		// On-demand "rebuff": recast the owner's whole kit, one buff per tick, regardless of time left.
@@ -976,7 +1003,11 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			return false;
 		}
-		standIfSitting(buddy);
+		if (!readyToCast(buddy))
+		{
+			return true; // getting up first; the heal lands next tick. Return "busy" so the caller doesn't fall
+			// through to the MP-rest and sit the buddy straight back down while it's trying to stand and heal.
+		}
 		buddy.setTarget(target);
 		buddy.doCast(heal);
 		return true;
@@ -1054,20 +1085,18 @@ public class PhantomBuddyManager implements IXmlReader
 		while (state.rebuffIdx < all.size())
 		{
 			final Skill buff = all.get(state.rebuffIdx);
+			final boolean wanted = PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) || (buff.getId() == CHANT_OF_LIFE_ID);
+			final boolean chantNotNeeded = (buff.getId() == CHANT_OF_LIFE_ID) && (owner.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT);
+			if (!wanted || chantNotNeeded || buddy.isSkillDisabled(buff) || (buddy.getCurrentMp() < buff.getMpConsume()))
+			{
+				state.rebuffIdx++; // skip this one
+				continue;
+			}
+			if (!readyToCast(buddy))
+			{
+				return true; // getting up first; recast this same buff next tick (index NOT advanced, so none is skipped)
+			}
 			state.rebuffIdx++;
-			if (!PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && (buff.getId() != CHANT_OF_LIFE_ID))
-			{
-				continue;
-			}
-			if ((buff.getId() == CHANT_OF_LIFE_ID) && (owner.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT))
-			{
-				continue;
-			}
-			if (buddy.isSkillDisabled(buff) || (buddy.getCurrentMp() < buff.getMpConsume()))
-			{
-				continue;
-			}
-			standIfSitting(buddy);
 			buddy.setTarget(owner);
 			buddy.doCast(buff);
 			return true;
@@ -1082,9 +1111,29 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			return false;
 		}
-		standIfSitting(buddy);
+		if (!readyToCast(buddy))
+		{
+			return true; // getting up first; the buff lands next tick. Return "busy" so the caller doesn't fall
+			// through to the MP-rest and sit the buddy straight back down while it's trying to stand and buff.
+		}
 		buddy.setTarget(target);
 		buddy.doCast(buff);
+		return true;
+	}
+
+	/**
+	 * Gate a cast behind standing up. standUp() is a ~2.5s animation and a resting buddy is paralyzed while
+	 * seated, so a spell fired in the same tick would silently fail.
+	 * @return {@code true} if the buddy is already standing and may cast now; {@code false} if it just began
+	 *         getting up - the caller must retry next tick (without consuming any one-shot order).
+	 */
+	private static boolean readyToCast(Player buddy)
+	{
+		if (buddy.isSitting())
+		{
+			buddy.standUp();
+			return false;
+		}
 		return true;
 	}
 
@@ -1120,9 +1169,9 @@ public class PhantomBuddyManager implements IXmlReader
 			whisper(buddy, owner, "i'm low on mp, sitting to recover");
 			state.lastMpWarn = now;
 		}
-		// Sit to top MP back up whenever it isn't near full and it's safe and the owner is close (reached after
-		// heals/buffs are handled above, so sitting never blocks supporting - it stands instantly to cast).
-		if ((mp < MP_REST_SIT) && !threat && !ownerFar)
+		// Sit to recover MP when it drops to the low mark, it's safe, the owner is close, and a recent "stand"
+		// order isn't still holding it up. Reached after heals/buffs above, so sitting never blocks supporting.
+		if ((mp < MP_REST_SIT) && !threat && !ownerFar && (now >= state.noSitUntil))
 		{
 			// sitDown() defaults to sitDown(true), which refuses to sit while casting ("Cannot sit while casting")
 			// - a clientless caster's cast flag can linger, so that path silently fails forever (it warns but
@@ -1212,14 +1261,6 @@ public class PhantomBuddyManager implements IXmlReader
 		}
 		state.npc.setRunning();
 		state.npc.getAI().setIntention(Intention.FOLLOW, owner);
-	}
-
-	private static void standIfSitting(Player buddy)
-	{
-		if (buddy.isSitting())
-		{
-			buddy.standUp();
-		}
 	}
 
 	private boolean isPartiedWith(Buddy state, Player owner)

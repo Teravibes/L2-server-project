@@ -162,8 +162,12 @@ public class PhantomManager implements IXmlReader
 	private static final int SLEEP_RANGE = 4500;
 	// Resting: when safe (no mob near, not in combat) and low on HP/MP, a phantom sits to regen, then
 	// stands when recovered or threatened. This is what sustains mages (MP) and wounded fighters (HP).
+	// HP uses a moderate band; MP (a caster's lifeblood) sits later but recovers all the way to full so a
+	// nuker gets a proper refill instead of standing back up half-charged.
 	private static final int REST_SIT_PERCENT = 35;
 	private static final int REST_STAND_PERCENT = 85;
+	private static final int REST_MP_SIT_PERCENT = 30; // sit once MP drops to ~this
+	private static final int REST_MP_STAND_PERCENT = 100; // and stay seated until MP is fully restored
 	private static final int REST_DANGER_RANGE = 700;
 	// Share of phantoms that roll a (DD) mage instead of a fighter.
 	private static final int MAGE_CHANCE = 30;
@@ -2401,13 +2405,13 @@ public class PhantomManager implements IXmlReader
 				final boolean active = phantom.isMoving() || phantom.isCastingNow() || phantom.isAttackingNow();
 				if (data.resting)
 				{
-					if (danger || ((phantom.getCurrentHpPercent() >= REST_STAND_PERCENT) && (phantom.getCurrentMpPercent() >= REST_STAND_PERCENT)))
+					if (danger || ((phantom.getCurrentHpPercent() >= REST_STAND_PERCENT) && (phantom.getCurrentMpPercent() >= REST_MP_STAND_PERCENT)))
 					{
 						endRest(phantom);
 						data.resting = false;
 					}
 				}
-				else if (!danger && ((phantom.getCurrentHpPercent() < REST_SIT_PERCENT) || (phantom.getCurrentMpPercent() < REST_SIT_PERCENT)))
+				else if (!danger && ((phantom.getCurrentHpPercent() < REST_SIT_PERCENT) || (phantom.getCurrentMpPercent() < REST_MP_SIT_PERCENT)))
 				{
 					startRest(phantom);
 					data.resting = true;
