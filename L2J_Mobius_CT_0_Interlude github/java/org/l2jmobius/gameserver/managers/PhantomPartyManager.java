@@ -87,6 +87,9 @@ public class PhantomPartyManager
 	private static final int DANGER_RANGE = 700;
 	private static final int OWNER_HEAL_PERCENT = 60;
 	private static final int SELF_HEAL_PERCENT = 45;
+	private static final int RAID_HEAL_PERCENT = 80; // under a raid, heal party members pre-emptively at this HP% (boss spikes outrun reactive 60% healing)
+	private static final int RAID_TANK_HEAL_PERCENT = 90; // ...and keep the tank topped this high, since it soaks the boss
+	private static final int CRITICAL_HEAL_PERCENT = 50; // a member this low is an emergency - heal it before topping the tank
 	private static final int BUFF_REFRESH_SECONDS = 20;
 	private static final int CASTER_CAST_RANGE = 650; // a nuker holds this far from the assist target so it nukes, never melees
 	private static final int CASTER_RANGE_TOLERANCE = 150; // ...with this slack, so it isn't constantly re-positioning
@@ -1265,20 +1268,14 @@ public class PhantomPartyManager
 			}
 		}
 
-		// 2) Heal the most-hurt living party member below the threshold, then self.
+		// 2) Heal. Under a raid this is pre-emptive and tank-first (a boss spike outruns reactive 60%-only healing):
+		// a critically low member is an emergency, otherwise the tank is kept topped, then the most-hurt member.
+		// Outside a raid it's the old behaviour - the most-hurt member below the normal threshold, then self.
 		final Skill heal = heal(state);
 		if (heal != null)
 		{
-			Player worst = null;
-			int worstPct = OWNER_HEAL_PERCENT;
-			for (Player member : owner.getParty().getMembers())
-			{
-				if (!member.isDead() && (npc.calculateDistance2D(member) <= SUPPORT_RANGE) && (member.getCurrentHpPercent() < worstPct))
-				{
-					worst = member;
-					worstPct = member.getCurrentHpPercent();
-				}
-			}
+			final boolean raid = raidEngaged(state);
+			Player worst = pickHealTarget(state, raid);
 			if ((worst == null) && (npc.getCurrentHpPercent() < SELF_HEAL_PERCENT))
 			{
 				worst = npc;
@@ -1351,6 +1348,82 @@ public class PhantomPartyManager
 			}
 		}
 		return botCorpse;
+	}
+
+	/**
+	 * Chooses who this healer should heal this tick. Under a raid it is pre-emptive and tank-first: an emergency
+	 * (any member below {@link #CRITICAL_HEAL_PERCENT}) is treated as the most-hurt member, otherwise the tank is
+	 * kept topped to {@link #RAID_TANK_HEAL_PERCENT} (it eats the boss), then the most-hurt member below
+	 * {@link #RAID_HEAL_PERCENT}. Outside a raid it's just the most-hurt member below {@link #OWNER_HEAL_PERCENT}.
+	 */
+	private Player pickHealTarget(Member state, boolean raid)
+	{
+		if (!raid)
+		{
+			return mostHurtBelow(state, OWNER_HEAL_PERCENT);
+		}
+		// Emergency first: whoever is critically low, even if it's not the tank, gets the heal now.
+		final Player critical = mostHurtBelow(state, CRITICAL_HEAL_PERCENT);
+		if (critical != null)
+		{
+			return critical;
+		}
+		// Then keep the tank topped so the next boss spike doesn't drop it from comfortable to dead.
+		final Player tank = findTank(state);
+		if ((tank != null) && !tank.isDead() && (state.npc.calculateDistance2D(tank) <= SUPPORT_RANGE) && (tank.getCurrentHpPercent() < RAID_TANK_HEAL_PERCENT))
+		{
+			return tank;
+		}
+		// Then the most-hurt of everyone else, pre-emptively (higher threshold than normal farming).
+		return mostHurtBelow(state, RAID_HEAL_PERCENT);
+	}
+
+	/** The most-hurt living party member in support range whose HP% is under {@code threshold}, or {@code null}. */
+	private Player mostHurtBelow(Member state, int threshold)
+	{
+		final Player npc = state.npc;
+		final Party party = state.owner.getParty();
+		if (party == null)
+		{
+			return (!state.owner.isDead() && (state.owner.getCurrentHpPercent() < threshold)) ? state.owner : null;
+		}
+		Player worst = null;
+		int worstPct = threshold;
+		for (Player member : party.getMembers())
+		{
+			if (!member.isDead() && (npc.calculateDistance2D(member) <= SUPPORT_RANGE) && (member.getCurrentHpPercent() < worstPct))
+			{
+				worst = member;
+				worstPct = member.getCurrentHpPercent();
+			}
+		}
+		return worst;
+	}
+
+	/** The recruited TANK in this healer's party (the one that should be kept topped under a raid), or {@code null}. */
+	private Player findTank(Member state)
+	{
+		for (Member m : _members.values())
+		{
+			if ((m.role == PartyRole.TANK) && (m.owner == state.owner) && !m.npc.isDead())
+			{
+				return m.npc;
+			}
+		}
+		return null;
+	}
+
+	/** {@code true} if a live raid boss is in combat near the party - drives pre-emptive healing and no MP-sitting. */
+	private boolean raidEngaged(Member state)
+	{
+		for (Monster mob : World.getInstance().getVisibleObjectsInRange(state.npc, Monster.class, ASSIST_MAX_RANGE))
+		{
+			if (!mob.isDead() && mob.isRaid() && mob.isInCombat())
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	private boolean maintainPartyBuffs(Member state)
@@ -1521,7 +1594,10 @@ public class PhantomPartyManager
 		// caster permanently "in danger" and it never sat - it just drained to empty (see the gameserver log:
 		// threat=true every tick from 45% down to 1%). A real support sits to recharge between casts and only
 		// pops up when a mob comes at it directly, which is exactly what underAttack() detects.
-		final boolean threat = underAttack(npc);
+		// A raid counts as "threat" even though the tank is holding aggro (so the healer itself isn't being hit):
+		// a support must NEVER sit to meditate mid-boss - a sitting healer heals nothing and the party wipes. This
+		// is the normal-farm "sit between pulls" behaviour staying intact, but switched off while a raid is engaged.
+		final boolean threat = underAttack(npc) || raidEngaged(state);
 		final boolean ownerFar = npc.calculateDistance2D(owner) > SUPPORT_RANGE;
 		if (npc.isSitting())
 		{
