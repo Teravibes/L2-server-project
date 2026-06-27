@@ -83,9 +83,11 @@ public class PhantomBuddyManager implements IXmlReader
 	// constantly. Treat it as needed only while the target is actually hurt (below this HP%).
 	private static final int CHANT_OF_LIFE_ID = 1229;
 	private static final int CHANT_OF_LIFE_HP_PERCENT = 80;
-	// MP watch: warn + (when safe) sit at the low mark; stand again once recovered to the high mark.
-	private static final int MP_LOW_PERCENT = 25;
-	private static final int MP_OK_PERCENT = 70;
+	// MP watch: warn once at the low mark; sit during downtime whenever MP isn't near full (so it actually
+	// recovers in town / between pulls, not only in an emergency), and stand once topped back up.
+	private static final int MP_LOW_PERCENT = 25; // whisper "low on mp" below this
+	private static final int MP_REST_SIT = 80; // sit to recover when below this (and safe)
+	private static final int MP_REST_STAND = 95; // stand once recovered to this
 	private static final long MP_WARN_COOLDOWN = 30000;
 	// Only act on buffs/heals when the owner is close enough that a cast makes sense (else just follow).
 	private static final int SUPPORT_RANGE = 900;
@@ -970,34 +972,42 @@ public class PhantomBuddyManager implements IXmlReader
 	private boolean handleMp(Buddy state, Player buddy, Player owner, long now)
 	{
 		final int mp = buddy.getCurrentMpPercent();
-		// A real support player sits to recharge WHILE the party fights and only stays standing if a monster is
-		// on the buddy itself (or the owner ran off). Using owner.isInCombat() here meant a buddy farming with you
-		// was "in danger" almost constantly and never actually sat - it just kept whispering "low on mp".
+		// A real support player sits to recharge during downtime and only stays standing if a monster is on the
+		// buddy itself (or the owner ran off). Keying on owner.isInCombat() / a 25% floor meant it almost never
+		// sat - it just stood around (even idle in town) and, when farming, only whispered "low on mp".
 		final boolean threat = isMonsterNear(buddy);
+		final boolean ownerFar = buddy.calculateDistance2D(owner) > SUPPORT_RANGE;
 		if (buddy.isSitting())
 		{
-			final boolean ownerFar = buddy.calculateDistance2D(owner) > SUPPORT_RANGE;
-			if ((mp >= MP_OK_PERCENT) || threat || ownerFar)
+			if ((mp >= MP_REST_STAND) || threat || ownerFar)
 			{
 				buddy.standUp();
 				return false;
 			}
 			return true; // still recovering
 		}
-		if (mp < MP_LOW_PERCENT)
+		if ((mp < MP_LOW_PERCENT) && ((now - state.lastMpWarn) >= MP_WARN_COOLDOWN))
 		{
-			if ((now - state.lastMpWarn) >= MP_WARN_COOLDOWN)
+			whisper(buddy, owner, "i'm low on mp, sitting to recover");
+			state.lastMpWarn = now;
+		}
+		// Sit to top MP back up whenever it isn't near full and it's safe and the owner is close (reached after
+		// heals/buffs are handled above, so sitting never blocks supporting - it stands instantly to cast).
+		if ((mp < MP_REST_SIT) && !threat && !ownerFar)
+		{
+			// sitDown() defaults to sitDown(true), which refuses to sit while casting ("Cannot sit while casting")
+			// - a clientless caster's cast flag can linger, so that path silently fails forever (it warns but
+			// never sits). Abort any cast and use sitDown(false) to bypass that guard.
+			buddy.abortCast();
+			buddy.getAI().setIntention(Intention.IDLE);
+			buddy.sitDown(false);
+			// TEMP DIAGNOSTIC: if the sit still didn't take, report which engine guard rejected it so we stop
+			// guessing about the "warns but never sits" report. Remove once confirmed.
+			if (!buddy.isSitting())
 			{
-				whisper(buddy, owner, "i'm low on mp, sitting to recover");
-				state.lastMpWarn = now;
+				LOGGER.info("BUDDY SIT FAILED " + buddy.getName() + " mp=" + mp + "% castingNow=" + buddy.isCastingNow() + " attackDisabled=" + buddy.isAttackDisabled() + " immobilized=" + buddy.isImmobilized() + " outOfControl=" + buddy.isOutOfControl());
 			}
-			if (!threat && buddy.isInsideRadius2D(owner.getX(), owner.getY(), owner.getZ(), SUPPORT_RANGE))
-			{
-				buddy.abortCast();
-				buddy.getAI().setIntention(Intention.IDLE);
-				buddy.sitDown();
-				return true;
-			}
+			return true;
 		}
 		return false;
 	}

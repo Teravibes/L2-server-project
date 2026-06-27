@@ -2400,7 +2400,10 @@ public class PhantomManager implements IXmlReader
 		AutoUseTaskManager.getInstance().stopAutoUseTask(phantom);
 		if (!phantom.isSitting())
 		{
-			phantom.sitDown();
+			// sitDown(false): a phantom mage's lingering cast flag would otherwise hit the "Cannot sit while
+			// casting" guard in sitDown(true) and never rest.
+			phantom.abortCast();
+			phantom.sitDown(false);
 		}
 	}
 

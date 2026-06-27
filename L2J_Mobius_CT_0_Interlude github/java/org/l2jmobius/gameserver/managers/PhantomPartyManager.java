@@ -84,13 +84,11 @@ public class PhantomPartyManager
 	private static final int OWNER_HEAL_PERCENT = 60;
 	private static final int SELF_HEAL_PERCENT = 45;
 	private static final int BUFF_REFRESH_SECONDS = 20;
-	private static final int MP_LOW_PERCENT = 25;
-	private static final int MP_OK_PERCENT = 70;
+	private static final int MP_REST_SIT = 80; // a caster sits to recover when below this and safe
+	private static final int MP_REST_STAND = 95; // and stands once topped back up
 	private static final long OFFLINE_GRACE = 120000;
 	private static final long BRB_GRACE = 360000;
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
-	private static final int MP_OK_PERCENT = 70;
-	private static final int MP_LOW_PERCENT = 25;
 
 	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
 	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
@@ -330,8 +328,9 @@ public class PhantomPartyManager
 		{
 			return;
 		}
+		final String lower = message.toLowerCase();
 		final List<Member> mine = new ArrayList<>();
-		boolean matched = false;
+		final List<Member> named = new ArrayList<>();
 		for (Player member : speaker.getParty().getMembers())
 		{
 			final Member state = _members.get(member.getObjectId());
@@ -340,12 +339,39 @@ public class PhantomPartyManager
 				continue;
 			}
 			mine.add(state);
+			if (lower.contains(state.npc.getName().toLowerCase()))
+			{
+				named.add(state);
+			}
+		}
+		if (mine.isEmpty())
+		{
+			return;
+		}
+		// Address one member by name and only that member reacts; otherwise the line drives the whole party.
+		final List<Member> targets = named.isEmpty() ? mine : named;
+		boolean matched = false;
+		for (Member state : targets)
+		{
 			if (tryCommand(state, speaker, message))
 			{
 				matched = true;
 			}
 		}
-		if (!matched && !mine.isEmpty())
+		if (matched)
+		{
+			return;
+		}
+		// Free-form chatter: named members each answer; if nobody was named, one member replies so a full party
+		// doesn't all talk over each other.
+		if (!named.isEmpty())
+		{
+			for (Member state : named)
+			{
+				askBrainAsync(state, speaker, message);
+			}
+		}
+		else
 		{
 			askBrainAsync(mine.get(Rnd.get(mine.size())), speaker, message);
 		}
@@ -1007,20 +1033,24 @@ public class PhantomPartyManager
 		}
 		final int mp = npc.getCurrentMpPercent();
 		final boolean threat = isMonsterNear(npc);
+		final boolean ownerFar = npc.calculateDistance2D(owner) > SUPPORT_RANGE;
 		if (npc.isSitting())
 		{
-			if ((mp >= MP_OK_PERCENT) || threat || (npc.calculateDistance2D(owner) > SUPPORT_RANGE))
+			if ((mp >= MP_REST_STAND) || threat || ownerFar)
 			{
 				npc.standUp();
 				return false;
 			}
 			return true;
 		}
-		if ((mp < MP_LOW_PERCENT) && !threat && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE))
+		// Sit to top MP back up during downtime whenever it isn't near full and it's safe and the leader is close.
+		if ((mp < MP_REST_SIT) && !threat && !ownerFar)
 		{
+			// sitDown(false) bypasses the "Cannot sit while casting" guard (a clientless caster's cast flag can
+			// linger and otherwise blocks the sit forever - it warns but never actually sits).
 			npc.abortCast();
 			npc.getAI().setIntention(Intention.IDLE);
-			npc.sitDown();
+			npc.sitDown(false);
 			return true;
 		}
 		return false;
