@@ -154,7 +154,7 @@ All three carry a Heal so every buddy can top you up. Place at **level 40+** for
 
 Shout an **LFM/LFP** and a full party assembles itself: for each role you call for, a level-matched combat phantom spawns just out of sight, **walks over**, asks for an invite, and joins you. It generalises the buddy (bind / follow / party / grace) into combat roles and adds a recruitment layer on top.
 
-**Roles** (`PhantomManager.PartyRole`): `TANK`, `WARRIOR` (melee DD), `ARCHER` (bow), `DAGGER`, `NUKER` (mage DD), `HEALER` (Elder kit + **Resurrection**), `BUFFER` (Prophet kit). Combat roles get a fixed class per level tier (1st at 20+, 2nd at 40+), gear, the full skill tree, and matching shots; archer/dagger swap in a bow/dagger of grade. Healer/buffer reuse the proven buddy outfit. A bad class id degrades to a plain fighter/mage rather than crashing.
+**Roles** (`PhantomManager.PartyRole`): `TANK`, `WARRIOR` (melee DD), `ARCHER` (bow), `DAGGER`, `NUKER` (mage DD), `HEALER` (Elder kit + **Resurrection**), `BUFFER` (Prophet kit). Combat roles get a fixed class per level tier (1st at 20+, 2nd at 40+), gear, the full skill tree, and matching shots; archer/dagger swap in a bow/dagger of grade. **Archers are handed a matching-grade arrow stack** (a bow with no ammunition can't fire — the engine auto-equips them on the first shot). Healer/buffer reuse the proven buddy outfit. A bad class id degrades to a plain fighter/mage rather than crashing.
 
 **Two ways to find them (both work; the second needs no AI):**
 - **Brain on** — a free-form call ("need a box + someone to tank cruma") is sent to the brain's new `LFP` mode, which classifies it into roles.
@@ -163,7 +163,7 @@ Shout an **LFM/LFP** and a full party assembles itself: for each role you call f
 **Recruitment feel:** members spawn ~1.9–2.6k units away, out of line of sight, answer the shout on `!` ("healer here, omw"), and jog in via engine pathfinding — so it reads as real players who saw your call, not NPCs popping in. Arrivals are staggered. They match **your exact level**.
 
 **Once partied:**
-- **Assist (default)** — every member focus-fires *your* current target. Skills + soulshots fire through the native AutoUse (the member is flagged auto-playing so AutoUse casts, but the target is the leader's, not the engine scanner's).
+- **Assist (default)** — every member focus-fires *your* current target. Skills + soulshots fire through the native AutoUse (the member is flagged auto-playing so AutoUse casts, but the target is the leader's, not the engine scanner's). **Nukers hold at cast range and nuke** instead of being given a physical ATTACK intention (which dragged a caster into melee to auto-hit even on a full MP bar); out of MP they break off and sit to recharge rather than meleeing.
 - **`attack freely`** — flips a member to hunt nearby mobs on its own (real AutoPlay scanner); leashes back if it strays.
 - **Healer** heals the most-hurt party member (<60%) and **raises** fallen real players; **buffer** keeps the whole party buffed.
 - **Follows** you, survives an offline **grace** window ("brb" extends it), despawns on disband.
@@ -180,7 +180,7 @@ Shout an **LFM/LFP** and a full party assembles itself: for each role you call f
 
 **Specific class requests:** name an exact occupation, e.g. `LFM 1 Shillien Elder`, `lfm gladiator + hawkeye`, and that class spawns (2nd-class+ occupations recognised by name; base/1st-class words fall through to level-appropriate generic roles). Works in the deterministic keyword path.
 
-**On-demand support orders** (whisper or party chat, brain-off): `rebuff` actually recasts the full kit on you (one buff per tick), `heal me` heals you once even at full HP, `res` raises a fallen member. Applies to recruited healers/buffers and personal buddies.
+**On-demand support orders** (whisper or party chat, brain-off): `rebuff` / `buff me` recasts the full kit on you (one buff per tick), **`buff all` / `buff the party` fully buffs every party member**, **`buff <name>` fully buffs one named member** (e.g. the tank), `heal me` heals you once even at full HP, `res` raises a fallen member. A full-party rebuff yields to res/heal each tick so nobody dies while it grinds through buffs. Applies to recruited healers/buffers and personal buddies.
 
 **Key files:** `PhantomPartyManager.java` (new), `PhantomManager.java` (`PartyRole`, `spawnPartyMember`, recruit API + supervisor guards), `FakePlayerChatManager.java` (`overheardShout` LFP parse + `LFP` brain call), `RequestJoinParty.java` / `ChatWhisper.java` / `ChatParty.java` dispatch, `fpc_brain.py` (`LFP` mode).
 
@@ -287,7 +287,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 - **Field hunting feel** — bots can still cluster / move sluggishly in some zones; pathfinding + combat tuning deprioritized.
 - **Map image calibration** — must be supplied by user; calibration is bounds-based (a friendlier 2-click calibration was discussed but not built).
 - **Buddy on disband** — despawns where it stands; could walk/TP back to town first (deferred).
-- **Shout LFM** — now actually recruits a party (System E). Remaining rough edges: combat roles below ~lvl 20 fall back to a base fighter/mage (no role class yet); archer/dagger soulshot auto-fire depends on the swapped weapon registering shots; assist re-issues `ATTACK` so very fast target-swapping by the leader can look twitchy; recruits despawn where they stand on disband.
+- **Shout LFM** — now actually recruits a party (System E). Remaining rough edges: combat roles below ~lvl 20 fall back to a base fighter/mage (no role class yet); archer/dagger soulshot auto-fire depends on the swapped weapon registering shots (archers now also carry grade-matched arrows so the bow actually fires); melee assist re-issues `ATTACK` so very fast target-swapping by the leader can look twitchy; recruits despawn where they stand on disband.
 - **Phantom/buddy tuning constants** — heal/MP/buff-refresh/roam/dispersal values are constants in the manager files; should be lifted into a config file for runtime tuning.
 
 ---

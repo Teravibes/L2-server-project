@@ -142,8 +142,9 @@ public class PhantomBuddyManager implements IXmlReader
 		int lastY;
 		int stuckTicks;
 		long castSince; // when the current cast began, so a wedged cast can be aborted instead of freezing the buddy
-		boolean rebuffing; // "rebuff" order: recast the whole kit on the owner regardless of time left
-		int rebuffIdx;
+		boolean rebuffing; // "rebuff" order: recast the whole kit regardless of time left
+		int rebuffIdx; // which buff in the list is next for the current target
+		List<Player> rebuffQueue; // targets still owed a full kit (owner only, a named member, or the whole party)
 		boolean healNow; // "heal me" order: heal the owner once even at full HP
 		Skill pendingBuff; // "give me X" order: a specific buff to cast on the owner next tick
 		long noSitUntil; // "stand" order: don't auto-sit for MP until this time (so it doesn't pop straight back down)
@@ -385,16 +386,28 @@ public class PhantomBuddyManager implements IXmlReader
 		// Re-buff on demand: actually recast the whole kit (not just acknowledge).
 		if (containsAny(text, "buff", "rebuff", "rebuf"))
 		{
-			if (isPartiedWith(state, owner))
-			{
-				state.rebuffing = true;
-				state.rebuffIdx = 0;
-				deliver(state, owner, party, "buffing you up");
-			}
-			else
+			if (!isPartiedWith(state, owner))
 			{
 				deliver(state, owner, party, "party me first :)");
+				return null;
 			}
+			// "buff all / everyone / the party": fully (re)buff every living party member, not just the owner.
+			if (containsAny(text, "buff all", "buff everyone", "buff every", "buff the party", "buff party", "buff us all", "buff whole party", "full buff all", "fully buff"))
+			{
+				startRebuff(state, partyTargets(owner));
+				deliver(state, owner, party, "buffing everyone");
+				return null;
+			}
+			// "buff <name>": fully buff one named party member.
+			final Player named = findPartyMemberByName(owner, text);
+			if (named != null)
+			{
+				startRebuff(state, new ArrayList<>(List.of(named)));
+				deliver(state, owner, party, "buffing " + named.getName());
+				return null;
+			}
+			startRebuff(state, new ArrayList<>(List.of(owner)));
+			deliver(state, owner, party, "buffing you up");
 			return null;
 		}
 
@@ -928,12 +941,6 @@ public class PhantomBuddyManager implements IXmlReader
 			state.healNow = false; // can't satisfy it right now
 		}
 
-		// On-demand "rebuff": recast the owner's whole kit, one buff per tick, regardless of time left.
-		if (state.rebuffing && ownerInRange && forceRebuff(state, buddy, owner))
-		{
-			return true;
-		}
-
 		// 1) Heal the owner up to ~half health, then self if low.
 		if (ownerInRange && !owner.isDead() && (owner.getCurrentHpPercent() < OWNER_HEAL_PERCENT) && tryHeal(state, buddy, owner))
 		{
@@ -944,7 +951,14 @@ public class PhantomBuddyManager implements IXmlReader
 			return true;
 		}
 
-		// 2) Keep the owner (and self) buffed.
+		// 2) On-demand "(re)buff <who>": recast a full kit on each queued target, one buff per tick. Below heal so a
+		// long "buff all" can't leave the owner dying while it grinds through buffs, above the normal upkeep.
+		if (state.rebuffing && forceRebuff(state, buddy))
+		{
+			return true;
+		}
+
+		// 3) Keep the owner (and self) buffed.
 		if (ownerInRange && maintainBuffs(state, buddy, true))
 		{
 			return true;
@@ -1074,34 +1088,91 @@ public class PhantomBuddyManager implements IXmlReader
 	}
 
 	/**
-	 * "rebuff" order: recast the owner's full archetype kit one buff per tick (ignoring time left), walking an
-	 * index across the list so each wanted buff fires once, then clears the flag.
-	 * @return {@code true} while still rebuffing (a cast was issued)
+	 * Begins a forced (re)buff: every {@code targets} entry is owed a full archetype kit, served one cast per tick.
 	 */
-	private boolean forceRebuff(Buddy state, Player buddy, Player owner)
+	private void startRebuff(Buddy state, List<Player> targets)
+	{
+		state.rebuffQueue = targets;
+		state.rebuffIdx = 0;
+		state.rebuffing = !targets.isEmpty();
+	}
+
+	/** Every member of a partied owner's group (or just the owner if solo) - the target list for a "buff all" order. */
+	private static List<Player> partyTargets(Player owner)
+	{
+		final List<Player> targets = new ArrayList<>();
+		if (owner.isInParty())
+		{
+			targets.addAll(owner.getParty().getMembers());
+		}
+		else
+		{
+			targets.add(owner);
+		}
+		return targets;
+	}
+
+	/** The party member whose name appears in the order text ("buff Trevor"), or {@code null} if none is named. */
+	private static Player findPartyMemberByName(Player owner, String text)
+	{
+		if (!owner.isInParty())
+		{
+			return null;
+		}
+		for (Player member : owner.getParty().getMembers())
+		{
+			final String name = member.getName().toLowerCase();
+			if (!name.isEmpty() && text.contains(name))
+			{
+				return member;
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * "(re)buff" order: recast a full archetype kit on each queued target one buff per tick (ignoring time left),
+	 * walking an index across the list per target so each wanted buff fires once, advancing to the next target (or
+	 * skipping one that's dead / out of range) until the queue empties, then clearing the flag.
+	 * @return {@code true} while still rebuffing (a cast was issued or the buddy is standing up to cast)
+	 */
+	private boolean forceRebuff(Buddy state, Player buddy)
 	{
 		final List<Skill> all = buffList(state, buddy);
-		final boolean caster = PhantomBuffs.isCaster(owner);
-		while (state.rebuffIdx < all.size())
+		while ((state.rebuffQueue != null) && !state.rebuffQueue.isEmpty())
 		{
-			final Skill buff = all.get(state.rebuffIdx);
-			final boolean wanted = PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) || (buff.getId() == CHANT_OF_LIFE_ID);
-			final boolean chantNotNeeded = (buff.getId() == CHANT_OF_LIFE_ID) && (owner.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT);
-			if (!wanted || chantNotNeeded || buddy.isSkillDisabled(buff) || (buddy.getCurrentMp() < buff.getMpConsume()))
+			final Player target = state.rebuffQueue.get(0);
+			if ((target == null) || target.isDead() || (buddy.calculateDistance2D(target) > SUPPORT_RANGE))
 			{
-				state.rebuffIdx++; // skip this one
+				state.rebuffQueue.remove(0); // can't reach/buff this one now - skip to the next target
+				state.rebuffIdx = 0;
 				continue;
 			}
-			if (!readyToCast(buddy))
+			final boolean caster = PhantomBuffs.isCaster(target);
+			while (state.rebuffIdx < all.size())
 			{
-				return true; // getting up first; recast this same buff next tick (index NOT advanced, so none is skipped)
+				final Skill buff = all.get(state.rebuffIdx);
+				final boolean wanted = PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) || (buff.getId() == CHANT_OF_LIFE_ID);
+				final boolean chantNotNeeded = (buff.getId() == CHANT_OF_LIFE_ID) && (target.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT);
+				if (!wanted || chantNotNeeded || buddy.isSkillDisabled(buff) || (buddy.getCurrentMp() < buff.getMpConsume()))
+				{
+					state.rebuffIdx++; // skip this one
+					continue;
+				}
+				if (!readyToCast(buddy))
+				{
+					return true; // getting up first; recast this same buff next tick (index NOT advanced, so none is skipped)
+				}
+				state.rebuffIdx++;
+				buddy.setTarget(target);
+				buddy.doCast(buff);
+				return true;
 			}
-			state.rebuffIdx++;
-			buddy.setTarget(owner);
-			buddy.doCast(buff);
-			return true;
+			state.rebuffQueue.remove(0); // finished this target's full kit - on to the next
+			state.rebuffIdx = 0;
 		}
 		state.rebuffing = false;
+		state.rebuffQueue = null;
 		return false;
 	}
 

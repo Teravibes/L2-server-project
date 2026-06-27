@@ -59,6 +59,7 @@ import org.l2jmobius.gameserver.model.actor.holders.player.ClassType;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.actor.templates.PlayerTemplate;
 import org.l2jmobius.gameserver.model.item.Armor;
+import org.l2jmobius.gameserver.model.item.EtcItem;
 import org.l2jmobius.gameserver.model.item.ItemTemplate;
 import org.l2jmobius.gameserver.model.item.Weapon;
 import org.l2jmobius.gameserver.model.item.enums.BodyPart;
@@ -66,6 +67,7 @@ import org.l2jmobius.gameserver.model.item.enums.ItemProcessType;
 import org.l2jmobius.gameserver.model.item.instance.Item;
 import org.l2jmobius.gameserver.model.item.type.ArmorType;
 import org.l2jmobius.gameserver.model.item.type.CrystalType;
+import org.l2jmobius.gameserver.model.item.type.EtcItemType;
 import org.l2jmobius.gameserver.model.item.type.WeaponType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
@@ -117,6 +119,9 @@ public class PhantomManager implements IXmlReader
 	private static final int AUTO_ATTACK_ACTION = 2;
 	// How many soulshots to hand a freshly geared phantom (no runtime restock yet).
 	private static final int SHOT_COUNT = 5000;
+	// Arrows handed to an archer so its bow can actually fire (a bow with no ammunition does nothing). Big stack
+	// so a farm session doesn't run dry; the engine auto-equips them into the left hand on the first shot.
+	private static final int ARROW_COUNT = 20000;
 	// Healing potions for in-combat HP sustain while farming. Generous stack since phantoms fight a lot;
 	// refreshed on every (re)spawn. Native auto-potion drinks one when HP falls below the percent.
 	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
@@ -1770,7 +1775,40 @@ public class PhantomManager implements IXmlReader
 		if (weapon != null)
 		{
 			equip(phantom, weapon); // equipItem replaces the conflicting R_HAND/LR_HAND slot
+			// A bow is useless without ammunition: an archer with no arrows just stands there unable to fire.
+			// Hand it a matching-grade stack; the engine auto-equips them into the left hand on the first shot
+			// (Player.checkAndEquipArrows, matched by crystal grade in Inventory.findArrowForBow).
+			if (type == WeaponType.BOW)
+			{
+				final ItemTemplate arrow = findArrow(weapon.getCrystalType());
+				if (arrow != null)
+				{
+					phantom.getInventory().addItem(ItemProcessType.REWARD, arrow.getId(), ARROW_COUNT, phantom, null);
+				}
+				else
+				{
+					LOGGER.warning(getClass().getSimpleName() + ": No arrows found in the datapack for grade " + weapon.getCrystalType() + " - archer '" + phantom.getName() + "' can't shoot.");
+				}
+			}
 		}
+	}
+
+	/** Standard arrow matching a bow's grade (steps down a grade if none exists at the desired one), or null. */
+	private static ItemTemplate findArrow(CrystalType desired)
+	{
+		CrystalType grade = desired;
+		while (grade != null)
+		{
+			for (ItemTemplate item : ItemData.getInstance().getAllItems())
+			{
+				if ((item instanceof EtcItem) && (((EtcItem) item).getItemType() == EtcItemType.ARROW) && (item.getCrystalType() == grade))
+				{
+					return item;
+				}
+			}
+			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
+		}
+		return null;
 	}
 
 	/** Cheapest tradeable weapon of a type at the desired grade, stepping down a grade if none exists. */

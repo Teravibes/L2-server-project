@@ -36,6 +36,7 @@ import java.util.regex.Pattern;
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.ai.Intention;
+import org.l2jmobius.gameserver.geoengine.GeoEngine;
 import org.l2jmobius.gameserver.managers.PhantomManager.PartyRole;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.World;
@@ -86,6 +87,9 @@ public class PhantomPartyManager
 	private static final int OWNER_HEAL_PERCENT = 60;
 	private static final int SELF_HEAL_PERCENT = 45;
 	private static final int BUFF_REFRESH_SECONDS = 20;
+	private static final int CASTER_CAST_RANGE = 650; // a nuker holds this far from the assist target so it nukes, never melees
+	private static final int CASTER_RANGE_TOLERANCE = 150; // ...with this slack, so it isn't constantly re-positioning
+	private static final int CASTER_MIN_MP = 20; // below this percent a nuker stops casting and rests instead of meleeing
 	private static final int MP_REST_SIT = 30; // a caster sits to recover when it drops to ~this and is safe
 	private static final int MP_REST_STAND = 100; // and stays seated until MP is fully restored
 	private static final long STAND_SUPPRESS = 30000; // a "stand" order keeps it on its feet this long before auto-rest resumes
@@ -135,8 +139,9 @@ public class PhantomPartyManager
 		int stuckTicks;
 		long castSince; // abort a wedged cast instead of freezing the member
 		long travelUntil; // sent ahead to a destination; wait there (don't follow-yank back) until the leader arrives
-		boolean rebuffing; // "rebuff" order: recast the full kit on the leader regardless of time left
-		int rebuffIdx;
+		boolean rebuffing; // "rebuff" order: recast the full kit regardless of time left
+		int rebuffIdx; // which buff in the list is next for the current target
+		List<Player> rebuffQueue; // targets still owed a full kit (leader only, a named member, or the whole party)
 		boolean healNow; // "heal me" order: heal the leader once even at full HP
 		Skill pendingBuff; // "give me X" order: a specific buff to cast on the leader next tick
 		long noSitUntil; // "stand" order: don't auto-sit for MP until this time (so it doesn't pop straight back down)
@@ -488,10 +493,24 @@ public class PhantomPartyManager
 		// Support on-demand orders actually do the thing now (not just acknowledge).
 		if (state.isSupport())
 		{
+			// "buff all / everyone / the party": fully (re)buff every living party member, one buff per tick.
+			if (containsAny(text, "buff all", "buff everyone", "buff every", "buff the party", "buff party", "buff us all", "buff whole party", "full buff all", "fully buff"))
+			{
+				startRebuff(state, partyTargets(state));
+				deliver(state, "buffing everyone");
+				return true;
+			}
+			// "buff <name>": fully buff one named party member (e.g. the tank by name).
+			final Player named = findPartyMemberByName(state, text);
+			if ((named != null) && text.contains("buff"))
+			{
+				startRebuff(state, new ArrayList<>(List.of(named)));
+				deliver(state, "buffing " + named.getName());
+				return true;
+			}
 			if (containsAny(text, "rebuff", "buff me", "buff us", "buff", "rebuf"))
 			{
-				state.rebuffing = true; // serve() recasts the leader's whole kit over the next ticks
-				state.rebuffIdx = 0;
+				startRebuff(state, new ArrayList<>(List.of(state.owner))); // recast the leader's whole kit over the next ticks
 				deliver(state, "rebuffing");
 				return true;
 			}
@@ -918,7 +937,23 @@ public class PhantomPartyManager
 		if (state.assist)
 		{
 			final WorldObject t = owner.getTarget();
-			if ((t instanceof Monster) && !((Monster) t).isDead() && (owner.calculateDistance2D(t) <= ASSIST_MAX_RANGE))
+			final boolean haveTarget = (t instanceof Monster) && !((Monster) t).isDead() && (owner.calculateDistance2D(t) <= ASSIST_MAX_RANGE);
+			if (haveTarget && state.role.mage)
+			{
+				// A nuker assists by casting from range - it must NEVER be given a physical ATTACK intention, which
+				// walked it into melee to auto-hit the mob even on a full MP bar (it has no auto-attack action, so it
+				// just stood there swinging its staff instead of nuking). Hold at cast range; AutoUse fires the nukes.
+				// Out of MP, drop the target and fall through to the rest path so it sits to recharge instead of meleeing.
+				if (npc.getCurrentMpPercent() >= CASTER_MIN_MP)
+				{
+					standIfSitting(npc);
+					npc.setTarget(t);
+					positionCaster(npc, (Monster) t);
+					return; // AutoUse fires the role's nukes on this target
+				}
+				npc.setTarget(null);
+			}
+			else if (haveTarget)
 			{
 				standIfSitting(npc);
 				if ((npc.getTarget() != t) || !npc.isInCombat())
@@ -929,7 +964,8 @@ public class PhantomPartyManager
 				}
 				return; // AutoUse fires the role's skills/shots on this target
 			}
-			// Nothing to assist: a caster low on MP sits to recover when safe; otherwise stick with the leader.
+			// Nothing to assist (or a nuker that just ran dry): a caster low on MP sits to recover when safe;
+			// otherwise stick with the leader.
 			if (restForMp(state))
 			{
 				return;
@@ -954,6 +990,35 @@ public class PhantomPartyManager
 				}
 			}, 4000);
 		}
+	}
+
+	/**
+	 * Holds a nuker at casting range of the assist target so AutoUse can nuke it, instead of letting a physical
+	 * ATTACK intention drag it into melee. Walks in when too far, backs off when too close; stands still (lets the
+	 * cast happen) once already in the band. Mirrors the free-roam mage positioning in {@link PhantomManager}.
+	 */
+	private void positionCaster(Player npc, Monster target)
+	{
+		if (npc.isCastingNow() || npc.isMovementDisabled())
+		{
+			return; // don't interrupt a cast or fight a stun
+		}
+		double dx = npc.getX() - target.getX();
+		double dy = npc.getY() - target.getY();
+		double distance = Math.hypot(dx, dy);
+		if (Math.abs(distance - CASTER_CAST_RANGE) <= CASTER_RANGE_TOLERANCE)
+		{
+			return; // already in position - stand still so AutoUse can cast
+		}
+		if (distance < 1)
+		{
+			distance = 1;
+		}
+		final int standX = target.getX() + (int) ((dx / distance) * CASTER_CAST_RANGE);
+		final int standY = target.getY() + (int) ((dy / distance) * CASTER_CAST_RANGE);
+		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
+		npc.setRunning();
+		npc.getAI().setIntention(Intention.MOVE_TO, destination);
 	}
 
 	// ===== Support roles: heal the hurt, raise the dead, keep the party buffed =====
@@ -1011,12 +1076,6 @@ public class PhantomPartyManager
 			state.healNow = false; // can't satisfy it right now
 		}
 
-		// On-demand "rebuff": recast the leader's whole kit, one buff per tick, regardless of time left.
-		if (state.rebuffing && forceRebuff(state))
-		{
-			return;
-		}
-
 		// 1) Raise any fallen real player in the party.
 		final Skill res = res(state);
 		if ((res != null) && !npc.isSkillDisabled(res) && (npc.getCurrentMp() >= res.getMpConsume()))
@@ -1064,6 +1123,13 @@ public class PhantomPartyManager
 				npc.doCast(heal);
 				return;
 			}
+		}
+
+		// 2b) On-demand "(re)buff <who>": recast a full kit on each queued target, one buff per tick, regardless of
+		// time left. Sits below res/heal so a long "buff all" can't get someone killed while it grinds through buffs.
+		if (state.rebuffing && forceRebuff(state))
+		{
+			return;
 		}
 
 		// 3) Keep the whole party (and self) buffed; one buff per tick so it works through its list.
@@ -1116,34 +1182,90 @@ public class PhantomPartyManager
 		return false;
 	}
 
+	/** Begins a forced (re)buff: every {@code targets} entry is owed a full archetype kit, served one cast per tick. */
+	private void startRebuff(Member state, List<Player> targets)
+	{
+		state.rebuffQueue = targets;
+		state.rebuffIdx = 0;
+		state.rebuffing = !targets.isEmpty();
+	}
+
+	/** Every member of the leader's party (or just the leader if solo) - the target list for a "buff all" order. */
+	private static List<Player> partyTargets(Member state)
+	{
+		final List<Player> targets = new ArrayList<>();
+		final Player owner = state.owner;
+		if (owner.isInParty())
+		{
+			targets.addAll(owner.getParty().getMembers());
+		}
+		else
+		{
+			targets.add(owner);
+		}
+		return targets;
+	}
+
+	/** The party member whose name appears in the order text ("buff Trevor"), or {@code null} if none is named. */
+	private static Player findPartyMemberByName(Member state, String text)
+	{
+		final Player owner = state.owner;
+		if (!owner.isInParty())
+		{
+			return null;
+		}
+		for (Player member : owner.getParty().getMembers())
+		{
+			final String name = member.getName().toLowerCase();
+			if (!name.isEmpty() && text.contains(name))
+			{
+				return member;
+			}
+		}
+		return null;
+	}
+
 	/**
-	 * "rebuff" order: recast the leader's full archetype kit one buff per tick, ignoring how long the current
-	 * one has left. Walks an index across the buff list so each wanted buff is recast once, then clears the flag.
-	 * @return {@code true} while still rebuffing (a cast was issued)
+	 * "(re)buff" order: recast a full archetype kit on each queued target one buff per tick, ignoring how long the
+	 * current one has left. Walks an index across the buff list per target; when a target's kit is done (or it is
+	 * dead / out of range) it advances to the next, clearing the flag once the queue empties.
+	 * @return {@code true} while still rebuffing (a cast was issued or the member is standing up to cast)
 	 */
 	private boolean forceRebuff(Member state)
 	{
 		final Player npc = state.npc;
-		final Player owner = state.owner;
 		final List<Skill> all = buffs(state);
-		final boolean caster = PhantomBuffs.isCaster(owner);
-		while (state.rebuffIdx < all.size())
+		while ((state.rebuffQueue != null) && !state.rebuffQueue.isEmpty())
 		{
-			final Skill buff = all.get(state.rebuffIdx);
-			if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()) && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE))
+			final Player target = state.rebuffQueue.get(0);
+			if ((target == null) || target.isDead() || (npc.calculateDistance2D(target) > SUPPORT_RANGE))
 			{
-				if (!readyToCast(npc))
-				{
-					return true; // getting up first; cast this same buff next tick (index NOT advanced, so it isn't skipped)
-				}
-				state.rebuffIdx++;
-				npc.setTarget(owner);
-				npc.doCast(buff);
-				return true;
+				state.rebuffQueue.remove(0); // can't reach/buff this one now - skip to the next target
+				state.rebuffIdx = 0;
+				continue;
 			}
-			state.rebuffIdx++; // this buff isn't wanted/castable - move past it
+			final boolean caster = PhantomBuffs.isCaster(target);
+			while (state.rebuffIdx < all.size())
+			{
+				final Skill buff = all.get(state.rebuffIdx);
+				if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()))
+				{
+					if (!readyToCast(npc))
+					{
+						return true; // getting up first; cast this same buff next tick (index NOT advanced, so it isn't skipped)
+					}
+					state.rebuffIdx++;
+					npc.setTarget(target);
+					npc.doCast(buff);
+					return true;
+				}
+				state.rebuffIdx++; // this buff isn't wanted/castable - move past it
+			}
+			state.rebuffQueue.remove(0); // finished this target's full kit - on to the next
+			state.rebuffIdx = 0;
 		}
 		state.rebuffing = false;
+		state.rebuffQueue = null;
 		return false;
 	}
 
