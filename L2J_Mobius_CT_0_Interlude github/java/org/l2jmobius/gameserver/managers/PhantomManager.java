@@ -413,6 +413,75 @@ public class PhantomManager implements IXmlReader
 		}
 	}
 
+	/** A requested recruit: the behaviour role plus an optional exact class id (0 = the role's default class). */
+	public static class Recruit
+	{
+		public final PartyRole role;
+		public final int classId;
+
+		public Recruit(PartyRole role, int classId)
+		{
+			this.role = role;
+			this.classId = classId;
+		}
+	}
+
+	/**
+	 * @return {@code true} if a class is a specific 2nd-or-higher occupation worth requesting by name (e.g.
+	 *         Shillien Elder, Gladiator) - base and 1st classes are excluded so generic words ("fighter",
+	 *         "knight", "mage") fall through to the level-appropriate role tokens instead.
+	 */
+	public static boolean isSelectableClass(PlayerClass playerClass)
+	{
+		int depth = 0;
+		PlayerClass parent = playerClass.getParent();
+		while (parent != null)
+		{
+			depth++;
+			parent = parent.getParent();
+		}
+		return depth >= 2;
+	}
+
+	/** Maps a specific class to the behaviour role used for its gear/weapon/support handling. */
+	public static PartyRole roleForClass(PlayerClass playerClass)
+	{
+		final String name = playerClass.name().toLowerCase();
+		if (nameHas(name, "cleric", "bishop", "oracle", "elder", "cardinal", "saint"))
+		{
+			return PartyRole.HEALER;
+		}
+		if (nameHas(name, "prophet", "warcryer", "doomcryer", "overlord", "dominator", "shaman", "singer", "dancer", "muse", "hierophant"))
+		{
+			return PartyRole.BUFFER;
+		}
+		if (playerClass.isMage())
+		{
+			return PartyRole.NUKER;
+		}
+		if (nameHas(name, "ranger", "hawkeye", "sentinel", "sagittarius", "scout", "archer"))
+		{
+			return PartyRole.ARCHER;
+		}
+		if (nameHas(name, "hunter", "walker", "adventurer", "rider", "assassin", "rogue", "scavenger", "seeker"))
+		{
+			return PartyRole.DAGGER;
+		}
+		return PartyRole.WARRIOR;
+	}
+
+	private static boolean nameHas(String name, String... keys)
+	{
+		for (String key : keys)
+		{
+			if (name.contains(key))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** A deployment group: where/how many phantoms spawn, their level range, and whether to respawn. */
 	private static class Population
 	{
@@ -1491,7 +1560,7 @@ public class PhantomManager implements IXmlReader
 	 * owns it from here (walk-in, party-join, follow, assist, disband).
 	 * @return the spawned member, or {@code null} on failure (caller should fall back gracefully)
 	 */
-	public Player spawnPartyMember(Location location, int level, PartyRole role)
+	public Player spawnPartyMember(Location location, int level, PartyRole role, int overrideClassId)
 	{
 		if (_phantoms.size() >= MAX_PHANTOMS)
 		{
@@ -1502,7 +1571,8 @@ public class PhantomManager implements IXmlReader
 		try
 		{
 			final boolean mage = role.mage;
-			final int classId = role.isSupport() ? role.supportAs.classId : Math.max(0, roleClassId(role, level));
+			// A specific requested class (e.g. Shillien Elder) overrides the role's default occupation.
+			final int classId = (overrideClassId > 0) ? overrideClassId : (role.isSupport() ? role.supportAs.classId : Math.max(0, roleClassId(role, level)));
 			PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
 			PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
 			if (template == null) // bad/missing class id: degrade to a plain fighter/mage base
@@ -1534,7 +1604,9 @@ public class PhantomManager implements IXmlReader
 
 			if (role.isSupport())
 			{
-				outfitBuddy(phantom, level, role.supportAs);
+				// The phantom was already created from the right support class template (default or override), so
+				// outfitSupport just levels/learns/gears it (no class transfer needed).
+				outfitSupport(phantom, level);
 				if (role == PartyRole.HEALER)
 				{
 					grantRes(phantom, level); // every healer can raise a fallen party member
@@ -1633,6 +1705,30 @@ public class PhantomManager implements IXmlReader
 	 * offensive skills with AutoUse. Unlike {@link #outfit} there is no random class transfer - the member was
 	 * created directly from its role's class template.
 	 */
+	/**
+	 * Outfits a recruited support member (healer/buffer) already created from its support class template: brings
+	 * it to level, learns the full tree, guarantees a heal, and gives it the caster loadout. Like
+	 * {@link #outfitBuddy} but with no class transfer (the class is already correct) - works for both the default
+	 * support class and an explicitly requested one (e.g. Shillien Elder).
+	 */
+	private void outfitSupport(Player phantom, int level)
+	{
+		if (level > 1)
+		{
+			final long currentExp = phantom.getExp();
+			final long targetExp = ExperienceData.getInstance().getExpForLevel(level);
+			if (targetExp > currentExp)
+			{
+				phantom.addExpAndSp(targetExp - currentExp, 0);
+			}
+		}
+		learnAllSkills(phantom);
+		grantHeal(phantom, level);
+		gear(phantom, level, true); // cast loadout
+		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
+		phantom.setCurrentCp(phantom.getMaxCp());
+	}
+
 	private void outfitCombat(Player phantom, int level, PartyRole role)
 	{
 		if (level > 1)

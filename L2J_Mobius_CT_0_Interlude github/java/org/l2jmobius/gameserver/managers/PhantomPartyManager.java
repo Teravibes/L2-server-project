@@ -134,6 +134,9 @@ public class PhantomPartyManager
 		int stuckTicks;
 		long castSince; // abort a wedged cast instead of freezing the member
 		long travelUntil; // sent ahead to a destination; wait there (don't follow-yank back) until the leader arrives
+		boolean rebuffing; // "rebuff" order: recast the full kit on the leader regardless of time left
+		int rebuffIdx;
+		boolean healNow; // "heal me" order: heal the leader once even at full HP
 
 		Member(Player npc, PartyRole role)
 		{
@@ -160,9 +163,9 @@ public class PhantomPartyManager
 	 * Spawns and walks in one level-matched member per wanted role, up to the party's free slots. Staggered so a
 	 * multi-role request trickles in like separate people answering the shout.
 	 */
-	public void recruitFromShout(Player leader, List<PartyRole> roles, int level)
+	public void recruitFromShout(Player leader, List<PhantomManager.Recruit> recruits, int level)
 	{
-		if ((leader == null) || (roles == null) || roles.isEmpty())
+		if ((leader == null) || (recruits == null) || recruits.isEmpty())
 		{
 			return;
 		}
@@ -175,13 +178,13 @@ public class PhantomPartyManager
 		// Optional requested level (e.g. "lfm buffer lvl 57"), clamped; otherwise match the recruiter's level.
 		final int memberLevel = (level > 0) ? Math.max(1, Math.min(80, level)) : leader.getLevel();
 		int spawned = 0;
-		for (PartyRole role : roles)
+		for (PhantomManager.Recruit recruit : recruits)
 		{
 			if ((spawned >= slots) || (spawned >= MAX_PER_REQUEST))
 			{
 				break;
 			}
-			final PartyRole wanted = role;
+			final PhantomManager.Recruit wanted = recruit;
 			final int order = spawned;
 			ThreadPool.schedule(() -> spawnAndApproach(leader, wanted, memberLevel), 1200L + (order * SPAWN_STAGGER) + Rnd.get(900));
 			spawned++;
@@ -204,7 +207,7 @@ public class PhantomPartyManager
 	}
 
 	/** Spawns a member out of sight near the leader and starts it walking over. */
-	private void spawnAndApproach(Player leader, PartyRole role, int level)
+	private void spawnAndApproach(Player leader, PhantomManager.Recruit recruit, int level)
 	{
 		if ((leader == null) || !leader.isOnline())
 		{
@@ -213,12 +216,12 @@ public class PhantomPartyManager
 		final double angle = Rnd.nextDouble() * 2 * Math.PI;
 		final int distance = Rnd.get(APPROACH_MIN, APPROACH_MAX);
 		final Location anchor = new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
-		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, level, role);
+		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, level, recruit.role, recruit.classId);
 		if (npc == null)
 		{
 			return;
 		}
-		final Member member = new Member(npc, role);
+		final Member member = new Member(npc, recruit.role);
 		member.owner = leader;
 		member.pendingSince = System.currentTimeMillis();
 		_members.put(npc.getObjectId(), member);
@@ -446,11 +449,27 @@ public class PhantomPartyManager
 			return true;
 		}
 
-		// Buffer/healer on-demand: the maintenance loops already cover it, just acknowledge.
-		if (state.isSupport() && containsAny(text, "buff", "heal", "rebuff", "res", "resurrect", "ress"))
+		// Support on-demand orders actually do the thing now (not just acknowledge).
+		if (state.isSupport())
 		{
-			deliver(state, "on it");
-			return true;
+			if (containsAny(text, "rebuff", "buff me", "buff us", "buff", "rebuf"))
+			{
+				state.rebuffing = true; // serve() recasts the leader's whole kit over the next ticks
+				state.rebuffIdx = 0;
+				deliver(state, "rebuffing");
+				return true;
+			}
+			if (containsAny(text, "heal me", "heal us", "heal", "hp"))
+			{
+				state.healNow = true; // heal the leader once even if not hurt
+				deliver(state, "healing you");
+				return true;
+			}
+			if (containsAny(text, "res", "resurrect", "ress", "revive", "rez"))
+			{
+				deliver(state, "rezzing"); // the res loop raises a fallen member automatically
+				return true;
+			}
 		}
 
 		// "go to / tp <place>": teleport this member to a named gatekeeper spot (reuses the buddy destination data,
@@ -919,6 +938,26 @@ public class PhantomPartyManager
 			return;
 		}
 
+		// On-demand "heal me": one heal on the leader even at full HP.
+		if (state.healNow)
+		{
+			state.healNow = false;
+			final Skill onDemandHeal = heal(state);
+			if ((onDemandHeal != null) && !owner.isDead() && !npc.isSkillDisabled(onDemandHeal) && (npc.getCurrentMp() >= onDemandHeal.getMpConsume()))
+			{
+				standIfSitting(npc);
+				npc.setTarget(owner);
+				npc.doCast(onDemandHeal);
+				return;
+			}
+		}
+
+		// On-demand "rebuff": recast the leader's whole kit, one buff per tick, regardless of time left.
+		if (state.rebuffing && forceRebuff(state))
+		{
+			return;
+		}
+
 		// 1) Raise any fallen real player in the party.
 		final Skill res = res(state);
 		if ((res != null) && !npc.isSkillDisabled(res) && (npc.getCurrentMp() >= res.getMpConsume()))
@@ -988,7 +1027,12 @@ public class PhantomPartyManager
 			return false;
 		}
 		final Player owner = state.owner;
-		// The leader gets the full (archetype-appropriate) kit; other members get the essentials; self last.
+		// Buff SELF first (so e.g. Acumen lands and the buffer casts the rest faster), then the leader gets the
+		// full archetype-appropriate kit, then the other members get the essentials.
+		if (castFirstMissing(state, state.npc, PhantomBuffs.Tier.SELF))
+		{
+			return true;
+		}
 		if (castFirstMissing(state, owner, PhantomBuffs.Tier.LEADER))
 		{
 			return true;
@@ -1004,7 +1048,34 @@ public class PhantomPartyManager
 				return true;
 			}
 		}
-		return castFirstMissing(state, state.npc, PhantomBuffs.Tier.SELF);
+		return false;
+	}
+
+	/**
+	 * "rebuff" order: recast the leader's full archetype kit one buff per tick, ignoring how long the current
+	 * one has left. Walks an index across the buff list so each wanted buff is recast once, then clears the flag.
+	 * @return {@code true} while still rebuffing (a cast was issued)
+	 */
+	private boolean forceRebuff(Member state)
+	{
+		final Player npc = state.npc;
+		final Player owner = state.owner;
+		final List<Skill> all = buffs(state);
+		final boolean caster = PhantomBuffs.isCaster(owner);
+		while (state.rebuffIdx < all.size())
+		{
+			final Skill buff = all.get(state.rebuffIdx);
+			state.rebuffIdx++;
+			if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()) && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE))
+			{
+				standIfSitting(npc);
+				npc.setTarget(owner);
+				npc.doCast(buff);
+				return true;
+			}
+		}
+		state.rebuffing = false;
+		return false;
 	}
 
 	/** Casts the first buff this target is missing/about-to-lose that its archetype + tier actually wants. */

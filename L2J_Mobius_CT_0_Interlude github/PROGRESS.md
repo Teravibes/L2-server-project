@@ -176,7 +176,11 @@ Shout an **LFM/LFP** and a full party assembles itself: for each role you call f
 
 **LFP level:** an optional level can be given, e.g. `lfm 1 buffer lvl 57` - members spawn at that level instead of matching yours. `dd`/`dps` resolves to a random damage role (varied party); explicit `warrior`/`archer`/`mage`/`dagger` target exactly.
 
-**Class-aware buffing** (`PhantomBuffs`): a buffer/healer no longer wastes physical buffs on casters (or magic buffs on fighters). The **player** gets the full archetype-appropriate kit; **other party members** get the essentials (Wind Walk + Haste for melee, Wind Walk + Acumen/Berserker for casters); the **buffer itself** keeps only movement + casting speed. Applies to both recruited buffers and personal buddies.
+**Class-aware buffing** (`PhantomBuffs`): a buffer/healer no longer wastes physical buffs on casters (or magic buffs on fighters). The **player** gets the full archetype-appropriate kit; **other party members** get the essentials (Wind Walk + Haste for melee, Wind Walk + Acumen/Berserker for casters); the **buffer itself** keeps only movement + casting speed and **buffs itself first** (so Acumen lands and the rest cast faster). Applies to both recruited buffers and personal buddies.
+
+**Specific class requests:** name an exact occupation, e.g. `LFM 1 Shillien Elder`, `lfm gladiator + hawkeye`, and that class spawns (2nd-class+ occupations recognised by name; base/1st-class words fall through to level-appropriate generic roles). Works in the deterministic keyword path.
+
+**On-demand support orders** (whisper or party chat, brain-off): `rebuff` actually recasts the full kit on you (one buff per tick), `heal me` heals you once even at full HP, `res` raises a fallen member. Applies to recruited healers/buffers and personal buddies.
 
 **Key files:** `PhantomPartyManager.java` (new), `PhantomManager.java` (`PartyRole`, `spawnPartyMember`, recruit API + supervisor guards), `FakePlayerChatManager.java` (`overheardShout` LFP parse + `LFP` brain call), `RequestJoinParty.java` / `ChatWhisper.java` / `ChatParty.java` dispatch, `fpc_brain.py` (`LFP` mode).
 

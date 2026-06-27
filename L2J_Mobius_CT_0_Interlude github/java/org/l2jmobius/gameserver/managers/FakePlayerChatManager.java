@@ -13,7 +13,9 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
@@ -27,6 +29,8 @@ import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
 import org.l2jmobius.gameserver.config.custom.FakePlayersConfig;
 import org.l2jmobius.gameserver.managers.PhantomManager.PartyRole;
+import org.l2jmobius.gameserver.managers.PhantomManager.Recruit;
+import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.data.SpawnTable;
 import org.l2jmobius.gameserver.data.holders.FakePlayerChatHolder;
 import org.l2jmobius.gameserver.data.xml.FakePlayerData;
@@ -363,7 +367,7 @@ public class FakePlayerChatManager implements IXmlReader
 		// LFM/LFP: a real player looking for party members. Parse the wanted roles and recruit a party that walks
 		// over (works brain-off via keywords; with the brain online a free-form call is classified for its roles).
 		// On a recruit we do NOT also run plain shout banter - the answer IS the bots showing up.
-		final List<PartyRole> roles = parseLfpRoles(text);
+		final List<Recruit> roles = parseLfp(text);
 		final int wantedLevel = parseLfpLevel(text); // optional "lvl 57"; 0 = match the recruiter's level
 		if (!roles.isEmpty())
 		{
@@ -375,7 +379,7 @@ public class FakePlayerChatManager implements IXmlReader
 			final Player who = speaker;
 			ThreadPool.execute(() ->
 			{
-				final List<PartyRole> aiRoles = askBrainLfp(text);
+				final List<Recruit> aiRoles = askBrainLfp(text);
 				if (!aiRoles.isEmpty())
 				{
 					PhantomPartyManager.getInstance().recruitFromShout(who, aiRoles, wantedLevel);
@@ -422,21 +426,73 @@ public class FakePlayerChatManager implements IXmlReader
 		return 0;
 	}
 
-	/**
-	 * Deterministically extracts the roles a player is shouting for ("lfm 2 dd + healer" -> WARRIOR, WARRIOR,
-	 * HEALER). A line needs an LFM/LFP trigger AND at least one recognised role word; numbers before a role
-	 * repeat it. Returns an empty list when the line is not an explicit role request.
-	 */
-	private static List<PartyRole> parseLfpRoles(String text)
+	// Specific occupations a player can request by name ("shillien elder", "gladiator"), longest-first so a
+	// multi-word class wins over a shorter substring, with a combined word-boundary pattern to match them.
+	private static final Map<String, PlayerClass> CLASS_BY_NAME = new LinkedHashMap<>();
+	private static final Pattern CLASS_PATTERN;
+	static
 	{
+		final List<PlayerClass> classes = new ArrayList<>();
+		for (PlayerClass pc : PlayerClass.values())
+		{
+			if (PhantomManager.isSelectableClass(pc)) // 2nd+ occupations only; base/1st fall through to role tokens
+			{
+				classes.add(pc);
+			}
+		}
+		classes.sort((a, b) -> Integer.compare(b.name().length(), a.name().length()));
+		final StringBuilder sb = new StringBuilder();
+		for (PlayerClass pc : classes)
+		{
+			final String name = pc.name().toLowerCase().replace('_', ' ');
+			CLASS_BY_NAME.put(name, pc);
+			if (sb.length() > 0)
+			{
+				sb.append('|');
+			}
+			sb.append(Pattern.quote(name));
+		}
+		CLASS_PATTERN = Pattern.compile("\\b(" + sb + ")\\b", Pattern.CASE_INSENSITIVE);
+	}
+
+	/**
+	 * Deterministically extracts the recruits a player is shouting for. Specific class names ("lfm 1 shillien
+	 * elder") become that exact class; generic role words ("2 dd + healer") become level-appropriate roles.
+	 * Numbers before a class/role repeat it. Empty when the line is not an explicit party call.
+	 */
+	private static List<Recruit> parseLfp(String text)
+	{
+		final List<Recruit> recruits = new ArrayList<>();
 		if (!looksLikeLfp(text))
 		{
-			return new ArrayList<>();
+			return recruits;
 		}
-		final List<PartyRole> roles = new ArrayList<>();
+		// Phase 1: specific class names. Replace each match with spaces so phase 2 doesn't re-read its words
+		// (e.g. "shillien elder" must not also count as a generic "elder").
+		final StringBuilder working = new StringBuilder(text.toLowerCase());
+		final Matcher matcher = CLASS_PATTERN.matcher(working.toString());
+		while (matcher.find())
+		{
+			final PlayerClass pc = CLASS_BY_NAME.get(matcher.group(1).toLowerCase());
+			if (pc != null)
+			{
+				final int count = countBefore(working, matcher.start());
+				final PartyRole role = PhantomManager.roleForClass(pc);
+				for (int i = 0; (i < count) && (recruits.size() < 8); i++)
+				{
+					recruits.add(new Recruit(role, pc.getId()));
+				}
+			}
+			for (int i = matcher.start(); i < matcher.end(); i++)
+			{
+				working.setCharAt(i, ' ');
+			}
+		}
+
+		// Phase 2: generic role words on whatever text is left.
 		int pendingCount = 1;
 		boolean levelToken = false; // the number right after "lvl"/"level"/"lv" is a level, not a count
-		for (String token : text.toLowerCase().split("[^a-z0-9]+"))
+		for (String token : working.toString().split("[^a-z0-9]+"))
 		{
 			if (token.isEmpty())
 			{
@@ -461,34 +517,61 @@ public class FakePlayerChatManager implements IXmlReader
 			final PartyRole role = PartyRole.fromToken(token);
 			if (role != null)
 			{
-				for (int i = 0; (i < pendingCount) && (roles.size() < 8); i++)
+				for (int i = 0; (i < pendingCount) && (recruits.size() < 8); i++)
 				{
-					roles.add(role);
+					recruits.add(new Recruit(role, 0)); // 0 = the role's default level-appropriate class
 				}
 			}
-			pendingCount = 1; // a number only applies to the role word right after it
+			pendingCount = 1; // a number only applies to the class/role word right after it
 		}
-		return roles;
+		return recruits;
+	}
+
+	/** @return the count number immediately before position {@code pos} in the text (e.g. "2 dd" -> 2), else 1. */
+	private static int countBefore(CharSequence text, int pos)
+	{
+		int i = pos - 1;
+		while ((i >= 0) && (text.charAt(i) == ' '))
+		{
+			i--;
+		}
+		int end = i;
+		while ((i >= 0) && Character.isDigit(text.charAt(i)))
+		{
+			i--;
+		}
+		if (i < end)
+		{
+			try
+			{
+				return Math.max(1, Math.min(6, Integer.parseInt(text.subSequence(i + 1, end + 1).toString())));
+			}
+			catch (NumberFormatException e)
+			{
+				return 1;
+			}
+		}
+		return 1;
 	}
 
 	/** Asks the brain (LFP mode) to classify a free-form party call into role tokens; empty when it isn't one. */
-	private List<PartyRole> askBrainLfp(String text)
+	private List<Recruit> askBrainLfp(String text)
 	{
-		final List<PartyRole> roles = new ArrayList<>();
+		final List<Recruit> recruits = new ArrayList<>();
 		final String reply = callBridge("", "LFP", "", "", text, "", "");
 		if (reply == null)
 		{
-			return roles;
+			return recruits;
 		}
 		for (String token : reply.toLowerCase().split("[^a-z]+"))
 		{
 			final PartyRole role = PartyRole.fromToken(token);
-			if ((role != null) && (roles.size() < 8))
+			if ((role != null) && (recruits.size() < 8))
 			{
-				roles.add(role);
+				recruits.add(new Recruit(role, 0));
 			}
 		}
-		return roles;
+		return recruits;
 	}
 
 	/**

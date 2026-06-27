@@ -141,6 +141,9 @@ public class PhantomBuddyManager implements IXmlReader
 		int lastY;
 		int stuckTicks;
 		long castSince; // when the current cast began, so a wedged cast can be aborted instead of freezing the buddy
+		boolean rebuffing; // "rebuff" order: recast the whole kit on the owner regardless of time left
+		int rebuffIdx;
+		boolean healNow; // "heal me" order: heal the owner once even at full HP
 
 		Buddy(Player npc)
 		{
@@ -341,10 +344,34 @@ public class PhantomBuddyManager implements IXmlReader
 			return null;
 		}
 
-		// Re-buff on demand.
-		if (containsAny(text, "buff", "rebuff"))
+		// Re-buff on demand: actually recast the whole kit (not just acknowledge).
+		if (containsAny(text, "buff", "rebuff", "rebuf"))
 		{
-			deliver(state, owner, party, isPartiedWith(state, owner) ? "buffing you up" : "party me first :)");
+			if (isPartiedWith(state, owner))
+			{
+				state.rebuffing = true;
+				state.rebuffIdx = 0;
+				deliver(state, owner, party, "buffing you up");
+			}
+			else
+			{
+				deliver(state, owner, party, "party me first :)");
+			}
+			return null;
+		}
+
+		// Heal on demand: heal the owner once even if not hurt.
+		if (containsAny(text, "heal me", "heal us", "heal"))
+		{
+			if (isPartiedWith(state, owner))
+			{
+				state.healNow = true;
+				deliver(state, owner, party, "healing you");
+			}
+			else
+			{
+				deliver(state, owner, party, "party me first :)");
+			}
 			return null;
 		}
 
@@ -825,6 +852,22 @@ public class PhantomBuddyManager implements IXmlReader
 
 		final boolean ownerInRange = buddy.calculateDistance2D(owner) <= SUPPORT_RANGE;
 
+		// On-demand "heal me": heal the owner once even if not hurt.
+		if (state.healNow)
+		{
+			state.healNow = false;
+			if (ownerInRange && !owner.isDead() && tryHeal(state, buddy, owner))
+			{
+				return true;
+			}
+		}
+
+		// On-demand "rebuff": recast the owner's whole kit, one buff per tick, regardless of time left.
+		if (state.rebuffing && ownerInRange && forceRebuff(state, buddy, owner))
+		{
+			return true;
+		}
+
 		// 1) Heal the owner up to ~half health, then self if low.
 		if (ownerInRange && !owner.isDead() && (owner.getCurrentHpPercent() < OWNER_HEAL_PERCENT) && tryHeal(state, buddy, owner))
 		{
@@ -913,7 +956,13 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			return false;
 		}
-		// Owner first (full archetype-appropriate kit), then self (movement + casting speed only).
+		// Self first (so Acumen etc. land and it casts the rest faster - only a couple of self buffs anyway),
+		// then the owner gets the full archetype-appropriate kit.
+		final Skill selfMissing = firstMissingBuff(buffs, buddy, buddy, PhantomBuffs.Tier.SELF);
+		if (selfMissing != null)
+		{
+			return castBuff(buddy, buddy, selfMissing);
+		}
 		if (withOwner && (state.owner != null) && !state.owner.isDead())
 		{
 			final Skill missing = firstMissingBuff(buffs, buddy, state.owner, PhantomBuffs.Tier.LEADER);
@@ -921,11 +970,6 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				return castBuff(buddy, state.owner, missing);
 			}
-		}
-		final Skill selfMissing = firstMissingBuff(buffs, buddy, buddy, PhantomBuffs.Tier.SELF);
-		if (selfMissing != null)
-		{
-			return castBuff(buddy, buddy, selfMissing);
 		}
 		return false;
 	}
@@ -957,6 +1001,40 @@ public class PhantomBuddyManager implements IXmlReader
 			}
 		}
 		return null;
+	}
+
+	/**
+	 * "rebuff" order: recast the owner's full archetype kit one buff per tick (ignoring time left), walking an
+	 * index across the list so each wanted buff fires once, then clears the flag.
+	 * @return {@code true} while still rebuffing (a cast was issued)
+	 */
+	private boolean forceRebuff(Buddy state, Player buddy, Player owner)
+	{
+		final List<Skill> all = buffList(state, buddy);
+		final boolean caster = PhantomBuffs.isCaster(owner);
+		while (state.rebuffIdx < all.size())
+		{
+			final Skill buff = all.get(state.rebuffIdx);
+			state.rebuffIdx++;
+			if (!PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && (buff.getId() != CHANT_OF_LIFE_ID))
+			{
+				continue;
+			}
+			if ((buff.getId() == CHANT_OF_LIFE_ID) && (owner.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT))
+			{
+				continue;
+			}
+			if (buddy.isSkillDisabled(buff) || (buddy.getCurrentMp() < buff.getMpConsume()))
+			{
+				continue;
+			}
+			standIfSitting(buddy);
+			buddy.setTarget(owner);
+			buddy.doCast(buff);
+			return true;
+		}
+		state.rebuffing = false;
+		return false;
 	}
 
 	private boolean castBuff(Player buddy, Player target, Skill buff)
