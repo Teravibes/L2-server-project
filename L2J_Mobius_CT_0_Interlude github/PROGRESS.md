@@ -165,7 +165,7 @@ Shout an **LFM/LFP** and a full party assembles itself: for each role you call f
 **Once partied:**
 - **Assist (default)** — every member focus-fires *your* current target. Skills + soulshots fire through the native AutoUse (the member is flagged auto-playing so AutoUse casts, but the target is the leader's, not the engine scanner's). **Nukers hold at cast range and nuke** instead of being given a physical ATTACK intention (which dragged a caster into melee to auto-hit even on a full MP bar); out of MP they break off and sit to recharge rather than meleeing.
 - **`attack freely`** — flips a member to hunt nearby mobs on its own (real AutoPlay scanner); leashes back if it strays.
-- **Healer** heals the most-hurt party member (<60%) and **raises** fallen real players; **buffer** keeps the whole party buffed.
+- **Healer** heals the most-hurt party member (<60%) and **raises the fallen** — real players first, then dead bot members, which are now kept as a corpse for a ~60s window so they can be battle-rezzed instead of melting permanently; **buffer** keeps the whole party buffed.
 - **Follows** you, survives an offline **grace** window ("brb" extends it), despawns on disband.
 
 **Drive from whisper or party chat** (deterministic, brain-off): `assist`, `attack freely`, `follow`, `hold`/`stop`, `gather`, `brb`, `status`, `go to <place>`/`tp <place>` (teleports the member to the same gatekeeper spot a buddy uses, so the party regroups there), `bye`/`disband`. A party-chat **command** hits every member at once; free-form chatter gets a natural brain reply (`PARTY` mode, with `[[ASSIST]]`/`[[FREE]]`/`[[FOLLOW]]`/`[[STAY]]`/`[[TP:x]]`/`[[GRACE:n]]`/`[[DISBAND]]` action tags) from just one member so a full party doesn't all answer at once.
@@ -273,7 +273,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 - ✅ Visual editor: geodata map, polygon zones, route drawing + editing, drag waypoints, named routes, market-hub toggle, phantom mode
 - ✅ Real-Player phantoms: auto-hunt, class/skill progression, gear, dormancy, claim-based targeting, initial dispersal, post-kill breather, caster looting, OOM-mage rest
 - ✅ Personal support buddies: party an Elder/Prophet/Warcryer that buffs, heals (<50%), follows, watches MP (sit <25% / stand ≥70%), teleports (confirm-first), grace period; drive from whisper or party chat; proactive small talk; works brain-off (deterministic)
-- ✅ Recruited combat parties: shout LFM/LFP → level-matched tank/DD/archer/dagger/nuker/healer/buffer spawn off-screen, walk in, auto-join; assist-leader (default) or `attack freely`; healer heals + resurrects, buffer buffs the party; whisper/party-chat group commands; brain-on (free-form `LFP` classify) and brain-off (keyword) both work
+- ✅ Recruited combat parties: shout LFM/LFP → level-matched tank/DD/archer/dagger/nuker/healer/buffer spawn off-screen, walk in, auto-join; assist-leader (default) or `attack freely`; nukers nuke from range (never melee); healer heals + resurrects (now battle-rezzes fallen bot members too — corpses persist ~60s and auto-accept the res), buffer buffs the party (`buff all` / `buff <name>`); whisper/party-chat group commands; brain-on (free-form `LFP` classify) and brain-off (keyword) both work
 - ✅ Rates panel (`//rates`) with live apply + save to ini
 - ✅ Reload panel Living World section (`//reloadfakeplayers`, `//reload fakeplayerchat`)
 - ✅ Admin route recorder (`//record_route`)
@@ -303,10 +303,10 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 
 ### Raid-readiness to-do (party can engage a raid boss, but won't survive/recover yet)
 
-Assessment: assist already targets a raid boss correctly (`RaidBoss`/`GrandBoss extend Monster`) and damage/buffs work, but the party bleeds members permanently and is undergeared for boss-grade healing/threat. Ordered by priority:
+Assessment: assist already targets a raid boss correctly (`RaidBoss`/`GrandBoss extend Monster`) and damage/buffs work. The party no longer bleeds members permanently (battle-res landed, see below) but is still undergeared for boss-grade healing/threat. Ordered by priority:
 
-1. **[CRITICAL] Corpse persistence for party bots** — today a recruited member is despawned ~1s after it dies (`tick()` → `release()` on `isDead()`), so it can never be battle-rezzed and the party melts permanently. Keep a dead member as a corpse for a grace window (reuse the offline/`buddyEngaged` grace pattern) so it can be raised before despawning.
-2. **[CRITICAL] Healer battle-res of bot members** — the res loop only targets real players (`member.getClient() != null`); make healers also raise dead phantom party members (depends on #1). Respect the res reuse timer; consider multiple healers for chain-res.
+1. ✅ **[DONE] Corpse persistence for party bots** — a fallen recruited member is now kept as a corpse for a ~60s window (`CORPSE_GRACE`) instead of despawning ~1s after death. `tick()`/`supervise()` route death through `handleDead()`, which only releases once the window elapses (or the party/owner is gone). `Member.deadSince` tracks the window; standing back up clears it and the member rejoins.
+2. ✅ **[DONE] Healer battle-res of bot members** — the res loop (`findResTarget`) raises a dead real player first, then a dead recruited bot member kept as a corpse. A clientless phantom can't answer the resurrection ConfirmDlg, so `handleDead()` auto-accepts it server-side (`reviveAnswer(1)`). Respects the res reuse timer (`isSkillDisabled`), skips a corpse whose revive is already pending so multiple healers chain-res rather than double-cast. (Personal **buddies** don't yet get corpse persistence — easy follow-up using the same pattern.)
 3. **[MAJOR] Real tank threat/aggro loop** — the "tank" is just a melee with a knight class; nothing makes it grab/hold boss aggro, so the boss mauls the healer/nukers. Add an active taunt/threat tick (cast Aggression/Aura of Hate on the boss, keep threat up) for `TANK` role members.
 4. **[MAJOR] Boss-grade healing** — current heal is 1/tick, single lowest target, <60% trigger; too slow for boss spikes. Prioritize the tank, raise heal cadence/threshold under a raid, and support multiple healers.
 5. **[NICE] Boss mechanic awareness** — AoE step-out, debuff/curse cleanse (dispel), add/minion target priority. Per-boss; bots are currently oblivious.

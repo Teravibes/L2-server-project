@@ -95,6 +95,7 @@ public class PhantomPartyManager
 	private static final long STAND_SUPPRESS = 30000; // a "stand" order keeps it on its feet this long before auto-rest resumes
 	private static final long OFFLINE_GRACE = 120000;
 	private static final long BRB_GRACE = 360000;
+	private static final long CORPSE_GRACE = 60000; // keep a fallen member as a raisable corpse this long before despawning it
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
 
 	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
@@ -126,6 +127,7 @@ public class PhantomPartyManager
 		final PartyRole role;
 		Player owner; // the recruiter; the party bond forms when the invite is accepted
 		boolean partied;
+		long deadSince; // 0 while alive; set when first seen dead so the corpse persists for a battle-res window
 		boolean assist = true; // assist the leader's target (default) vs. free-hunt
 		boolean following = true;
 		boolean reminded; // already whispered "here, inv me" while waiting
@@ -778,6 +780,33 @@ public class PhantomPartyManager
 		final Member state = _members.get(member.getObjectId());
 		if ((state != null) && member.isDead())
 		{
+			handleDead(state, System.currentTimeMillis());
+		}
+	}
+
+	/**
+	 * A fallen member is kept as a corpse so a healer can battle-res it, instead of despawning the instant it dies
+	 * (the old behaviour that made the party melt permanently on a long fight). Each call: auto-accepts a pending
+	 * resurrection (a clientless phantom can't click the confirm dialog, so we answer "yes" for it), starts the
+	 * corpse window on first death, and only releases once that window elapses or the party/owner is gone.
+	 */
+	private void handleDead(Member state, long now)
+	{
+		final Player npc = state.npc;
+		// A healer's Resurrection lands as a revive *request* (ConfirmDlg) the corpse must accept - do it server-side.
+		if (npc.isReviveRequested())
+		{
+			npc.reviveAnswer(1); // it stands on the next tick, where deadSince is cleared and it rejoins
+			return;
+		}
+		if (state.deadSince == 0)
+		{
+			state.deadSince = now; // open the res window
+			return;
+		}
+		// Window elapsed, or there's no longer a party/owner to be raised by: let the corpse go.
+		if (((now - state.deadSince) >= CORPSE_GRACE) || !isPartiedWith(state) || (state.owner == null) || !state.owner.isOnline())
+		{
 			release(state, false);
 		}
 	}
@@ -809,8 +838,14 @@ public class PhantomPartyManager
 				}
 				if (npc.isDead())
 				{
-					release(state, false);
+					handleDead(state, now); // keep the corpse for a res window instead of despawning on the spot
 					continue;
+				}
+				if (state.deadSince != 0)
+				{
+					// Stood back up since last tick (a healer raised it): clear the corpse timer and rejoin the fight.
+					state.deadSince = 0;
+					ensureFollow(state);
 				}
 				if (!state.partied)
 				{
@@ -1076,22 +1111,20 @@ public class PhantomPartyManager
 			state.healNow = false; // can't satisfy it right now
 		}
 
-		// 1) Raise any fallen real player in the party.
+		// 1) Raise the fallen: a dead real player first, then a recruited bot member kept as a corpse (battle-res).
 		final Skill res = res(state);
 		if ((res != null) && !npc.isSkillDisabled(res) && (npc.getCurrentMp() >= res.getMpConsume()))
 		{
-			for (Player member : owner.getParty().getMembers())
+			final Player corpse = findResTarget(state);
+			if (corpse != null)
 			{
-				if (member.isDead() && (member.getClient() != null) && (npc.calculateDistance2D(member) <= SUPPORT_RANGE))
+				if (!readyToCast(npc))
 				{
-					if (!readyToCast(npc))
-					{
-						return; // getting up first; res on the next tick
-					}
-					npc.setTarget(member);
-					npc.doCast(res);
-					return;
+					return; // getting up first; res on the next tick
 				}
+				npc.setTarget(corpse);
+				npc.doCast(res);
+				return;
 			}
 		}
 
@@ -1149,6 +1182,38 @@ public class PhantomPartyManager
 		{
 			driveFollow(state, owner);
 		}
+	}
+
+	/**
+	 * A fallen party member within range this healer should raise: a dead real player takes priority (a human is
+	 * waiting to get back up), then a dead recruited bot member kept as a corpse. Skips itself and any corpse whose
+	 * revive is already pending (it's about to stand), so multiple healers don't double-cast on the same target.
+	 */
+	private Player findResTarget(Member state)
+	{
+		final Player npc = state.npc;
+		final Party party = state.owner.getParty();
+		if (party == null)
+		{
+			return null;
+		}
+		Player botCorpse = null;
+		for (Player member : party.getMembers())
+		{
+			if ((member == npc) || !member.isDead() || member.isReviveRequested() || (npc.calculateDistance2D(member) > SUPPORT_RANGE))
+			{
+				continue;
+			}
+			if (member.getClient() != null)
+			{
+				return member; // a fallen human - top priority
+			}
+			if ((botCorpse == null) && _members.containsKey(member.getObjectId()))
+			{
+				botCorpse = member; // a fallen recruited member - raise once no human needs it
+			}
+		}
+		return botCorpse;
 	}
 
 	private boolean maintainPartyBuffs(Member state)
