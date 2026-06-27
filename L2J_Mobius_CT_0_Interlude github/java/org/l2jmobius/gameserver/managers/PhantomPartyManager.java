@@ -41,6 +41,7 @@ import org.l2jmobius.gameserver.managers.PhantomManager.PartyRole;
 import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.WorldObject;
+import org.l2jmobius.gameserver.model.actor.Creature;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.groups.Party;
@@ -97,6 +98,9 @@ public class PhantomPartyManager
 	private static final long BRB_GRACE = 360000;
 	private static final long CORPSE_GRACE = 60000; // keep a fallen member as a raisable corpse this long before despawning it
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
+	private static final int AGGRESSION_ID = 28; // single-target taunt (knight tree) - "provokes a target to attack"
+	private static final int AURA_OF_HATE_ID = 18; // AoE taunt (knight tree) - "provokes nearby enemies to attack"
+	private static final int THREAT_SCAN_RANGE = 1000; // how far a tank looks for a mob loose on a squishy party member
 
 	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
 	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
@@ -136,6 +140,9 @@ public class PhantomPartyManager
 		List<Skill> buffs; // lazy
 		Skill heal; // lazy
 		Skill res; // lazy
+		Skill aggression; // lazy (TANK): single-target taunt
+		Skill auraOfHate; // lazy (TANK): AoE taunt
+		boolean tauntLookedUp; // whether the two taunt skills have been resolved from the known list yet
 		int lastX; // follow-stuck watchdog
 		int lastY;
 		int stuckTicks;
@@ -991,6 +998,12 @@ public class PhantomPartyManager
 			else if (haveTarget)
 			{
 				standIfSitting(npc);
+				// A tank actively holds threat: pin a raid boss with taunts, or yank back any mob that slipped onto a
+				// squishy. If it taunted this tick, skip the attack re-issue and resume swinging next tick.
+				if ((state.role == PartyRole.TANK) && maintainThreat(state, (Monster) t))
+				{
+					return;
+				}
 				if ((npc.getTarget() != t) || !npc.isInCombat())
 				{
 					npc.setTarget(t);
@@ -1054,6 +1067,130 @@ public class PhantomPartyManager
 		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.MOVE_TO, destination);
+	}
+
+	/**
+	 * Active threat management for a TANK. It is NOT gated behind a raid - a tank holding aggro is useful in any
+	 * group fight - but it behaves differently by situation so it doesn't waste taunt cooldowns on trash:
+	 * <ul>
+	 * <li><b>Raid boss</b> ({@code isRaid()}): keep threat pinned. Re-taunt the boss whenever the taunt is off
+	 * cooldown, because a boss makes so much hate the tank must spam taunt to stay on top.</li>
+	 * <li><b>Loose mob</b>: any mob whose most-hated is a non-tank party member (it slipped onto the healer/nuker/
+	 * leader) is yanked back, in any fight - the nearest such mob is targeted.</li>
+	 * <li><b>Plain trash, nothing loose</b>: do nothing special - ordinary melee hate from assisting is enough.</li>
+	 * </ul>
+	 * The taunt chosen is Aggression (single-target, longer range) when the victim is in cast range, otherwise Aura
+	 * of Hate (a self-centred AoE) when the victim is inside its affect radius - so the tank uses whichever can
+	 * actually land rather than casting into the void.
+	 * @return {@code true} if a taunt was cast (or is in progress) this tick, so the caller skips re-issuing ATTACK
+	 */
+	private boolean maintainThreat(Member state, Monster assistTarget)
+	{
+		final Player npc = state.npc;
+		if (npc.isCastingNow())
+		{
+			return true; // already taunting; let it land before swinging again
+		}
+		resolveTaunts(state);
+		if ((state.aggression == null) && (state.auraOfHate == null))
+		{
+			return false; // too low-level to have a taunt yet - just melee (graceful degrade)
+		}
+		// Pick the mob to pin: a mob loose on a squishy first (nearest one), else the raid boss we're tanking.
+		final List<Monster> loose = findLooseMobs(state);
+		final Monster victim = !loose.isEmpty() ? nearest(npc, loose) : (assistTarget.isRaid() ? assistTarget : null);
+		if (victim == null)
+		{
+			return false; // plain trash and nothing slipped - ordinary melee hate is enough, save the taunt
+		}
+		// Prefer Aggression (single-target, precise, 400-800 range) when the victim is in range; otherwise fall back
+		// to Aura of Hate (a self-centred AoE) when the victim is inside its affect radius (tank stands in the pack).
+		if (castable(npc, state.aggression) && (npc.calculateDistance2D(victim) <= state.aggression.getCastRange()))
+		{
+			npc.setTarget(victim);
+			npc.setRunning();
+			npc.doCast(state.aggression);
+			return true;
+		}
+		if (castable(npc, state.auraOfHate) && (npc.calculateDistance2D(victim) <= state.auraOfHate.getAffectRange()))
+		{
+			npc.setTarget(victim); // AURA taunt centres its effect on the caster; a valid hostile target satisfies the cast
+			npc.doCast(state.auraOfHate);
+			return true;
+		}
+		return false; // taunt on cooldown / out of MP / victim out of reach - keep swinging, retry next tick
+	}
+
+	/** {@code true} if the member knows the skill and can cast it right now (not on cooldown, enough MP). */
+	private static boolean castable(Player npc, Skill skill)
+	{
+		return (skill != null) && !npc.isSkillDisabled(skill) && (npc.getCurrentMp() >= skill.getMpConsume());
+	}
+
+	/** Lazily resolves the tank's two taunt skills from its known list (it may know one, both, or neither). */
+	private void resolveTaunts(Member state)
+	{
+		if (state.tauntLookedUp)
+		{
+			return;
+		}
+		state.tauntLookedUp = true;
+		state.aggression = state.npc.getKnownSkill(AGGRESSION_ID);
+		state.auraOfHate = state.npc.getKnownSkill(AURA_OF_HATE_ID);
+	}
+
+	/** Living mobs near the tank whose most-hated is a non-tank party member (aggro slipped onto a squishy). */
+	private List<Monster> findLooseMobs(Member state)
+	{
+		final Player npc = state.npc;
+		final List<Monster> loose = new ArrayList<>();
+		for (Monster mob : World.getInstance().getVisibleObjectsInRange(npc, Monster.class, THREAT_SCAN_RANGE))
+		{
+			if (mob.isDead())
+			{
+				continue;
+			}
+			final Creature hated = mob.getMostHated();
+			if ((hated != null) && (hated != npc) && isPartyMember(state, hated))
+			{
+				loose.add(mob);
+			}
+		}
+		return loose;
+	}
+
+	/** {@code true} if {@code who} is a member of this tank's party (so a mob on it is a threat to protect against). */
+	private boolean isPartyMember(Member state, Creature who)
+	{
+		if (!who.isPlayer() || (state.owner == null) || !state.owner.isInParty())
+		{
+			return false;
+		}
+		for (Player member : state.owner.getParty().getMembers())
+		{
+			if (member == who)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** The nearest of a list of mobs to a point of origin. */
+	private static Monster nearest(Player origin, List<Monster> mobs)
+	{
+		Monster best = null;
+		double bestDist = Double.MAX_VALUE;
+		for (Monster mob : mobs)
+		{
+			final double dist = origin.calculateDistance2D(mob);
+			if (dist < bestDist)
+			{
+				bestDist = dist;
+				best = mob;
+			}
+		}
+		return best;
 	}
 
 	// ===== Support roles: heal the hurt, raise the dead, keep the party buffed =====
