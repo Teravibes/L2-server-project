@@ -24,11 +24,13 @@ import java.io.File;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.Predicate;
 import java.util.logging.Logger;
 
 import org.w3c.dom.Document;
@@ -122,6 +124,11 @@ public class PhantomManager implements IXmlReader
 	// Arrows handed to an archer so its bow can actually fire (a bow with no ammunition does nothing). Big stack
 	// so a farm session doesn't run dry; the engine auto-equips them into the left hand on the first shot.
 	private static final int ARROW_COUNT = 20000;
+	// Recruited party members gear up for real content (unlike the cheap, intentionally-patchy ambient loadout):
+	// a chance the member is an enchanted player, and if so a modest uniform enchant on its weapon + armor.
+	private static final int PARTY_ENCHANT_CHANCE = 65; // percent of recruited members that come enchanted
+	private static final int PARTY_ENCHANT_MIN = 3;
+	private static final int PARTY_ENCHANT_MAX = 6;
 	// Healing potions for in-combat HP sustain while farming. Generous stack since phantoms fight a lot;
 	// refreshed on every (re)spawn. Native auto-potion drinks one when HP falls below the percent.
 	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
@@ -1176,14 +1183,207 @@ public class PhantomManager implements IXmlReader
 		// for the spawn CharInfo (enterWorld broadcasts afterwards).
 	}
 
+	/**
+	 * Gears a <b>recruited party member</b> properly for real content, unlike the deliberately cheap and patchy
+	 * ambient {@link #gear} loadout. The difference matters for raids: the ambient path picks the cheapest items,
+	 * randomly skips helmet/gloves/boots, and equips no jewelry or shield - leaving a "tank" badly under-armored.
+	 * Here a party member gets:
+	 * <ul>
+	 * <li>a <b>best-in-grade</b> weapon for its role (sword / bow / dagger / magic staff) + matching shots (+ arrows
+	 * for an archer);</li>
+	 * <li>a <b>full</b> armor set - every slot, no random gaps - best in grade (a TANK prefers HEAVY);</li>
+	 * <li>all five <b>jewelry</b> slots (necklace + two earrings + two rings) for the P./M.Def the ambient bots lack;</li>
+	 * <li>a <b>shield</b> for the TANK;</li>
+	 * <li>a chance the whole weapon+armor kit is <b>enchanted</b> (a modest uniform level), so some read as geared
+	 * players rather than fresh dingbats.</li>
+	 * </ul>
+	 */
+	private void gearParty(Player phantom, int level, boolean mage, PartyRole role)
+	{
+		final CrystalType grade = gradeForLevel(level);
+		// A chance this member is an enchanted player; if so, a modest uniform enchant on weapon + armor (jewelry is
+		// not enchantable in Interlude, so it stays +0).
+		final int enchant = (Rnd.get(100) < PARTY_ENCHANT_CHANCE) ? Rnd.get(PARTY_ENCHANT_MIN, PARTY_ENCHANT_MAX + 1) : 0;
+
+		// Weapon (best in grade for the role) + matching shots (+ arrows for a bow).
+		final ItemTemplate weapon = partyWeapon(role, mage, grade);
+		if (weapon != null)
+		{
+			equip(phantom, weapon, enchant);
+			final int shotId = mage ? spiritshotIdFor(weapon.getCrystalType()) : soulshotIdFor(weapon.getCrystalType());
+			phantom.getInventory().addItem(ItemProcessType.REWARD, shotId, SHOT_COUNT, phantom, null);
+			phantom.addAutoSoulShot(shotId);
+			if ((weapon instanceof Weapon) && (((Weapon) weapon).getItemType() == WeaponType.BOW))
+			{
+				final ItemTemplate arrow = findArrow(weapon.getCrystalType());
+				if (arrow != null)
+				{
+					phantom.getInventory().addItem(ItemProcessType.REWARD, arrow.getId(), ARROW_COUNT, phantom, null);
+				}
+			}
+		}
+
+		// In-combat HP sustain (same as ambient): auto-potion drinks one below the threshold.
+		phantom.getInventory().addItem(ItemProcessType.REWARD, HP_POTION_ID, HP_POTION_COUNT, phantom, null);
+		phantom.getAutoUseSettings().setAutoPotionItem(HP_POTION_ID);
+		phantom.getAutoPlaySettings().setAutoPotionPercent(HP_POTION_PERCENT);
+
+		// Full armor set: every slot, best in grade, no random gaps. Orc casters still skip the ids that have no
+		// orc model and would render invisibly.
+		final Set<Integer> skip = (mage && (phantom.getRace() == Race.ORC)) ? ORC_CASTER_ARMOR_SKIP : null;
+		final boolean preferHeavy = (role == PartyRole.TANK); // a tank wants the highest mitigation it can wear
+		for (BodyPart slot : GEAR_SLOTS)
+		{
+			if (slot == BodyPart.R_HAND)
+			{
+				continue;
+			}
+			final ItemTemplate piece = bestArmor(slot, grade, mage, skip, preferHeavy);
+			if (piece != null)
+			{
+				equip(phantom, piece, enchant);
+			}
+		}
+
+		// Shield for the tank (a big chunk of a knight's mitigation + block).
+		if (role == PartyRole.TANK)
+		{
+			final ItemTemplate shield = bestEquip(grade, item -> (item instanceof Armor) && (((Armor) item).getItemType() == ArmorType.SHIELD));
+			if (shield != null)
+			{
+				equip(phantom, shield, enchant);
+			}
+		}
+
+		// Jewelry: necklace + two earrings + two rings (matched by body part; the engine fills both ears/fingers).
+		equipJewelry(phantom, BodyPart.NECK, grade, 1);
+		equipJewelry(phantom, BodyPart.LR_EAR, grade, 2);
+		equipJewelry(phantom, BodyPart.LR_FINGER, grade, 2);
+	}
+
+	/** Best-in-grade weapon for a party role: bow/dagger for the ranged/rogue roles, magic staff for casters, else a sword. */
+	private static ItemTemplate partyWeapon(PartyRole role, boolean mage, CrystalType grade)
+	{
+		if (mage)
+		{
+			return bestEquip(grade, item -> item.isMagicWeapon() && (item.getBodyPart() == BodyPart.LR_HAND));
+		}
+		if (role == PartyRole.ARCHER)
+		{
+			final ItemTemplate bow = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.BOW));
+			if (bow != null)
+			{
+				return bow;
+			}
+		}
+		else if (role == PartyRole.DAGGER)
+		{
+			final ItemTemplate dagger = bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.DAGGER));
+			if (dagger != null)
+			{
+				return dagger;
+			}
+		}
+		// Sword fallback (and the default melee weapon). A TANK needs a ONE-handed sword so its shield fits the left
+		// hand; a two-handed sword would otherwise be unequipped when the shield goes on.
+		final boolean oneHandOnly = (role == PartyRole.TANK);
+		return bestEquip(grade, item -> (item instanceof Weapon) && (((Weapon) item).getItemType() == WeaponType.SWORD) && (!oneHandOnly || (item.getBodyPart() == BodyPart.R_HAND)));
+	}
+
+	/** Best-in-grade armor piece for a slot: a tank prefers HEAVY (falls back to any), casters take MAGIC, others LIGHT/HEAVY. */
+	private static ItemTemplate bestArmor(BodyPart slot, CrystalType grade, boolean mage, Set<Integer> skip, boolean preferHeavy)
+	{
+		if (preferHeavy)
+		{
+			final ItemTemplate heavy = bestArmorOfTypes(slot, grade, skip, EnumSet.of(ArmorType.HEAVY));
+			if (heavy != null)
+			{
+				return heavy;
+			}
+		}
+		return bestArmorOfTypes(slot, grade, skip, mage ? EnumSet.of(ArmorType.MAGIC) : EnumSet.of(ArmorType.LIGHT, ArmorType.HEAVY));
+	}
+
+	private static ItemTemplate bestArmorOfTypes(BodyPart slot, CrystalType grade, Set<Integer> skip, Set<ArmorType> allowed)
+	{
+		return bestEquip(grade, item ->
+		{
+			if (!(item instanceof Armor) || (item.getBodyPart() != slot))
+			{
+				return false;
+			}
+			if ((skip != null) && skip.contains(item.getId()))
+			{
+				return false;
+			}
+			return allowed.contains(((Armor) item).getItemType());
+		});
+	}
+
+	/** Equips {@code count} copies of the best-in-grade jewelry for a body part (necklace/earrings/rings). */
+	private void equipJewelry(Player phantom, BodyPart part, CrystalType grade, int count)
+	{
+		final ItemTemplate jewel = bestEquip(grade, item -> (item instanceof Armor) && (item.getBodyPart() == part));
+		if (jewel == null)
+		{
+			return;
+		}
+		for (int i = 0; i < count; i++)
+		{
+			equip(phantom, jewel); // jewelry is not enchantable in Interlude - +0
+		}
+	}
+
+	/**
+	 * The best (most valuable, a good proxy for "best stats") tradeable equipable item of {@code grade} that matches
+	 * {@code filter}, stepping down a grade if none exists at the desired one. Scans the item table directly (not the
+	 * trimmed-to-cheapest ambient gear map) since party members want the strongest in grade, not the budget option.
+	 */
+	private static ItemTemplate bestEquip(CrystalType desired, Predicate<ItemTemplate> filter)
+	{
+		CrystalType grade = desired;
+		while (grade != null)
+		{
+			ItemTemplate best = null;
+			for (ItemTemplate item : ItemData.getInstance().getAllItems())
+			{
+				if ((item == null) || !item.isEquipable() || !item.isTradeable() || (item.getReferencePrice() <= 0) || (item.getCrystalType() != grade))
+				{
+					continue;
+				}
+				if (filter.test(item) && ((best == null) || (item.getReferencePrice() > best.getReferencePrice())))
+				{
+					best = item;
+				}
+			}
+			if (best != null)
+			{
+				return best;
+			}
+			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
+		}
+		return null;
+	}
+
 	/** Adds a single template to the phantom's inventory and equips it. */
 	private void equip(Player phantom, ItemTemplate template)
+	{
+		equip(phantom, template, 0);
+	}
+
+	/** Adds a single template, enchants it (when {@code enchant > 0}), and equips it. */
+	private Item equip(Player phantom, ItemTemplate template, int enchant)
 	{
 		final Item item = phantom.getInventory().addItem(ItemProcessType.REWARD, template.getId(), 1, phantom, null);
 		if (item != null)
 		{
+			if (enchant > 0)
+			{
+				item.setEnchantLevel(enchant); // set before equipping so the enchant stat bonuses are applied on equip
+			}
 			phantom.getInventory().equipItem(item);
 		}
+		return item;
 	}
 
 	/** A random candidate item for a slot at the desired grade, stepping down if a grade has none. */
@@ -1615,7 +1815,7 @@ public class PhantomManager implements IXmlReader
 			{
 				// The phantom was already created from the right support class template (default or override), so
 				// outfitSupport just levels/learns/gears it (no class transfer needed).
-				outfitSupport(phantom, level);
+				outfitSupport(phantom, level, role);
 				if (role == PartyRole.HEALER)
 				{
 					grantRes(phantom, level); // every healer can raise a fallen party member
@@ -1720,7 +1920,7 @@ public class PhantomManager implements IXmlReader
 	 * {@link #outfitBuddy} but with no class transfer (the class is already correct) - works for both the default
 	 * support class and an explicitly requested one (e.g. Shillien Elder).
 	 */
-	private void outfitSupport(Player phantom, int level)
+	private void outfitSupport(Player phantom, int level, PartyRole role)
 	{
 		if (level > 1)
 		{
@@ -1733,7 +1933,7 @@ public class PhantomManager implements IXmlReader
 		}
 		learnAllSkills(phantom);
 		grantHeal(phantom, level);
-		gear(phantom, level, true); // cast loadout
+		gearParty(phantom, level, true, role); // full caster loadout + jewelry + enchant chance, so supports survive content
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 	}
@@ -1750,47 +1950,13 @@ public class PhantomManager implements IXmlReader
 			}
 		}
 		learnAllSkills(phantom);
-		gear(phantom, level, role.mage); // sword/robe loadout + grade-matched shots + potions
-		if (role == PartyRole.ARCHER)
-		{
-			equipRoleWeapon(phantom, WeaponType.BOW, level);
-		}
-		else if (role == PartyRole.DAGGER)
-		{
-			equipRoleWeapon(phantom, WeaponType.DAGGER, level);
-		}
+		// Recruited members gear up for real content: best-in-grade role weapon + full armor + jewelry + shield
+		// (tank) + a chance of enchant. gearParty picks the role's weapon itself (bow/dagger/staff/sword), so the
+		// old separate sword-then-swap step is gone.
+		gearParty(phantom, level, role.mage, role);
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
-	}
-
-	/**
-	 * Replaces the fighter sword with a grade-appropriate weapon of {@code type} (bow / dagger) so an Archer
-	 * actually shoots and a Dagger actually stabs. The grade matches what {@link #gear} handed shots for, so the
-	 * soulshots still auto-fire. If no such weapon exists in the datapack the member simply keeps its sword.
-	 */
-	private void equipRoleWeapon(Player phantom, WeaponType type, int level)
-	{
-		final ItemTemplate weapon = findWeapon(type, gradeForLevel(level));
-		if (weapon != null)
-		{
-			equip(phantom, weapon); // equipItem replaces the conflicting R_HAND/LR_HAND slot
-			// A bow is useless without ammunition: an archer with no arrows just stands there unable to fire.
-			// Hand it a matching-grade stack; the engine auto-equips them into the left hand on the first shot
-			// (Player.checkAndEquipArrows, matched by crystal grade in Inventory.findArrowForBow).
-			if (type == WeaponType.BOW)
-			{
-				final ItemTemplate arrow = findArrow(weapon.getCrystalType());
-				if (arrow != null)
-				{
-					phantom.getInventory().addItem(ItemProcessType.REWARD, arrow.getId(), ARROW_COUNT, phantom, null);
-				}
-				else
-				{
-					LOGGER.warning(getClass().getSimpleName() + ": No arrows found in the datapack for grade " + weapon.getCrystalType() + " - archer '" + phantom.getName() + "' can't shoot.");
-				}
-			}
-		}
 	}
 
 	/** Standard arrow matching a bow's grade (steps down a grade if none exists at the desired one), or null. */
@@ -1805,33 +1971,6 @@ public class PhantomManager implements IXmlReader
 				{
 					return item;
 				}
-			}
-			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
-		}
-		return null;
-	}
-
-	/** Cheapest tradeable weapon of a type at the desired grade, stepping down a grade if none exists. */
-	private static ItemTemplate findWeapon(WeaponType type, CrystalType desired)
-	{
-		CrystalType grade = desired;
-		while (grade != null)
-		{
-			ItemTemplate best = null;
-			for (ItemTemplate item : ItemData.getInstance().getAllItems())
-			{
-				if ((item == null) || !(item instanceof Weapon) || !item.isTradeable() || (item.getReferencePrice() <= 0))
-				{
-					continue;
-				}
-				if ((((Weapon) item).getItemType() == type) && (item.getCrystalType() == grade) && ((best == null) || (item.getReferencePrice() < best.getReferencePrice())))
-				{
-					best = item;
-				}
-			}
-			if (best != null)
-			{
-				return best;
 			}
 			grade = (grade.ordinal() > 0) ? CrystalType.values()[grade.ordinal() - 1] : null;
 		}
