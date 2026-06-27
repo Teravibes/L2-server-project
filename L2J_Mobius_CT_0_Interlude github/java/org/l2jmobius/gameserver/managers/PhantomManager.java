@@ -329,6 +329,12 @@ public class PhantomManager implements IXmlReader
 					return TANK;
 				}
 				case "dd":
+				case "dps":
+				case "damage":
+				case "dealer":
+				{
+					return randomDps(); // "dd" = any damage dealer, so a party comes out varied
+				}
 				case "fighter":
 				case "warrior":
 				case "melee":
@@ -391,6 +397,19 @@ public class PhantomManager implements IXmlReader
 					return null;
 				}
 			}
+		}
+
+		/** A random damage-dealer role, so a bare "dd"/"dps" request yields a varied party. */
+		private static PartyRole randomDps()
+		{
+			final PartyRole[] dps =
+			{
+				WARRIOR,
+				ARCHER,
+				DAGGER,
+				NUKER
+			};
+			return dps[Rnd.get(dps.length)];
 		}
 	}
 

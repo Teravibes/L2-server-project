@@ -78,6 +78,8 @@ public class PhantomPartyManager
 	private static final long SPAWN_STAGGER = 2500; // trickle arrivals so a group doesn't pop in on one tile
 	private static final int FOLLOW_RANGE = 250;
 	private static final int LEASH_RANGE = 1400; // free-hunting member is pulled back if it strays this far
+	private static final long TRAVEL_GRACE = 180000; // after a "go to X" order, wait at the spot this long for the leader
+	private static final int REGROUP_RANGE = 1500; // ...resuming normal follow once the leader arrives within this
 	private static final int SUPPORT_RANGE = 900; // heal/buff/res only when the target is this close
 	private static final int ASSIST_MAX_RANGE = 2200; // don't assist a mob the leader targeted across the map
 	private static final int DANGER_RANGE = 700;
@@ -131,6 +133,7 @@ public class PhantomPartyManager
 		int lastY;
 		int stuckTicks;
 		long castSince; // abort a wedged cast instead of freezing the member
+		long travelUntil; // sent ahead to a destination; wait there (don't follow-yank back) until the leader arrives
 
 		Member(Player npc, PartyRole role)
 		{
@@ -608,10 +611,9 @@ public class PhantomPartyManager
 		npc.teleToLocation(destination);
 		npc.onTeleported();
 		npc.broadcastUserInfo();
-		if (state.following && (state.owner != null))
-		{
-			ThreadPool.schedule(() -> ensureFollow(state), 1500);
-		}
+		// Commit to the destination: wait here for the leader rather than letting the follow watchdog immediately
+		// teleport us back to where the leader still is (that was the "everyone tped to the player's spot" bug).
+		state.travelUntil = System.currentTimeMillis() + TRAVEL_GRACE;
 	}
 
 	/**
@@ -826,6 +828,17 @@ public class PhantomPartyManager
 			return true;
 		}
 		state.castSince = 0;
+
+		// Sent ahead to a destination by a "go to X" order: wait there for the leader instead of being pulled
+		// back by the follow watchdog. Resume normal behaviour once the leader arrives near us (or grace elapses).
+		if (state.travelUntil > now)
+		{
+			if (npc.calculateDistance2D(owner) > REGROUP_RANGE)
+			{
+				return true; // hold at the destination
+			}
+			state.travelUntil = 0;
+		}
 
 		if (state.isSupport())
 		{

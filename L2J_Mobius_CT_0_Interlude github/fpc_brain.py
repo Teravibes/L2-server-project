@@ -315,10 +315,11 @@ def chat():
             # to tank for cruma"). Output ONLY role tokens it can use, repeated per count, comma-separated.
             system = ("You read a Lineage 2 shout and decide which PARTY ROLES the player is looking for. "
                       "Reply with ONLY a comma-separated list using EXACTLY these tokens: "
-                      "tank, dd, archer, dagger, nuker, healer, buffer. Repeat a token for each one wanted "
-                      "(e.g. two damage dealers -> 'dd, dd'). Map synonyms: box/support->buffer or healer as fits; "
-                      "ee/bishop/cleric->healer; pp/prophet/wc/bd/sws->buffer; sorc/mage->nuker; "
-                      "knight/pally->tank; rogue/th->dagger; hawkeye/bow->archer; warrior/glad/wl->dd. "
+                      "tank, warrior, dd, archer, dagger, nuker, healer, buffer. Repeat a token for each one wanted "
+                      "(e.g. two damage dealers -> 'dd, dd'). Use 'dd' for an unspecified damage dealer, 'warrior' "
+                      "only when they specifically want a melee fighter. Map synonyms: box/support->buffer or healer "
+                      "as fits; ee/bishop/cleric->healer; pp/prophet/wc/bd/sws->buffer; sorc/mage->nuker; "
+                      "knight/pally->tank; rogue/th->dagger; hawkeye/bow->archer; glad/wl->warrior. "
                       "If the line is NOT looking for party members, reply with exactly: NONE")
             reply = call_llm(system, [{"role": "user", "content": message}], 30, 0.0)
         elif mode == "OFFER":
