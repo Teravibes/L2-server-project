@@ -301,6 +301,18 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 5. **Buddy role expansion** — add SE (Spirit Expert) and PP (Prophet variant) archetypes with their specific buff sets.
 6. **Population tuning pass** — review 26 field zones + town clusters + buddy spawn points with real play feedback.
 
+### Raid-readiness to-do (party can engage a raid boss, but won't survive/recover yet)
+
+Assessment: assist already targets a raid boss correctly (`RaidBoss`/`GrandBoss extend Monster`) and damage/buffs work, but the party bleeds members permanently and is undergeared for boss-grade healing/threat. Ordered by priority:
+
+1. **[CRITICAL] Corpse persistence for party bots** — today a recruited member is despawned ~1s after it dies (`tick()` → `release()` on `isDead()`), so it can never be battle-rezzed and the party melts permanently. Keep a dead member as a corpse for a grace window (reuse the offline/`buddyEngaged` grace pattern) so it can be raised before despawning.
+2. **[CRITICAL] Healer battle-res of bot members** — the res loop only targets real players (`member.getClient() != null`); make healers also raise dead phantom party members (depends on #1). Respect the res reuse timer; consider multiple healers for chain-res.
+3. **[MAJOR] Real tank threat/aggro loop** — the "tank" is just a melee with a knight class; nothing makes it grab/hold boss aggro, so the boss mauls the healer/nukers. Add an active taunt/threat tick (cast Aggression/Aura of Hate on the boss, keep threat up) for `TANK` role members.
+4. **[MAJOR] Boss-grade healing** — current heal is 1/tick, single lowest target, <60% trigger; too slow for boss spikes. Prioritize the tank, raise heal cadence/threshold under a raid, and support multiple healers.
+5. **[NICE] Boss mechanic awareness** — AoE step-out, debuff/curse cleanse (dispel), add/minion target priority. Per-boss; bots are currently oblivious.
+6. **[NICE] Party spread positioning** — members cluster on the leader, so one boss AoE hits everyone; spread casters/healer out.
+7. **[VERIFY] BossZone interactions** — recruitment spawns bots off-screen and walks them in; some boss zones gate entry/teleport and may block the walk-in. Check before relying on in-zone recruiting.
+
 ---
 
 ## 12. File map (quick reference)
