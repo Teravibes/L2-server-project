@@ -364,9 +364,10 @@ public class FakePlayerChatManager implements IXmlReader
 		// over (works brain-off via keywords; with the brain online a free-form call is classified for its roles).
 		// On a recruit we do NOT also run plain shout banter - the answer IS the bots showing up.
 		final List<PartyRole> roles = parseLfpRoles(text);
+		final int wantedLevel = parseLfpLevel(text); // optional "lvl 57"; 0 = match the recruiter's level
 		if (!roles.isEmpty())
 		{
-			PhantomPartyManager.getInstance().recruitFromShout(speaker, roles);
+			PhantomPartyManager.getInstance().recruitFromShout(speaker, roles, wantedLevel);
 			return;
 		}
 		if (looksLikeLfp(text))
@@ -377,7 +378,7 @@ public class FakePlayerChatManager implements IXmlReader
 				final List<PartyRole> aiRoles = askBrainLfp(text);
 				if (!aiRoles.isEmpty())
 				{
-					PhantomPartyManager.getInstance().recruitFromShout(who, aiRoles);
+					PhantomPartyManager.getInstance().recruitFromShout(who, aiRoles, wantedLevel);
 				}
 				else
 				{
@@ -403,6 +404,24 @@ public class FakePlayerChatManager implements IXmlReader
 		return LFP_TRIGGER.matcher(text).find();
 	}
 
+	// Optional level in a party call, e.g. "lfm buffer lvl 57" / "level 40" / "lv 30".
+	private static final Pattern LFP_LEVEL = Pattern.compile("(?:level|lvl|lv)\\s*\\.?\\s*(\\d{1,2})", Pattern.CASE_INSENSITIVE);
+
+	/** @return the level requested in an LFP shout (1-80), or 0 when none is given (match the recruiter). */
+	private static int parseLfpLevel(String text)
+	{
+		final Matcher matcher = LFP_LEVEL.matcher(text);
+		if (matcher.find())
+		{
+			final int level = Integer.parseInt(matcher.group(1));
+			if ((level >= 1) && (level <= 80))
+			{
+				return level;
+			}
+		}
+		return 0;
+	}
+
 	/**
 	 * Deterministically extracts the roles a player is shouting for ("lfm 2 dd + healer" -> WARRIOR, WARRIOR,
 	 * HEALER). A line needs an LFM/LFP trigger AND at least one recognised role word; numbers before a role
@@ -416,17 +435,29 @@ public class FakePlayerChatManager implements IXmlReader
 		}
 		final List<PartyRole> roles = new ArrayList<>();
 		int pendingCount = 1;
+		boolean levelToken = false; // the number right after "lvl"/"level"/"lv" is a level, not a count
 		for (String token : text.toLowerCase().split("[^a-z0-9]+"))
 		{
 			if (token.isEmpty())
 			{
 				continue;
 			}
+			if (token.equals("lvl") || token.equals("level") || token.equals("lv"))
+			{
+				levelToken = true;
+				continue;
+			}
 			if (token.matches("\\d+"))
 			{
+				if (levelToken)
+				{
+					levelToken = false; // consume the level number; don't treat it as a count
+					continue;
+				}
 				pendingCount = Math.max(1, Math.min(6, Integer.parseInt(token)));
 				continue;
 			}
+			levelToken = false;
 			final PartyRole role = PartyRole.fromToken(token);
 			if (role != null)
 			{

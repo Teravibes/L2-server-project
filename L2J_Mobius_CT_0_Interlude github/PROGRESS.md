@@ -170,7 +170,13 @@ Shout an **LFM/LFP** and a full party assembles itself: for each role you call f
 
 **Drive from whisper or party chat** (deterministic, brain-off): `assist`, `attack freely`, `follow`, `hold`/`stop`, `gather`, `brb`, `status`, `go to <place>`/`tp <place>` (teleports the member to the same gatekeeper spot a buddy uses, so the party regroups there), `bye`/`disband`. A party-chat **command** hits every member at once; free-form chatter gets a natural brain reply (`PARTY` mode, with `[[ASSIST]]`/`[[FREE]]`/`[[FOLLOW]]`/`[[STAY]]`/`[[TP:x]]`/`[[GRACE:n]]`/`[[DISBAND]]` action tags) from just one member so a full party doesn't all answer at once.
 
-**Robustness:** a member that stalls mid-walk re-kicks its follow and teleports to catch up (no more "coming" while standing still); a wedged cast is aborted instead of freezing the member; casters (buffers/healers/nukers) sit to recharge MP *while the party fights* and pop up if a mob reaches them or you run off.
+**Robustness:** a member that stalls mid-walk re-kicks its follow and teleports to catch up (no more "coming" while standing still); a wedged cast is aborted instead of freezing the member; casters (buffers/healers/nukers) sit to recharge MP *while the party fights* and pop up if a mob reaches them or you run off; a "go to X" order makes members travel to the spot and wait there for you rather than being yanked back by the follow watchdog.
+
+**Loot & XP:** recruited members never pick up items (drops are left for you), and clientless party members (recruits + buddies) are excluded from the party XP/SP split, so bots don't steal or shrink your experience.
+
+**LFP level:** an optional level can be given, e.g. `lfm 1 buffer lvl 57` - members spawn at that level instead of matching yours. `dd`/`dps` resolves to a random damage role (varied party); explicit `warrior`/`archer`/`mage`/`dagger` target exactly.
+
+**Class-aware buffing** (`PhantomBuffs`): a buffer/healer no longer wastes physical buffs on casters (or magic buffs on fighters). The **player** gets the full archetype-appropriate kit; **other party members** get the essentials (Wind Walk + Haste for melee, Wind Walk + Acumen/Berserker for casters); the **buffer itself** keeps only movement + casting speed. Applies to both recruited buffers and personal buddies.
 
 **Key files:** `PhantomPartyManager.java` (new), `PhantomManager.java` (`PartyRole`, `spawnPartyMember`, recruit API + supervisor guards), `FakePlayerChatManager.java` (`overheardShout` LFP parse + `LFP` brain call), `RequestJoinParty.java` / `ChatWhisper.java` / `ChatParty.java` dispatch, `fpc_brain.py` (`LFP` mode).
 

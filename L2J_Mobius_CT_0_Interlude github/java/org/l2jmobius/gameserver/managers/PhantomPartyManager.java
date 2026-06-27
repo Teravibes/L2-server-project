@@ -160,7 +160,7 @@ public class PhantomPartyManager
 	 * Spawns and walks in one level-matched member per wanted role, up to the party's free slots. Staggered so a
 	 * multi-role request trickles in like separate people answering the shout.
 	 */
-	public void recruitFromShout(Player leader, List<PartyRole> roles)
+	public void recruitFromShout(Player leader, List<PartyRole> roles, int level)
 	{
 		if ((leader == null) || (roles == null) || roles.isEmpty())
 		{
@@ -172,6 +172,8 @@ public class PhantomPartyManager
 			leader.sendPacket(new CreatureSay(leader, ChatType.WHISPER, "Party", "your party is full"));
 			return;
 		}
+		// Optional requested level (e.g. "lfm buffer lvl 57"), clamped; otherwise match the recruiter's level.
+		final int memberLevel = (level > 0) ? Math.max(1, Math.min(80, level)) : leader.getLevel();
 		int spawned = 0;
 		for (PartyRole role : roles)
 		{
@@ -181,7 +183,7 @@ public class PhantomPartyManager
 			}
 			final PartyRole wanted = role;
 			final int order = spawned;
-			ThreadPool.schedule(() -> spawnAndApproach(leader, wanted), 1200L + (order * SPAWN_STAGGER) + Rnd.get(900));
+			ThreadPool.schedule(() -> spawnAndApproach(leader, wanted, memberLevel), 1200L + (order * SPAWN_STAGGER) + Rnd.get(900));
 			spawned++;
 		}
 	}
@@ -202,7 +204,7 @@ public class PhantomPartyManager
 	}
 
 	/** Spawns a member out of sight near the leader and starts it walking over. */
-	private void spawnAndApproach(Player leader, PartyRole role)
+	private void spawnAndApproach(Player leader, PartyRole role, int level)
 	{
 		if ((leader == null) || !leader.isOnline())
 		{
@@ -211,7 +213,7 @@ public class PhantomPartyManager
 		final double angle = Rnd.nextDouble() * 2 * Math.PI;
 		final int distance = Rnd.get(APPROACH_MIN, APPROACH_MAX);
 		final Location anchor = new Location(leader.getX() + (int) (Math.cos(angle) * distance), leader.getY() + (int) (Math.sin(angle) * distance), leader.getZ());
-		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, leader.getLevel(), role);
+		final Player npc = PhantomManager.getInstance().spawnPartyMember(anchor, level, role);
 		if (npc == null)
 		{
 			return;
@@ -981,53 +983,55 @@ public class PhantomPartyManager
 
 	private boolean maintainPartyBuffs(Member state)
 	{
-		final Player npc = state.npc;
-		final List<Skill> buffs = buffs(state);
-		if (buffs.isEmpty())
+		if (buffs(state).isEmpty())
 		{
 			return false;
 		}
-		for (Player member : state.owner.getParty().getMembers())
+		final Player owner = state.owner;
+		// The leader gets the full (archetype-appropriate) kit; other members get the essentials; self last.
+		if (castFirstMissing(state, owner, PhantomBuffs.Tier.LEADER))
 		{
-			if (member.isDead() || (npc.calculateDistance2D(member) > SUPPORT_RANGE))
+			return true;
+		}
+		for (Player member : owner.getParty().getMembers())
+		{
+			if ((member == owner) || (member == state.npc))
 			{
 				continue;
 			}
-			final Skill missing = firstMissingBuff(buffs, npc, member);
-			if (missing != null)
+			if (castFirstMissing(state, member, PhantomBuffs.Tier.MEMBER))
 			{
-				standIfSitting(npc);
-				npc.setTarget(member);
-				npc.doCast(missing);
 				return true;
 			}
 		}
-		final Skill selfMissing = firstMissingBuff(buffs, npc, npc);
-		if (selfMissing != null)
-		{
-			standIfSitting(npc);
-			npc.setTarget(npc);
-			npc.doCast(selfMissing);
-			return true;
-		}
-		return false;
+		return castFirstMissing(state, state.npc, PhantomBuffs.Tier.SELF);
 	}
 
-	private Skill firstMissingBuff(List<Skill> buffs, Player npc, Player target)
+	/** Casts the first buff this target is missing/about-to-lose that its archetype + tier actually wants. */
+	private boolean castFirstMissing(Member state, Player target, PhantomBuffs.Tier tier)
 	{
-		for (Skill buff : buffs)
+		final Player npc = state.npc;
+		if (target.isDead() || (npc.calculateDistance2D(target) > SUPPORT_RANGE))
 		{
-			if (npc.getCurrentMp() < buff.getMpConsume())
+			return false;
+		}
+		final boolean caster = PhantomBuffs.isCaster(target);
+		for (Skill buff : buffs(state))
+		{
+			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) || (npc.getCurrentMp() < buff.getMpConsume()))
 			{
 				continue;
 			}
 			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
 			{
-				return buff;
+				standIfSitting(npc);
+				npc.setTarget(target);
+				npc.doCast(buff);
+				return true;
 			}
 		}
-		return null;
+		return false;
 	}
 
 	/**

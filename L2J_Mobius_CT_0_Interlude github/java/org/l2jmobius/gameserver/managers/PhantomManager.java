@@ -1603,7 +1603,7 @@ public class PhantomManager implements IXmlReader
 			settings.setNextTargetMode(TARGET_MODE_MONSTER);
 			settings.setShortRange(false);
 			settings.setRespectfulHunting(true);
-			settings.setPickup(true);
+			settings.setPickup(false); // recruited party members never loot - drops are left for the real player
 			AutoPlayTaskManager.getInstance().startAutoPlay(member); // also sets isAutoPlaying(true)
 		}
 		else

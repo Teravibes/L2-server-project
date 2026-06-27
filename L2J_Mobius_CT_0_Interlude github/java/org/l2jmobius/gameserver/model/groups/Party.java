@@ -860,6 +860,31 @@ public class Party extends AbstractPlayerGroup
 	
 	private List<Player> getValidMembers(List<Player> members, int topLvl, Attackable target)
 	{
+		// Phantom party members (buddies / recruited fake players) are clientless and must not take a share of
+		// XP/SP - otherwise they'd both steal a cut and shrink the real player's by inflating the level-sum split.
+		// Exclude them whenever at least one real (client-connected) player remains to be rewarded.
+		boolean hasRealMember = false;
+		for (Player member : members)
+		{
+			if (member.getClient() != null)
+			{
+				hasRealMember = true;
+				break;
+			}
+		}
+		if (hasRealMember)
+		{
+			final List<Player> realMembers = new ArrayList<>(members.size());
+			for (Player member : members)
+			{
+				if (member.getClient() != null)
+				{
+					realMembers.add(member);
+				}
+			}
+			members = realMembers;
+		}
+
 		final List<Player> validMembers = new ArrayList<>();
 		switch (PlayerConfig.PARTY_XP_CUTOFF_METHOD)
 		{

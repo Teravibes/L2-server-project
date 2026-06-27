@@ -913,16 +913,16 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			return false;
 		}
-		// Owner first, then self.
+		// Owner first (full archetype-appropriate kit), then self (movement + casting speed only).
 		if (withOwner && (state.owner != null) && !state.owner.isDead())
 		{
-			final Skill missing = firstMissingBuff(buffs, buddy, state.owner);
+			final Skill missing = firstMissingBuff(buffs, buddy, state.owner, PhantomBuffs.Tier.LEADER);
 			if (missing != null)
 			{
 				return castBuff(buddy, state.owner, missing);
 			}
 		}
-		final Skill selfMissing = firstMissingBuff(buffs, buddy, buddy);
+		final Skill selfMissing = firstMissingBuff(buffs, buddy, buddy, PhantomBuffs.Tier.SELF);
 		if (selfMissing != null)
 		{
 			return castBuff(buddy, buddy, selfMissing);
@@ -930,10 +930,17 @@ public class PhantomBuddyManager implements IXmlReader
 		return false;
 	}
 
-	private Skill firstMissingBuff(List<Skill> buffs, Player buddy, Player target)
+	private Skill firstMissingBuff(List<Skill> buffs, Player buddy, Player target, PhantomBuffs.Tier tier)
 	{
+		final boolean caster = PhantomBuffs.isCaster(target);
 		for (Skill buff : buffs)
 		{
+			// Only the buffs this target's archetype/tier actually wants (a caster owner gets no Haste, etc.).
+			// Chant of Life is exempt - it is a situational HP-regen handled by the HP gate just below.
+			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) && (buff.getId() != CHANT_OF_LIFE_ID))
+			{
+				continue;
+			}
 			if (buddy.getCurrentMp() < buff.getMpConsume())
 			{
 				continue;
