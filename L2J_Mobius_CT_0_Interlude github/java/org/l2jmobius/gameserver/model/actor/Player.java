@@ -2899,6 +2899,14 @@ public class Player extends Playable
 	}
 	
 	/**
+	 * @return {@code true} while a sit-down / stand-up animation is still in progress (blocks a new sit/stand).
+	 */
+	public boolean isSittingProgress()
+	{
+		return _sittingInProgress;
+	}
+
+	/**
 	 * Set _sittingInProgress to given value.
 	 * @param value
 	 */

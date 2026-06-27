@@ -853,6 +853,9 @@ public class PhantomBuddyManager implements IXmlReader
 			state.graceUntil = 0;
 		}
 
+		// DIAGNOSTIC: one full-state snapshot per tick so we can follow the buffer's MP / sitting in the log.
+		traceBuddy(buddy, owner, "tick");
+
 		// Don't act while casting; let the current spell finish. Watchdog: a clientless caster can wedge with its
 		// casting flag stuck (interrupted mid-cast), which would freeze it forever here - abort a cast that has
 		// run far too long so the buddy recovers instead of going inert (it stops buffing AND following).
@@ -864,9 +867,11 @@ public class PhantomBuddyManager implements IXmlReader
 			}
 			else if ((now - state.castSince) > 6000)
 			{
+				LOGGER.info("===== BUDDY-MP [cast-watchdog] " + buddy.getName() + " ===== cast wedged > 6s, aborting");
 				buddy.abortCast();
 				state.castSince = 0;
 			}
+			LOGGER.info("===== BUDDY-MP [skip:casting] " + buddy.getName() + " ===== still casting, skipping support this tick");
 			return true;
 		}
 		state.castSince = 0;
@@ -909,16 +914,19 @@ public class PhantomBuddyManager implements IXmlReader
 		// 1) Heal the owner up to ~half health, then self if low.
 		if (ownerInRange && !owner.isDead() && (owner.getCurrentHpPercent() < OWNER_HEAL_PERCENT) && tryHeal(state, buddy, owner))
 		{
+			LOGGER.info("===== BUDDY-MP [skip:heal-owner] " + buddy.getName() + " ===== healed owner, MP watch skipped this tick");
 			return true;
 		}
 		if ((buddy.getCurrentHpPercent() < SELF_HEAL_PERCENT) && tryHeal(state, buddy, buddy))
 		{
+			LOGGER.info("===== BUDDY-MP [skip:heal-self] " + buddy.getName() + " ===== healed self, MP watch skipped this tick");
 			return true;
 		}
 
 		// 2) Keep the owner (and self) buffed.
 		if (ownerInRange && maintainBuffs(state, buddy, true))
 		{
+			LOGGER.info("===== BUDDY-MP [skip:buffing] " + buddy.getName() + " ===== cast/attempted a buff, MP watch skipped this tick (mp=" + buddy.getCurrentMpPercent() + "%)");
 			return true;
 		}
 
@@ -1100,17 +1108,25 @@ public class PhantomBuddyManager implements IXmlReader
 		// sat - it just stood around (even idle in town) and, when farming, only whispered "low on mp".
 		final boolean threat = isMonsterNear(buddy);
 		final boolean ownerFar = buddy.calculateDistance2D(owner) > SUPPORT_RANGE;
+		// DIAGNOSTIC: full snapshot at the MP-watch decision point plus the exact thresholds being tested.
+		traceBuddy(buddy, owner, "mp-watch");
+		LOGGER.info("===== BUDDY-MP [mp-watch] " + buddy.getName() + " ===== thresholds:"
+			+ " mp=" + mp + "% lowWarn<" + MP_LOW_PERCENT + " sitBelow<" + MP_REST_SIT + " standAt>=" + MP_REST_STAND
+			+ " | threat=" + threat + " ownerFar=" + ownerFar + " (dist=" + (int) buddy.calculateDistance2D(owner) + " support=" + SUPPORT_RANGE + ")");
 		if (buddy.isSitting())
 		{
 			if ((mp >= MP_REST_STAND) || threat || ownerFar)
 			{
+				LOGGER.info("===== BUDDY-MP [stand] " + buddy.getName() + " ===== standing up (recovered=" + (mp >= MP_REST_STAND) + " threat=" + threat + " ownerFar=" + ownerFar + ")");
 				buddy.standUp();
 				return false;
 			}
+			LOGGER.info("===== BUDDY-MP [resting] " + buddy.getName() + " ===== still sitting to recover, mp=" + mp + "%");
 			return true; // still recovering
 		}
 		if ((mp < MP_LOW_PERCENT) && ((now - state.lastMpWarn) >= MP_WARN_COOLDOWN))
 		{
+			LOGGER.info("===== BUDDY-MP [warn] " + buddy.getName() + " ===== whispering 'low on mp' to " + owner.getName());
 			whisper(buddy, owner, "i'm low on mp, sitting to recover");
 			state.lastMpWarn = now;
 		}
@@ -1118,24 +1134,61 @@ public class PhantomBuddyManager implements IXmlReader
 		// heals/buffs are handled above, so sitting never blocks supporting - it stands instantly to cast).
 		if ((mp < MP_REST_SIT) && !threat && !ownerFar)
 		{
+			LOGGER.info("===== BUDDY-MP [sit-attempt] " + buddy.getName() + " ===== conditions met (mp=" + mp + "% < " + MP_REST_SIT + ", safe, owner close) -> sitDown(false)");
 			// sitDown() defaults to sitDown(true), which refuses to sit while casting ("Cannot sit while casting")
 			// - a clientless caster's cast flag can linger, so that path silently fails forever (it warns but
 			// never sits). Abort any cast and use sitDown(false) to bypass that guard.
 			buddy.abortCast();
 			buddy.getAI().setIntention(Intention.IDLE);
 			buddy.sitDown(false);
-			// TEMP DIAGNOSTIC: if the sit still didn't take, report which engine guard rejected it so we stop
+			// TEMP DIAGNOSTIC: report whether the sit took, and if not, which engine guard rejected it so we stop
 			// guessing about the "warns but never sits" report. Remove once confirmed.
-			if (!buddy.isSitting())
+			if (buddy.isSitting())
 			{
-				LOGGER.info("BUDDY SIT FAILED " + buddy.getName() + " mp=" + mp + "% castingNow=" + buddy.isCastingNow() + " attackDisabled=" + buddy.isAttackDisabled() + " immobilized=" + buddy.isImmobilized() + " outOfControl=" + buddy.isOutOfControl());
+				LOGGER.info("===== BUDDY-MP [sit-OK] " + buddy.getName() + " ===== now sitting (sitInProgress=" + buddy.isSittingProgress() + ")");
+			}
+			else
+			{
+				LOGGER.info("===== BUDDY-MP [sit-FAILED] " + buddy.getName() + " ===== sitDown(false) rejected:"
+					+ " sitInProgress=" + buddy.isSittingProgress()
+					+ " castingNow=" + buddy.isCastingNow()
+					+ " attackingNow=" + buddy.isAttackingNow()
+					+ " attackDisabled=" + buddy.isAttackDisabled()
+					+ " immobilized=" + buddy.isImmobilized()
+					+ " outOfControl=" + buddy.isOutOfControl()
+					+ " paralyzed=" + buddy.isParalyzed());
 			}
 			return true;
 		}
+		LOGGER.info("===== BUDDY-MP [no-sit] " + buddy.getName() + " ===== not sitting this tick (mp=" + mp + "% threat=" + threat + " ownerFar=" + ownerFar + ") -> will follow");
 		return false;
 	}
 
 	// ===== Helpers =====
+
+	/**
+	 * Diagnostic: dumps the full MP / sitting state of a buddy to the gameserver log so we can see exactly why
+	 * a low-MP support is (or isn't) sitting to recover. Prefixed for easy grepping. Remove once the
+	 * "runs out of mana but never sits" report is understood.
+	 * @param phase short label for where in the tick this snapshot was taken
+	 */
+	private static void traceBuddy(Player buddy, Player owner, String phase)
+	{
+		final double dist = (owner == null) ? -1 : buddy.calculateDistance2D(owner);
+		LOGGER.info("===== BUDDY-MP [" + phase + "] " + buddy.getName() + " ====="
+			+ " mp=" + buddy.getCurrentMpPercent() + "% (" + (int) buddy.getCurrentMp() + "/" + (int) buddy.getMaxMp() + ")"
+			+ " hp=" + buddy.getCurrentHpPercent() + "%"
+			+ " owner=" + (owner == null ? "none" : owner.getName()) + " dist=" + (int) dist
+			+ " monsterNear=" + isMonsterNear(buddy)
+			+ " | sitting=" + buddy.isSitting()
+			+ " sitInProgress=" + buddy.isSittingProgress()
+			+ " castingNow=" + buddy.isCastingNow()
+			+ " attackingNow=" + buddy.isAttackingNow()
+			+ " attackDisabled=" + buddy.isAttackDisabled()
+			+ " immobilized=" + buddy.isImmobilized()
+			+ " outOfControl=" + buddy.isOutOfControl()
+			+ " paralyzed=" + buddy.isParalyzed());
+	}
 
 	/** Lazily collect the buddy's maintainable buffs: active, continuous, beneficial, not the heal. */
 	private List<Skill> buffList(Buddy state, Player buddy)
