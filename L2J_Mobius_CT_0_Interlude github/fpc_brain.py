@@ -244,6 +244,22 @@ def buddy_persona(fpc, voice):
             "[[BUFF]] = rebuff them right now; "
             "[[DISBAND]] = leave the party / say goodbye. One tag at most.")
 
+def party_persona(fpc, role, voice):
+    return (GLOBAL_RULES + "\n\n" + voice + "\n\n"
+            f"You are the player '{fpc}', playing as a {role} in another player's hunting party. Under 15 words. "
+            "Talk like a normal partymate - chat back, joke, answer questions, agree to move or switch tactics. "
+            "You can ACT on what the leader says by ending your reply with ONE tag on its own line (only when it "
+            "truly fits, and never mention or read out the tag): "
+            "[[ASSIST]] = focus the leader's target with them; "
+            "[[FREE]] = go hunt nearby monsters on your own; "
+            "[[FOLLOW]] = come to / stack up on the leader; "
+            "[[STAY]] = stop and hold position here; "
+            "[[TP:<place>]] = a place to travel to - use the FULL official name and expand shorthand (e.g. 'roa' -> "
+            "Ruins of Agony, 'dv' -> Dragon Valley, 'cruma' -> Cruma Tower, 'toi' -> Tower of Insolence, 'gk' -> "
+            "gatekeeper). If the leader tells you where to go, add this so you head there; "
+            "[[GRACE:<minutes>]] = they are going afk / brb for that many minutes; "
+            "[[DISBAND]] = leave the party / say goodbye. One tag at most.")
+
 def shout_persona(fpc, voice):
     return (GLOBAL_RULES + "\n\n" + voice + "\n\n"
             f"You are the player '{fpc}', reading the global '!' shout channel - the busy world chat. It's full "
@@ -317,6 +333,16 @@ def chat():
                       "Do NOT pick or agree a meeting place yourself yet, and do NOT add any tag.")
             reply = sanitize(call_llm(system, [{"role": "user", "content": prompt}], 70, temperature))
             # Seed the private memory so the follow-up conversation remembers this deal.
+            hist.append({"role": "assistant", "content": reply})
+        elif mode == "PARTY":
+            # A player chatting/giving orders to a recruited combat party member. Reply naturally and, when it
+            # fits, append an action tag the Java side parses (assist/free/follow/stay/tp/grace/disband).
+            player = request.headers.get("X-Player", "someone")
+            role = request.headers.get("X-Role", "party member")
+            hist = conversations[(player, fpc)]
+            hist.append({"role": "user", "content": message})
+            reply = sanitize(call_llm(party_persona(fpc, role, voice) + loc_note + knowledge_note(message),
+                list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
         elif mode == "BUDDY":
             # A player giving orders/chatting to their personal support buddy. Reply naturally and, when it

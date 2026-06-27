@@ -168,7 +168,9 @@ Shout an **LFM/LFP** and a full party assembles itself: for each role you call f
 - **Healer** heals the most-hurt party member (<60%) and **raises** fallen real players; **buffer** keeps the whole party buffed.
 - **Follows** you, survives an offline **grace** window ("brb" extends it), despawns on disband.
 
-**Drive from whisper or party chat** (deterministic, brain-off): `assist`, `attack freely`, `follow`, `hold`/`stop`, `gather`, `brb`, `status`, `bye`/`disband`. A party-chat order hits every recruited member at once.
+**Drive from whisper or party chat** (deterministic, brain-off): `assist`, `attack freely`, `follow`, `hold`/`stop`, `gather`, `brb`, `status`, `go to <place>`/`tp <place>` (teleports the member to the same gatekeeper spot a buddy uses, so the party regroups there), `bye`/`disband`. A party-chat **command** hits every member at once; free-form chatter gets a natural brain reply (`PARTY` mode, with `[[ASSIST]]`/`[[FREE]]`/`[[FOLLOW]]`/`[[STAY]]`/`[[TP:x]]`/`[[GRACE:n]]`/`[[DISBAND]]` action tags) from just one member so a full party doesn't all answer at once.
+
+**Robustness:** a member that stalls mid-walk re-kicks its follow and teleports to catch up (no more "coming" while standing still); a wedged cast is aborted instead of freezing the member; casters (buffers/healers/nukers) sit to recharge MP *while the party fights* and pop up if a mob reaches them or you run off.
 
 **Key files:** `PhantomPartyManager.java` (new), `PhantomManager.java` (`PartyRole`, `spawnPartyMember`, recruit API + supervisor guards), `FakePlayerChatManager.java` (`overheardShout` LFP parse + `LFP` brain call), `RequestJoinParty.java` / `ChatWhisper.java` / `ChatParty.java` dispatch, `fpc_brain.py` (`LFP` mode).
 

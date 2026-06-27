@@ -135,6 +135,10 @@ public class PhantomBuddyManager implements IXmlReader
 		Location pendingDestination; // a place the buddy proposed; teleports only once the owner confirms
 		String pendingDestName;
 		long nextChatter; // when the buddy may next open small talk in party chat (0 = not scheduled)
+		int lastX; // follow-stuck watchdog: last position + how many ticks it failed to move while trailing
+		int lastY;
+		int stuckTicks;
+		long castSince; // when the current cast began, so a wedged cast can be aborted instead of freezing the buddy
 
 		Buddy(Player npc)
 		{
@@ -796,11 +800,23 @@ public class PhantomBuddyManager implements IXmlReader
 			state.graceUntil = 0;
 		}
 
-		// Don't act while casting; let the current spell finish.
+		// Don't act while casting; let the current spell finish. Watchdog: a clientless caster can wedge with its
+		// casting flag stuck (interrupted mid-cast), which would freeze it forever here - abort a cast that has
+		// run far too long so the buddy recovers instead of going inert (it stops buffing AND following).
 		if (buddy.isCastingNow())
 		{
+			if (state.castSince == 0)
+			{
+				state.castSince = now;
+			}
+			else if ((now - state.castSince) > 6000)
+			{
+				buddy.abortCast();
+				state.castSince = 0;
+			}
 			return true;
 		}
+		state.castSince = 0;
 
 		// Occasionally open some small talk in party chat (async, never blocks the support work below).
 		maybeChatter(state, buddy, owner, now);
@@ -829,10 +845,41 @@ public class PhantomBuddyManager implements IXmlReader
 			return true;
 		}
 
-		// 4) Default: keep following the owner.
-		if (state.following && !buddy.isSitting() && (buddy.calculateDistance2D(owner) > FOLLOW_RANGE))
+		// 4) Default: keep following the owner, with a stuck watchdog so it never freezes far behind you.
+		if (state.following && !buddy.isSitting())
 		{
-			ensureFollow(state, owner);
+			final double dist = buddy.calculateDistance2D(owner);
+			if (dist > FOLLOW_RANGE)
+			{
+				// If it isn't closing the gap (pathfinding stalled) re-kick the follow; if it's badly stuck or has
+				// fallen a long way behind, teleport it to your side to catch up.
+				if ((Math.abs(buddy.getX() - state.lastX) + Math.abs(buddy.getY() - state.lastY)) < 30)
+				{
+					state.stuckTicks++;
+				}
+				else
+				{
+					state.stuckTicks = 0;
+				}
+				if ((state.stuckTicks >= 4) || (dist > 2500))
+				{
+					buddy.abortCast();
+					buddy.teleToLocation(new Location(owner.getX() + Rnd.get(-60, 60), owner.getY() + Rnd.get(-60, 60), owner.getZ()));
+					buddy.onTeleported();
+					buddy.broadcastUserInfo();
+					state.stuckTicks = 0;
+				}
+				else
+				{
+					ensureFollow(state, owner);
+				}
+			}
+			else
+			{
+				state.stuckTicks = 0;
+			}
+			state.lastX = buddy.getX();
+			state.lastY = buddy.getY();
 		}
 		return true;
 	}
@@ -923,13 +970,14 @@ public class PhantomBuddyManager implements IXmlReader
 	private boolean handleMp(Buddy state, Player buddy, Player owner, long now)
 	{
 		final int mp = buddy.getCurrentMpPercent();
-		final boolean danger = owner.isInCombat() || isMonsterNear(buddy);
+		// A real support player sits to recharge WHILE the party fights and only stays standing if a monster is
+		// on the buddy itself (or the owner ran off). Using owner.isInCombat() here meant a buddy farming with you
+		// was "in danger" almost constantly and never actually sat - it just kept whispering "low on mp".
+		final boolean threat = isMonsterNear(buddy);
 		if (buddy.isSitting())
 		{
-			// Stand when MP is back up, a threat appears, or the owner has wandered out of support range (so a
-			// resting buddy isn't left sitting in the dust when you run off).
 			final boolean ownerFar = buddy.calculateDistance2D(owner) > SUPPORT_RANGE;
-			if ((mp >= MP_OK_PERCENT) || danger || ownerFar)
+			if ((mp >= MP_OK_PERCENT) || threat || ownerFar)
 			{
 				buddy.standUp();
 				return false;
@@ -940,11 +988,12 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			if ((now - state.lastMpWarn) >= MP_WARN_COOLDOWN)
 			{
-				whisper(buddy, owner, "i'm low on mp");
+				whisper(buddy, owner, "i'm low on mp, sitting to recover");
 				state.lastMpWarn = now;
 			}
-			if (!danger && buddy.isInsideRadius2D(owner.getX(), owner.getY(), owner.getZ(), SUPPORT_RANGE))
+			if (!threat && buddy.isInsideRadius2D(owner.getX(), owner.getY(), owner.getZ(), SUPPORT_RANGE))
 			{
+				buddy.abortCast();
 				buddy.getAI().setIntention(Intention.IDLE);
 				buddy.sitDown();
 				return true;
@@ -1106,6 +1155,16 @@ public class PhantomBuddyManager implements IXmlReader
 		{
 			ThreadPool.schedule(() -> ensureFollow(state, owner), 1500); // re-grab follow once arrived
 		}
+	}
+
+	/**
+	 * Public reuse of the gatekeeper destination index (shared with {@link PhantomPartyManager} so recruited
+	 * party members teleport to the same named spots as buddies, without re-parsing the data).
+	 * @return the matched destination entry (normalized name -> spot), or {@code null} if no place is named
+	 */
+	public Map.Entry<String, Location> findDestination(String text)
+	{
+		return matchDestinationEntry(text);
 	}
 
 	/** @return the matched destination entry (normalized name -> spot), or {@code null} if no place is named. */

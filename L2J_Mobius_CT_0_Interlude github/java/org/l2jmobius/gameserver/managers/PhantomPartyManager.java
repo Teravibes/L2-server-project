@@ -20,10 +20,18 @@
  */
 package org.l2jmobius.gameserver.managers;
 
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.Rnd;
@@ -81,6 +89,21 @@ public class PhantomPartyManager
 	private static final long OFFLINE_GRACE = 120000;
 	private static final long BRB_GRACE = 360000;
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
+	private static final int MP_OK_PERCENT = 70;
+	private static final int MP_LOW_PERCENT = 25;
+
+	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
+	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
+	private static final HttpClient BRAIN_HTTP = HttpClient.newHttpClient();
+	private static final String BRAIN_URL = "http://127.0.0.1:5000/chat";
+	private static final Pattern TAG_ASSIST = Pattern.compile("\\[\\[\\s*ASSIST\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_FREE = Pattern.compile("\\[\\[\\s*FREE\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_FOLLOW = Pattern.compile("\\[\\[\\s*(FOLLOW|GATHER)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_STAY = Pattern.compile("\\[\\[\\s*(STAY|HOLD)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_DISBAND = Pattern.compile("\\[\\[\\s*DISBAND\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_TP = Pattern.compile("\\[\\[\\s*TP\\s*:\\s*([^\\]]+?)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_GRACE = Pattern.compile("\\[\\[\\s*GRACE\\s*:\\s*(\\d+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*\\]\\]");
 
 	// Heal skills a support member may know, strongest first (same table the buddy manager uses).
 	private static final int[] HEAL_PRIORITY =
@@ -106,6 +129,10 @@ public class PhantomPartyManager
 		List<Skill> buffs; // lazy
 		Skill heal; // lazy
 		Skill res; // lazy
+		int lastX; // follow-stuck watchdog
+		int lastY;
+		int stuckTicks;
+		long castSince; // abort a wedged cast instead of freezing the member
 
 		Member(Player npc, PartyRole role)
 		{
@@ -277,7 +304,7 @@ public class PhantomPartyManager
 
 	// ===== Commands (whisper + party chat, called from chat handlers) =====
 
-	/** Handles a whisper to a recruited member; returns the reply to deliver as a whisper, or {@code null}. */
+	/** Handles a whisper to a recruited member; a deterministic command, else a natural brain reply. */
 	public String handleWhisper(Player owner, Player member, String message)
 	{
 		final Member state = _members.get(member.getObjectId());
@@ -285,16 +312,26 @@ public class PhantomPartyManager
 		{
 			return null;
 		}
-		return command(state, owner, message);
+		if (!tryCommand(state, owner, message))
+		{
+			askBrainAsync(state, owner, message); // free-form -> natural reply (brain), canned nudge if offline
+		}
+		return null;
 	}
 
-	/** Every recruited member bound to the party-chat speaker reacts to the line (drive the whole party at once). */
+	/**
+	 * A party-chat line drives the whole party: deterministic commands ("assist", "follow", "go to X") apply to
+	 * every recruited member at once. Free-form chatter gets a reply from just ONE member, so a full party doesn't
+	 * all answer the same line at once.
+	 */
 	public void handlePartyChat(Player speaker, String message)
 	{
 		if ((speaker == null) || (message == null) || !speaker.isInParty())
 		{
 			return;
 		}
+		final List<Member> mine = new ArrayList<>();
+		boolean matched = false;
 		for (Player member : speaker.getParty().getMembers())
 		{
 			final Member state = _members.get(member.getObjectId());
@@ -302,12 +339,24 @@ public class PhantomPartyManager
 			{
 				continue;
 			}
-			command(state, speaker, message);
+			mine.add(state);
+			if (tryCommand(state, speaker, message))
+			{
+				matched = true;
+			}
+		}
+		if (!matched && !mine.isEmpty())
+		{
+			askBrainAsync(mine.get(Rnd.get(mine.size())), speaker, message);
 		}
 	}
 
-	/** Deterministic group-command parser shared by whisper and party chat. Works with the brain offline. */
-	private String command(Member state, Player owner, String message)
+	/**
+	 * Deterministic group-command parser shared by whisper and party chat (works with the brain offline).
+	 * @return {@code true} if the line matched a known command (and was acted on); {@code false} for free-form
+	 *         text the caller should route to the brain
+	 */
+	private boolean tryCommand(Member state, Player owner, String message)
 	{
 		final String text = message.toLowerCase().trim();
 
@@ -316,14 +365,14 @@ public class PhantomPartyManager
 		{
 			setFree(state, true);
 			deliver(state, "k, hunting on my own");
-			return null;
+			return true;
 		}
 		if (containsAny(text, "assist", "focus", "help me", "on my target", "kill my target", "attack my"))
 		{
 			setFree(state, false);
 			state.following = true;
 			deliver(state, "k, assisting you");
-			return null;
+			return true;
 		}
 
 		// Follow / hold.
@@ -332,7 +381,7 @@ public class PhantomPartyManager
 			state.following = true;
 			ensureFollow(state);
 			deliver(state, "coming");
-			return null;
+			return true;
 		}
 		if (containsAny(text, "stay", "wait here", "hold", "stop", "halt"))
 		{
@@ -340,7 +389,7 @@ public class PhantomPartyManager
 			setFree(state, false);
 			state.npc.getAI().setIntention(Intention.IDLE);
 			deliver(state, "holding here");
-			return null;
+			return true;
 		}
 
 		// Grace.
@@ -348,7 +397,7 @@ public class PhantomPartyManager
 		{
 			state.graceUntil = System.currentTimeMillis() + BRB_GRACE;
 			deliver(state, "np");
-			return null;
+			return true;
 		}
 
 		// Disband / dismiss.
@@ -356,26 +405,40 @@ public class PhantomPartyManager
 		{
 			deliver(state, "gl hf o/");
 			ThreadPool.schedule(() -> release(state, true), 1200);
-			return null;
+			return true;
 		}
 
 		// Status.
 		if (containsAny(text, "status", "hp?", "mp?", "you ok", "u ok"))
 		{
 			deliver(state, "hp " + state.npc.getCurrentHpPercent() + "% / mp " + state.npc.getCurrentMpPercent() + "%");
-			return null;
+			return true;
 		}
 
 		// Buffer/healer on-demand: the maintenance loops already cover it, just acknowledge.
 		if (state.isSupport() && containsAny(text, "buff", "heal", "rebuff", "res", "resurrect", "ress"))
 		{
 			deliver(state, "on it");
-			return null;
+			return true;
 		}
 
-		// Unknown: a quick canned nudge (brain-off). Natural-language routing to the brain can layer on later.
-		deliver(state, "say: assist, attack freely, follow, hold, brb or bye");
-		return null;
+		// "go to / tp <place>": teleport this member to a named gatekeeper spot (reuses the buddy destination data,
+		// so the whole party can regroup at the same place the leader's gatekeeper drops them).
+		final Map.Entry<String, Location> dest = PhantomBuddyManager.getInstance().findDestination(text);
+		if ((dest != null) && isTravelOrder(text))
+		{
+			teleportMember(state, dest.getValue());
+			deliver(state, "omw to " + dest.getKey());
+			return true;
+		}
+
+		return false; // not a known command -> caller routes free-form text to the brain
+	}
+
+	/** {@code true} when the line is an explicit order to travel now, not just mentioning a place. */
+	private static boolean isTravelOrder(String text)
+	{
+		return containsAny(text, "tp", "teleport", "port to", "port us", "go to", "lets go", "let's go", "take us", "head to", "lets head", "move to", "warp", "lets tp", "go there");
 	}
 
 	private void setFree(Member state, boolean free)
@@ -386,6 +449,187 @@ public class PhantomPartyManager
 		{
 			ensureFollow(state);
 		}
+	}
+
+	/**
+	 * Sends a free-form order to the LLM brain (PARTY mode) off the network thread for a natural reply that may
+	 * carry an action tag (assist / free / follow / stay / tp / disband / grace), executed then stripped. Falls
+	 * back to a canned nudge if the brain is offline, so the member always answers.
+	 */
+	private void askBrainAsync(Member state, Player owner, String message)
+	{
+		final int memberId = state.npc.getObjectId();
+		final int ownerId = owner.getObjectId();
+		ThreadPool.execute(() ->
+		{
+			final Member s = _members.get(memberId);
+			final Player o = (Player) World.getInstance().findObject(ownerId);
+			if ((s == null) || (o == null) || s.npc.isDead())
+			{
+				return;
+			}
+			String reply = callBrain(s.npc.getName(), o.getName(), s.role, isPartiedWith(s), message);
+			if ((reply == null) || reply.isEmpty())
+			{
+				reply = "say: assist, attack freely, follow, hold, a place to tp, brb or bye";
+			}
+			else
+			{
+				reply = applyTags(reply, s, o, message);
+			}
+			if (reply.isEmpty())
+			{
+				return;
+			}
+			final Player npc = s.npc;
+			if (npc.isInParty())
+			{
+				npc.getParty().broadcastCreatureSay(new CreatureSay(npc, ChatType.PARTY, npc.getName(), reply), npc);
+			}
+			else if (o.isOnline())
+			{
+				o.sendPacket(new CreatureSay(npc, ChatType.WHISPER, npc.getName(), reply));
+			}
+		});
+	}
+
+	/** Calls the brain bridge in PARTY mode; returns the raw reply (possibly with tags), or null if offline. */
+	private String callBrain(String name, String ownerName, PartyRole role, boolean partied, String message)
+	{
+		try
+		{
+			final HttpRequest request = HttpRequest.newBuilder() //
+				.uri(URI.create(BRAIN_URL)) //
+				.timeout(Duration.ofSeconds(20)) //
+				.header("X-FPC", name) //
+				.header("X-Mode", "PARTY") //
+				.header("X-Player", ownerName) //
+				.header("X-Role", role.name().toLowerCase()) //
+				.header("X-Partied", Boolean.toString(partied)) //
+				.header("Content-Type", "text/plain; charset=utf-8") //
+				.POST(HttpRequest.BodyPublishers.ofString(message)) //
+				.build();
+			final HttpResponse<String> response = BRAIN_HTTP.send(request, HttpResponse.BodyHandlers.ofString());
+			if (response.statusCode() == 200)
+			{
+				final String reply = response.body().trim();
+				if (!reply.isEmpty())
+				{
+					return reply;
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.fine(getClass().getSimpleName() + ": Brain bridge unreachable: " + e.getMessage());
+		}
+		return null;
+	}
+
+	/** Executes any action tag in the brain's reply and returns the cleaned, speakable text. */
+	private String applyTags(String reply, Member state, Player owner, String playerMessage)
+	{
+		final boolean partied = isPartiedWith(state);
+		if (partied && TAG_ASSIST.matcher(reply).find())
+		{
+			setFree(state, false);
+			state.following = true;
+		}
+		if (partied && TAG_FREE.matcher(reply).find())
+		{
+			setFree(state, true);
+		}
+		if (partied && TAG_FOLLOW.matcher(reply).find())
+		{
+			state.following = true;
+			ensureFollow(state);
+		}
+		if (partied && TAG_STAY.matcher(reply).find())
+		{
+			state.following = false;
+			setFree(state, false);
+			state.npc.getAI().setIntention(Intention.IDLE);
+		}
+		final Matcher grace = TAG_GRACE.matcher(reply);
+		if (grace.find())
+		{
+			state.graceUntil = System.currentTimeMillis() + (Math.min(30, Integer.parseInt(grace.group(1))) * 60000L);
+		}
+		final Matcher tp = TAG_TP.matcher(reply);
+		if (partied && tp.find())
+		{
+			final Map.Entry<String, Location> dest = PhantomBuddyManager.getInstance().findDestination(tp.group(1));
+			if (dest != null)
+			{
+				teleportMember(state, dest.getValue());
+			}
+		}
+		if (partied && TAG_DISBAND.matcher(reply).find())
+		{
+			ThreadPool.schedule(() -> release(state, true), 1000);
+		}
+		return ANY_TAG.matcher(reply).replaceAll("").trim();
+	}
+
+	/**
+	 * Teleports a recruited member and finalizes it for a clientless player ({@code onTeleported} re-spawns +
+	 * broadcasts; without it the member shows on radar but renders for nobody), then re-grabs follow on arrival.
+	 */
+	private void teleportMember(Member state, Location destination)
+	{
+		final Player npc = state.npc;
+		npc.abortCast();
+		npc.teleToLocation(destination);
+		npc.onTeleported();
+		npc.broadcastUserInfo();
+		if (state.following && (state.owner != null))
+		{
+			ThreadPool.schedule(() -> ensureFollow(state), 1500);
+		}
+	}
+
+	/**
+	 * Keeps a member moving to {@code target}, re-kicking a stalled follow and teleporting it to catch up if it
+	 * gets stuck or falls a long way behind - so a recruit never says "coming" while standing still.
+	 */
+	private void driveFollow(Member state, Player target)
+	{
+		final Player npc = state.npc;
+		if (npc.isSitting())
+		{
+			return;
+		}
+		final double dist = npc.calculateDistance2D(target);
+		if (dist <= FOLLOW_RANGE)
+		{
+			state.stuckTicks = 0;
+			state.lastX = npc.getX();
+			state.lastY = npc.getY();
+			return;
+		}
+		if ((Math.abs(npc.getX() - state.lastX) + Math.abs(npc.getY() - state.lastY)) < 30)
+		{
+			state.stuckTicks++;
+		}
+		else
+		{
+			state.stuckTicks = 0;
+		}
+		if ((state.stuckTicks >= 4) || (dist > 2800))
+		{
+			npc.abortCast();
+			npc.teleToLocation(new Location(target.getX() + Rnd.get(-60, 60), target.getY() + Rnd.get(-60, 60), target.getZ()));
+			npc.onTeleported();
+			npc.broadcastUserInfo();
+			state.stuckTicks = 0;
+		}
+		else
+		{
+			npc.setRunning();
+			npc.getAI().setIntention(Intention.FOLLOW, target);
+		}
+		state.lastX = npc.getX();
+		state.lastY = npc.getY();
 	}
 
 	/** Speaks a member reply after a short human-like pause, on party chat if partied else a whisper. */
@@ -505,7 +749,7 @@ public class PhantomPartyManager
 		}
 		else if (state.following)
 		{
-			ensureFollow(state); // keep closing the distance
+			driveFollow(state, owner); // keep closing the distance; teleport in if pathing stalls
 		}
 	}
 
@@ -540,10 +784,22 @@ public class PhantomPartyManager
 			state.graceUntil = 0;
 		}
 
+		// Cast watchdog: a clientless caster can wedge with its casting flag stuck; abort an over-long cast so the
+		// member recovers instead of freezing (stops buffing/healing AND following).
 		if (npc.isCastingNow())
 		{
+			if (state.castSince == 0)
+			{
+				state.castSince = now;
+			}
+			else if ((now - state.castSince) > 6000)
+			{
+				npc.abortCast();
+				state.castSince = 0;
+			}
 			return true;
 		}
+		state.castSince = 0;
 
 		if (state.isSupport())
 		{
@@ -577,10 +833,14 @@ public class PhantomPartyManager
 				}
 				return; // AutoUse fires the role's skills/shots on this target
 			}
-			// Nothing to assist: stick with the leader.
-			if (state.following && !npc.isSitting() && (npc.calculateDistance2D(owner) > FOLLOW_RANGE))
+			// Nothing to assist: a caster low on MP sits to recover when safe; otherwise stick with the leader.
+			if (restForMp(state))
 			{
-				ensureFollow(state);
+				return;
+			}
+			if (state.following)
+			{
+				driveFollow(state, owner);
 			}
 			return;
 		}
@@ -606,6 +866,17 @@ public class PhantomPartyManager
 	{
 		final Player npc = state.npc;
 		final Player owner = state.owner;
+
+		// 0) If the leader is out of support range, catching up beats trying to cast at nothing. This also keeps a
+		// buffer from getting starved on an out-of-range cast and "stopping" - it always moves to you first.
+		if (npc.calculateDistance2D(owner) > SUPPORT_RANGE)
+		{
+			if (state.following)
+			{
+				driveFollow(state, owner);
+			}
+			return;
+		}
 
 		// 1) Raise any fallen real player in the party.
 		final Skill res = res(state);
@@ -657,15 +928,15 @@ public class PhantomPartyManager
 		}
 
 		// 4) MP sustain: sit to recover when safe, stand on threat / recovery.
-		if (handleMp(state, now))
+		if (restForMp(state))
 		{
 			return;
 		}
 
 		// 5) Default: follow the leader.
-		if (state.following && !npc.isSitting() && (npc.calculateDistance2D(owner) > FOLLOW_RANGE))
+		if (state.following)
 		{
-			ensureFollow(state);
+			driveFollow(state, owner);
 		}
 	}
 
@@ -720,23 +991,34 @@ public class PhantomPartyManager
 		return null;
 	}
 
-	private boolean handleMp(Member state, long now)
+	/**
+	 * MP sustain for casters (support roles + nuker): sit to recharge WHILE the party fights, standing instantly
+	 * if a monster comes at the member itself or the leader runs off. Using the leader's combat state here would
+	 * mean a caster farming with you is "in danger" almost always and never actually sits.
+	 * @return {@code true} if the member is resting (caller should not also follow)
+	 */
+	private boolean restForMp(Member state)
 	{
 		final Player npc = state.npc;
 		final Player owner = state.owner;
+		if (!state.isSupport() && (state.role != PartyRole.NUKER))
+		{
+			return false; // melee roles don't sit for MP
+		}
 		final int mp = npc.getCurrentMpPercent();
-		final boolean danger = owner.isInCombat() || isMonsterNear(npc);
+		final boolean threat = isMonsterNear(npc);
 		if (npc.isSitting())
 		{
-			if ((mp >= MP_OK_PERCENT) || danger || (npc.calculateDistance2D(owner) > SUPPORT_RANGE))
+			if ((mp >= MP_OK_PERCENT) || threat || (npc.calculateDistance2D(owner) > SUPPORT_RANGE))
 			{
 				npc.standUp();
 				return false;
 			}
 			return true;
 		}
-		if ((mp < MP_LOW_PERCENT) && !danger && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE))
+		if ((mp < MP_LOW_PERCENT) && !threat && (npc.calculateDistance2D(owner) <= SUPPORT_RANGE))
 		{
+			npc.abortCast();
 			npc.getAI().setIntention(Intention.IDLE);
 			npc.sitDown();
 			return true;
