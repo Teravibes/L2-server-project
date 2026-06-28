@@ -1403,7 +1403,13 @@ public class PhantomPartyManager
 			_releasedRaidTargets.add(key);
 			return true;
 		}
-		if (_releasedRaidTargets.contains(key) && ((hated == null) || !isPartyMember(state, hated)))
+		// An ADD (raid minion), once opened, stays free for EVERY dps regardless of who currently holds it. The old
+		// rule re-locked the add the moment a party member was most-hated on it - but a melee DD out-aggros the tank
+		// on an add almost instantly, which (a) locked every OTHER DD out of that add (they all target the same
+		// lowest-HP add, so only one ever fought and the rest stood idle) and (b) bounced the holder in and out as the
+		// tank re-taunted (the "run to the add, run back, repeat" behaviour). The main BOSS keeps the strict rule so
+		// dps still hold off it while it is loose on a squishy and the tank reclaims it.
+		if (_releasedRaidTargets.contains(key) && (raid.isRaidMinion() || (hated == null) || !isPartyMember(state, hated)))
 		{
 			return true;
 		}
@@ -1460,7 +1466,9 @@ public class PhantomPartyManager
 		npc.setTarget(null);
 		final WorldObject target = state.owner.getTarget();
 		final Monster raid = ((target instanceof Monster) && ((Monster) target).isRaid()) ? (Monster) target : engagedRaid(state);
-		if ((state.role != PartyRole.TANK) && (raid != null) && positionRaidBackline(state, raid, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
+		// Only RANGED roles wait in the spread backline; a melee DD holding for the pull stays near the leader instead
+		// of running 720 out to a ranged lane and back (it has nothing to do at range anyway).
+		if (isRanged(state.role) && (raid != null) && positionRaidBackline(state, raid, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
 		{
 			return;
 		}
@@ -1666,7 +1674,7 @@ public class PhantomPartyManager
 		state.auraOfHate = state.npc.getKnownSkill(AURA_OF_HATE_ID);
 	}
 
-	/** Living mobs near the tank whose most-hated is a non-tank party member (aggro slipped onto a squishy). */
+	/** Living mobs near the tank whose most-hated is a squishy party member (aggro slipped onto a healer/caster/leader). */
 	private List<Monster> findLooseMobs(Member state)
 	{
 		final Player npc = state.npc;
@@ -1678,12 +1686,31 @@ public class PhantomPartyManager
 				continue;
 			}
 			final Creature hated = mob.getMostHated();
-			if ((hated != null) && (hated != npc) && isPartyMember(state, hated))
+			if ((hated != null) && (hated != npc) && needsRescueFrom(state, hated))
 			{
 				loose.add(mob);
 			}
 		}
 		return loose;
+	}
+
+	/**
+	 * {@code true} if a mob hating {@code who} should be taunted off it. The leader and the squishy bots (healers,
+	 * buffers, nukers) need rescuing; a melee bruiser (WARRIOR/DAGGER) holds its own add - taunting it away would just
+	 * steal the add the DD is killing and make the tank thrash between targets instead of holding the boss.
+	 */
+	private boolean needsRescueFrom(Member state, Creature who)
+	{
+		if (!isPartyMember(state, who))
+		{
+			return false;
+		}
+		final Member m = _members.get(((Player) who).getObjectId());
+		if (m == null)
+		{
+			return true; // the real human leader - always protect the player
+		}
+		return (m.role != PartyRole.WARRIOR) && (m.role != PartyRole.DAGGER) && (m.role != PartyRole.TANK);
 	}
 
 	/** {@code true} if {@code who} is a member of this tank's party (so a mob on it is a threat to protect against). */
