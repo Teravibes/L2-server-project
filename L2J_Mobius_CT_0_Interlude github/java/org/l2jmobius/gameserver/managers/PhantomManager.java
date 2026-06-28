@@ -463,6 +463,10 @@ public class PhantomManager implements IXmlReader
 	public static PartyRole roleForClass(PlayerClass playerClass)
 	{
 		final String name = playerClass.name().toLowerCase();
+		if (nameHas(name, "paladin", "dark_avenger", "darkavenger", "temple_knight", "templeknight", "shillien_knight", "shillienknight", "hell_knight", "hellknight", "phoenix_knight", "phoenixknight", "evas_templar", "eva_templar", "shillien_templar", "knight"))
+		{
+			return PartyRole.TANK;
+		}
 		if (nameHas(name, "cleric", "bishop", "oracle", "elder", "cardinal", "saint"))
 		{
 			return PartyRole.HEALER;

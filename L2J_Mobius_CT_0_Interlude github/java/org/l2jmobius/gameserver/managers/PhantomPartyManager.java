@@ -108,12 +108,18 @@ public class PhantomPartyManager
 	private static final int CASTER_RANGE_TOLERANCE = 150; // ...with this slack, so it isn't constantly re-positioning
 	private static final int CASTER_MIN_MP = 20; // below this percent a nuker stops casting and rests instead of meleeing
 	private static final int CASTER_SPREAD_STEP = 110; // lateral spacing between casters so several don't stack and eat one AoE
+	private static final int RAID_BACKLINE_RANGE = 720; // raid ranged/support lane: far enough to avoid melee AoE, close enough for heals
+	private static final int RAID_BACKLINE_TOLERANCE = 140;
+	private static final int RAID_SPREAD_STEP = 140;
 	private static final int MP_REST_SIT = 30; // a caster sits to recover when it drops to ~this and is safe
 	private static final int MP_REST_STAND = 100; // and stays seated until MP is fully restored
 	private static final long STAND_SUPPRESS = 30000; // a "stand" order keeps it on its feet this long before auto-rest resumes
 	private static final long OFFLINE_GRACE = 120000;
 	private static final long BRB_GRACE = 360000;
 	private static final long CORPSE_GRACE = 60000; // keep a fallen member as a raisable corpse this long before despawning it
+	private static final long RES_CLAIM_MS = 4500; // one healer claims a corpse long enough for the cast/request to land
+	private static final long POST_RES_HOLD_MS = 6500; // after a tank battle-res, hold DPS while it is healed and regains hate
+	private static final int POST_RES_TANK_READY_PERCENT = 85;
 	private static final int RES_SKILL_ID = 1016; // Resurrection (granted to healers on spawn)
 	private static final int AGGRESSION_ID = 28; // single-target taunt (knight tree) - "provokes a target to attack"
 	private static final int AURA_OF_HATE_ID = 18; // AoE taunt (knight tree) - "provokes nearby enemies to attack"
@@ -121,6 +127,7 @@ public class PhantomPartyManager
 	private static final long TAUNT_REFRESH_MS = 6000; // while already top of aggro, only re-taunt this often (its auto-attacks hold hate; spamming taunt just drains MP)
 	private static final int RECHARGE_ID = 1013; // Recharge - an Elder/Shillien Elder refills a party caster's MP
 	private static final int RECHARGE_MP_PERCENT = 45; // recharge a mana-user below this MP%
+	private static final int RECHARGE_RAID_MP_PERCENT = 65; // raid support starts battery work before healers are already dry
 
 	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
 	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
@@ -179,6 +186,7 @@ public class PhantomPartyManager
 		boolean healNow; // "heal me" order: heal the leader once even at full HP
 		Skill pendingBuff; // "give me X" order: a specific buff to cast on the leader next tick
 		long noSitUntil; // "stand" order: don't auto-sit for MP until this time (so it doesn't pop straight back down)
+		long recoveryUntil; // after a battle-res, especially the tank, pause DPS until it is stable again
 
 		Member(Player npc, PartyRole role)
 		{
@@ -193,12 +201,11 @@ public class PhantomPartyManager
 	}
 
 	private final ConcurrentHashMap<Integer, Member> _members = new ConcurrentHashMap<>();
-	// Raid pull control: owner objIds whose party has been released to attack the current raid fight (the tank engaged
-	// it, or the leader said "all attack"). Not present = the party holds against a raid until the tank initiates. It
-	// is a per-fight flag (not per-target) so the party can freely switch between the boss and its adds once engaged;
-	// it clears when no raid is engaged near the party (the fight is over), re-arming the hold for the next pull.
+	// Raid pull control: "all attack" force-releases an owner's party, but normal tank release is per raid mob/add.
+	// The old whole-fight release let archers swap from a tank-owned boss to an untanked Bat/Inferior and pull hate.
 	private final Set<Integer> _released = ConcurrentHashMap.newKeySet();
-	private static final long PULL_RELEASE_MS = 2500; // release the party this long after the tank engages, even if the aggro read lags
+	private final Set<Long> _releasedRaidTargets = ConcurrentHashMap.newKeySet();
+	private final ConcurrentHashMap<Integer, Long> _resClaims = new ConcurrentHashMap<>();
 	private boolean _ticking = false;
 
 	protected PhantomPartyManager()
@@ -480,6 +487,7 @@ public class PhantomPartyManager
 		if (containsAny(text, "all attack", "everyone attack", "all in", "open fire", "engage all", "attack the raid", "everyone in", "burn it"))
 		{
 			_released.add(owner.getObjectId());
+			_releasedRaidTargets.removeIf(key -> raidOwnerId(key) == owner.getObjectId());
 			if (state.role == PartyRole.TANK)
 			{
 				state.pullOrdered = true;
@@ -491,7 +499,7 @@ public class PhantomPartyManager
 		// "hold fire" - re-engage the hold (stop feeding the raid, wait for the tank).
 		if (containsAny(text, "hold fire", "hold dps", "wait for tank", "fall back", "stop dps", "back off"))
 		{
-			_released.remove(owner.getObjectId());
+			clearRaidRelease(owner);
 			state.pullOrdered = false;
 			if (state.role == PartyRole.TANK)
 			{
@@ -871,12 +879,17 @@ public class PhantomPartyManager
 		// A healer's Resurrection lands as a revive *request* (ConfirmDlg) the corpse must accept - do it server-side.
 		if (npc.isReviveRequested())
 		{
+			_resClaims.remove(npc.getObjectId());
 			npc.reviveAnswer(1); // it stands on the next tick, where deadSince is cleared and it rejoins
 			return;
 		}
 		if (state.deadSince == 0)
 		{
 			state.deadSince = now; // open the res window
+			if (state.role == PartyRole.TANK)
+			{
+				clearRaidRelease(state.owner); // the raid is no longer safe for DPS until the tank is back in control
+			}
 			if (DEBUG)
 			{
 				final Monster boss = engagedRaid(state);
@@ -937,6 +950,13 @@ public class PhantomPartyManager
 				{
 					// Stood back up since last tick (a healer raised it): clear the corpse timer and rejoin the fight.
 					state.deadSince = 0;
+					_resClaims.remove(npc.getObjectId());
+					state.recoveryUntil = now + POST_RES_HOLD_MS;
+					if (state.role == PartyRole.TANK)
+					{
+						state.pullSince = now;
+						clearRaidRelease(state.owner); // hold DPS while the tank is healed and re-establishes hate
+					}
 					ensureFollow(state);
 				}
 				if (!state.partied)
@@ -978,12 +998,21 @@ public class PhantomPartyManager
 			{
 				continue; // already logged this party this pass
 			}
-			final Monster boss = engagedRaid(state);
-			if (boss == null)
+			final List<Monster> raids = engagedRaids(state);
+			if (raids.isEmpty())
 			{
 				continue;
 			}
-			dbg("=== boss '" + boss.getName() + "' hp=" + boss.getCurrentHpPercent() + "% hating=" + describe(boss.getMostHated()) + " ===");
+			final StringBuilder bosses = new StringBuilder();
+			for (Monster boss : raids)
+			{
+				if (bosses.length() > 0)
+				{
+					bosses.append(" | ");
+				}
+				bosses.append("'").append(boss.getName()).append("' hp=").append(boss.getCurrentHpPercent()).append("% hating=").append(describe(boss.getMostHated()));
+			}
+			dbg("=== raid " + bosses + " ===");
 			for (Player member : owner.getParty().getMembers())
 			{
 				dbg("  " + roleLabel(member) + " '" + member.getName() + "' hp=" + member.getCurrentHpPercent() + "% mp=" + member.getCurrentMpPercent() + "% " + action(member));
@@ -994,14 +1023,22 @@ public class PhantomPartyManager
 	/** A live raid boss in combat near this member, or {@code null} - the boss to report on / the trigger for the trace. */
 	private Monster engagedRaid(Member state)
 	{
+		final List<Monster> raids = engagedRaids(state);
+		return raids.isEmpty() ? null : raids.get(0);
+	}
+
+	/** All live raid mobs/adds in combat near this member. */
+	private List<Monster> engagedRaids(Member state)
+	{
+		final List<Monster> raids = new ArrayList<>();
 		for (Monster mob : World.getInstance().getVisibleObjectsInRange(state.npc, Monster.class, ASSIST_MAX_RANGE))
 		{
 			if (!mob.isDead() && mob.isRaid() && mob.isInCombat())
 			{
-				return mob;
+				raids.add(mob);
 			}
 		}
-		return null;
+		return raids;
 	}
 
 	/** Role tag for a party member: its recruited role, or PLAYER for a real human (the leader). */
@@ -1164,10 +1201,10 @@ public class PhantomPartyManager
 			{
 				// Re-arm the hold once the fight is over, but only pay for the raid scan if we're actually in a pull
 				// state (so normal farming, the common case, never scans here).
-				if ((state.pullOrdered || _released.contains(owner.getObjectId())) && (engagedRaid(state) == null))
+				if ((state.pullOrdered || hasRaidRelease(owner)) && (engagedRaid(state) == null))
 				{
 					state.pullOrdered = false;
-					_released.remove(owner.getObjectId());
+					clearRaidRelease(owner);
 				}
 			}
 			else if (!mayAttackRaid(state, (Monster) t))
@@ -1186,7 +1223,7 @@ public class PhantomPartyManager
 				{
 					standIfSitting(npc);
 					npc.setTarget(t);
-					positionCaster(npc, (Monster) t);
+					positionCaster(state, (Monster) t);
 					return; // AutoUse fires the role's nukes on this target
 				}
 				npc.setTarget(null);
@@ -1194,6 +1231,14 @@ public class PhantomPartyManager
 			else if (haveTarget)
 			{
 				standIfSitting(npc);
+				if ((state.role == PartyRole.ARCHER) && ((Monster) t).isRaid())
+				{
+					npc.setTarget(t);
+					if (positionRaidBackline(state, (Monster) t, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
+					{
+						return; // get out of AoE/clump range before resuming bow fire
+					}
+				}
 				// A tank actively holds threat: pin a raid boss with taunts, or yank back any mob that slipped onto a
 				// squishy. If it taunted this tick, skip the attack re-issue and resume swinging next tick.
 				if ((state.role == PartyRole.TANK) && maintainThreat(state, (Monster) t))
@@ -1237,17 +1282,18 @@ public class PhantomPartyManager
 	}
 
 	/**
-	 * Raid pull gate. Against a RAID target: the TANK attacks only once ordered ("tank attack"), and on engaging
-	 * releases the rest of the party (records the raid as released for the owner) the moment it holds the boss's
-	 * threat, or after a short grace if the aggro read lags. Every other member attacks only once that release is
-	 * recorded - so DPS never pulls the boss off the tank at the open.
+	 * Raid pull gate. Against a RAID target: the TANK attacks only once ordered ("tank attack"). Every raid mob/add
+	 * is released separately only after that tank is most-hated for that exact target. This is deliberately stricter
+	 * than a whole-fight release: Zaken-style fights can have a boss, Inferior, and Bats active together, and ranged
+	 * DPS should not unload on an untanked add just because the tank briefly owned the first target.
 	 */
 	private boolean mayAttackRaid(Member state, Monster raid)
 	{
-		final int ownerId = state.owner.getObjectId();
+		final Player owner = state.owner;
+		final int ownerId = owner.getObjectId();
 		if (_released.contains(ownerId))
 		{
-			return true; // party already engaged this raid fight - assist freely, including switching to the adds
+			return true; // explicit "all attack" order - the player accepted the risk
 		}
 		if (state.role == PartyRole.TANK)
 		{
@@ -1255,13 +1301,82 @@ public class PhantomPartyManager
 			{
 				return false; // tank waits for the "tank attack" order before pulling
 			}
-			if ((raid.getMostHated() == state.npc) || ((System.currentTimeMillis() - state.pullSince) > PULL_RELEASE_MS))
+			if (raid.getMostHated() == state.npc)
 			{
-				_released.add(ownerId); // tank has the boss's threat - release the rest of the party
+				_releasedRaidTargets.add(raidKey(ownerId, raid.getObjectId()));
 			}
 			return true;
 		}
-		return false; // non-tank waits for the tank to engage (release)
+
+		final Member tank = findTankState(state);
+		if ((tank == null) || tank.npc.isDead())
+		{
+			return false;
+		}
+		final long now = System.currentTimeMillis();
+		if ((tank.recoveryUntil > now) && (tank.npc.getCurrentHpPercent() < POST_RES_TANK_READY_PERCENT))
+		{
+			return false; // tank just stood up; let support heal it and let taunts land before DPS resumes
+		}
+		if (tank.npc.getCurrentHpPercent() >= POST_RES_TANK_READY_PERCENT)
+		{
+			tank.recoveryUntil = 0;
+		}
+
+		final long key = raidKey(ownerId, raid.getObjectId());
+		final Creature hated = raid.getMostHated();
+		if (hated == tank.npc)
+		{
+			_releasedRaidTargets.add(key);
+			return true;
+		}
+		if (_releasedRaidTargets.contains(key) && ((hated == null) || !isPartyMember(state, hated)))
+		{
+			return true;
+		}
+		return false; // non-tank waits for the tank to own this exact raid mob/add
+	}
+
+	private boolean hasRaidRelease(Player owner)
+	{
+		if (owner == null)
+		{
+			return false;
+		}
+		final int ownerId = owner.getObjectId();
+		if (_released.contains(ownerId))
+		{
+			return true;
+		}
+		for (Long key : _releasedRaidTargets)
+		{
+			if (raidOwnerId(key) == ownerId)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	private void clearRaidRelease(Player owner)
+	{
+		if (owner == null)
+		{
+			return;
+		}
+		final int ownerId = owner.getObjectId();
+		_released.remove(ownerId);
+		_releasedRaidTargets.removeIf(key -> raidOwnerId(key) == ownerId);
+	}
+
+	private static long raidKey(int ownerId, int raidObjectId)
+	{
+		return (((long) ownerId) << 32) ^ (raidObjectId & 0xffffffffL);
+	}
+
+	private static int raidOwnerId(long key)
+	{
+		return (int) (key >> 32);
 	}
 
 	/** A member waiting on the tank's pull: stop attacking and stay near the leader (no target, so AutoUse stays quiet). */
@@ -1270,6 +1385,12 @@ public class PhantomPartyManager
 		final Player npc = state.npc;
 		standIfSitting(npc);
 		npc.setTarget(null);
+		final WorldObject target = state.owner.getTarget();
+		final Monster raid = ((target instanceof Monster) && ((Monster) target).isRaid()) ? (Monster) target : engagedRaid(state);
+		if ((state.role != PartyRole.TANK) && (raid != null) && positionRaidBackline(state, raid, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
+		{
+			return;
+		}
 		if (npc.calculateDistance2D(state.owner) > FOLLOW_RANGE)
 		{
 			if (state.following)
@@ -1289,8 +1410,13 @@ public class PhantomPartyManager
 	 * ATTACK intention drag it into melee. Walks in when too far, backs off when too close; stands still (lets the
 	 * cast happen) once already in the band. Mirrors the free-roam mage positioning in {@link PhantomManager}.
 	 */
-	private void positionCaster(Player npc, Monster target)
+	private void positionCaster(Member state, Monster target)
 	{
+		if (target.isRaid() && positionRaidBackline(state, target, CASTER_CAST_RANGE, CASTER_RANGE_TOLERANCE))
+		{
+			return;
+		}
+		final Player npc = state.npc;
 		if (npc.isCastingNow() || npc.isMovementDisabled())
 		{
 			return; // don't interrupt a cast or fight a stun
@@ -1316,6 +1442,50 @@ public class PhantomPartyManager
 		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.MOVE_TO, destination);
+	}
+
+	/**
+	 * Holds ranged DPS/support in a spread raid backline instead of FOLLOWing the leader/tank into melee. The lane is
+	 * based on the owner-side of the raid so the party stands in a familiar player-side arc, with stable per-member
+	 * lateral offsets to reduce shared AoE hits and cast interruption from body-stacking.
+	 * @return {@code true} if a move was issued and the caller should skip attacking/casting this tick
+	 */
+	private boolean positionRaidBackline(Member state, Monster raid, int desiredRange, int tolerance)
+	{
+		final Player npc = state.npc;
+		if (npc.isCastingNow() || npc.isMovementDisabled() || npc.isSitting())
+		{
+			return false;
+		}
+		Creature reference = state.owner;
+		if ((reference == null) || (raid.calculateDistance2D(reference) < 120))
+		{
+			reference = npc;
+		}
+		double dx = reference.getX() - raid.getX();
+		double dy = reference.getY() - raid.getY();
+		double distance = Math.hypot(dx, dy);
+		if (distance < 1)
+		{
+			dx = npc.getX() - raid.getX();
+			dy = npc.getY() - raid.getY();
+			distance = Math.max(1, Math.hypot(dx, dy));
+		}
+		final double nx = dx / distance;
+		final double ny = dy / distance;
+		final double perpX = -ny;
+		final double perpY = nx;
+		final int lane = ((npc.getObjectId() % 7) - 3) * RAID_SPREAD_STEP; // -3..+3 stable lanes
+		final int standX = raid.getX() + (int) (nx * desiredRange) + (int) (perpX * lane);
+		final int standY = raid.getY() + (int) (ny * desiredRange) + (int) (perpY * lane);
+		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
+		if (npc.calculateDistance2D(destination) <= tolerance)
+		{
+			return false;
+		}
+		npc.setRunning();
+		npc.getAI().setIntention(Intention.MOVE_TO, destination);
+		return true;
 	}
 
 	/**
@@ -1478,7 +1648,8 @@ public class PhantomPartyManager
 		// During a raid a healer must keep the TANK in range - the tank fights the boss in melee while the leader
 		// (often a caster) hangs back, so anchoring on the leader left the tank OUT of heal range and it died
 		// un-healed (the wipe in the trace). Follow/range-gate on the tank in a raid, otherwise on the leader.
-		final boolean raid = raidEngaged(state);
+		final Monster raidBoss = engagedRaid(state);
+		final boolean raid = raidBoss != null;
 		final Player anchor = healAnchor(state, raid);
 
 		// 0) If the anchor is out of support range, catching up beats trying to cast at nothing. This also keeps a
@@ -1487,7 +1658,10 @@ public class PhantomPartyManager
 		{
 			if (state.following)
 			{
-				driveFollow(state, anchor);
+				if (!raid || (raidBoss == null) || !positionRaidBackline(state, raidBoss, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
+				{
+					driveFollow(state, anchor);
+				}
 			}
 			return;
 		}
@@ -1529,16 +1703,41 @@ public class PhantomPartyManager
 			state.healNow = false; // can't satisfy it right now
 		}
 
-		// 1) Raise the fallen: a dead real player first, then a recruited bot member kept as a corpse (battle-res).
+		final Skill heal = heal(state);
+		// 1) Emergency heal first. A human healer does not start a res while the live tank is at 35%.
+		if (heal != null)
+		{
+			final Player urgent = mostHurtBelow(state, CRITICAL_HEAL_PERCENT);
+			if ((urgent != null) && !npc.isSkillDisabled(heal) && (npc.getCurrentMp() >= heal.getMpConsume()))
+			{
+				if (!readyToCast(npc))
+				{
+					return;
+				}
+				if (DEBUG && raid)
+				{
+					dbg("HEAL " + npc.getName() + " -> " + roleLabel(urgent) + " '" + urgent.getName() + "' (hp " + urgent.getCurrentHpPercent() + "%) with " + heal.getName());
+				}
+				npc.setTarget(urgent);
+				npc.doCast(heal);
+				return;
+			}
+		}
+
+		// 2) Raise the fallen: a dead real player first, then a recruited bot member kept as a corpse (battle-res).
 		final Skill res = res(state);
 		if ((res != null) && !npc.isSkillDisabled(res) && (npc.getCurrentMp() >= res.getMpConsume()))
 		{
-			final Player corpse = findResTarget(state);
+			final Player corpse = findResTarget(state, now);
 			if (corpse != null)
 			{
 				if (!readyToCast(npc))
 				{
 					return; // getting up first; res on the next tick
+				}
+				if (!claimResTarget(corpse, now))
+				{
+					return;
 				}
 				dbg("RES " + npc.getName() + " rezzing " + roleLabel(corpse) + " '" + corpse.getName() + "'");
 				npc.setTarget(corpse);
@@ -1547,10 +1746,32 @@ public class PhantomPartyManager
 			}
 		}
 
-		// 2) Heal. Under a raid this is pre-emptive and tank-first (a boss spike outruns reactive 60%-only healing):
+		// 3) Recharge: an Elder/Shillien Elder refills a party caster's MP (healers first, then the tank, then other
+		// casters). During raids this runs before non-critical top-offs so the Bishop/Prophet don't hit empty before
+		// the next spike. Emergency heals above still win.
+		final Skill rech = recharge(state);
+		if ((rech != null) && castable(npc, rech))
+		{
+			final Player drained = pickRechargeTarget(state, raid);
+			if (drained != null)
+			{
+				if (!readyToCast(npc))
+				{
+					return; // getting up first; recharge on the next tick
+				}
+				if (DEBUG && raid)
+				{
+					dbg("RECHARGE " + npc.getName() + " -> " + roleLabel(drained) + " '" + drained.getName() + "' (mp " + drained.getCurrentMpPercent() + "%)");
+				}
+				npc.setTarget(drained);
+				npc.doCast(rech);
+				return;
+			}
+		}
+
+		// 4) Heal. Under a raid this is pre-emptive and tank-first (a boss spike outruns reactive 60%-only healing):
 		// a critically low member is an emergency, otherwise the tank is kept topped, then the most-hurt member.
 		// Outside a raid it's the old behaviour - the most-hurt member below the normal threshold, then self.
-		final Skill heal = heal(state);
 		if (heal != null)
 		{
 			Player worst = pickHealTarget(state, raid);
@@ -1574,59 +1795,39 @@ public class PhantomPartyManager
 			}
 		}
 
-		// 2c) Recharge: an Elder/Shillien Elder refills a party caster's MP (healers first, then the tank, then other
-		// casters). This is the sustain that keeps the healers from going dry on a long fight - without a recharger
-		// the healers burn their whole mana pool keeping the tank up and then the party wipes when they hit 0.
-		final Skill rech = recharge(state);
-		if ((rech != null) && castable(npc, rech))
-		{
-			final Player drained = pickRechargeTarget(state);
-			if (drained != null)
-			{
-				if (!readyToCast(npc))
-				{
-					return; // getting up first; recharge on the next tick
-				}
-				if (DEBUG && raid)
-				{
-					dbg("RECHARGE " + npc.getName() + " -> " + roleLabel(drained) + " '" + drained.getName() + "' (mp " + drained.getCurrentMpPercent() + "%)");
-				}
-				npc.setTarget(drained);
-				npc.doCast(rech);
-				return;
-			}
-		}
-
-		// 2b) On-demand "(re)buff <who>": recast a full kit on each queued target, one buff per tick, regardless of
+		// 5) On-demand "(re)buff <who>": recast a full kit on each queued target, one buff per tick, regardless of
 		// time left. Sits below res/heal so a long "buff all" can't get someone killed while it grinds through buffs.
 		if (state.rebuffing && forceRebuff(state))
 		{
 			return;
 		}
 
-		// 3) Keep the whole party (and self) buffed; one buff per tick so it works through its list.
+		// 6) Keep the whole party (and self) buffed; one buff per tick so it works through its list.
 		if (maintainPartyBuffs(state))
 		{
 			return;
 		}
 
-		// 4) MP sustain: sit to recover when safe, stand on threat / recovery.
+		// 7) MP sustain: sit to recover when safe, stand on threat / recovery.
 		if (restForMp(state))
 		{
 			return;
 		}
 
-		// 5) Default: stay near the anchor (the tank in a raid, else the leader).
+		// 8) Default: stay near the anchor (the tank in a raid, else the leader).
 		if (state.following)
 		{
-			driveFollow(state, anchor);
+			if (!raid || (raidBoss == null) || !positionRaidBackline(state, raidBoss, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
+			{
+				driveFollow(state, anchor);
+			}
 		}
 	}
 
-	/** Who a support should keep itself in range of: a HEALER sticks to the live tank during a raid (so it can heal it), else the leader. */
+	/** Who a support should keep itself in range of: support sticks to the live tank during a raid (so it can heal it), else the leader. */
 	private Player healAnchor(Member state, boolean raid)
 	{
-		if (raid && (state.role == PartyRole.HEALER))
+		if (raid && state.isSupport())
 		{
 			final Player tank = findTank(state);
 			if ((tank != null) && !tank.isDead())
@@ -1642,7 +1843,7 @@ public class PhantomPartyManager
 	 * waiting to get back up), then a dead recruited bot member kept as a corpse. Skips itself and any corpse whose
 	 * revive is already pending (it's about to stand), so multiple healers don't double-cast on the same target.
 	 */
-	private Player findResTarget(Member state)
+	private Player findResTarget(Member state, long now)
 	{
 		final Player npc = state.npc;
 		final Party party = state.owner.getParty();
@@ -1653,7 +1854,7 @@ public class PhantomPartyManager
 		Player botCorpse = null;
 		for (Player member : party.getMembers())
 		{
-			if ((member == npc) || !member.isDead() || member.isReviveRequested() || (npc.calculateDistance2D(member) > SUPPORT_RANGE))
+			if ((member == npc) || !member.isDead() || member.isReviveRequested() || isResClaimed(member, now) || (npc.calculateDistance2D(member) > SUPPORT_RANGE))
 			{
 				continue;
 			}
@@ -1667,6 +1868,33 @@ public class PhantomPartyManager
 			}
 		}
 		return botCorpse;
+	}
+
+	private boolean isResClaimed(Player corpse, long now)
+	{
+		final Long until = _resClaims.get(corpse.getObjectId());
+		if (until == null)
+		{
+			return false;
+		}
+		if (until <= now)
+		{
+			_resClaims.remove(corpse.getObjectId(), until);
+			return false;
+		}
+		return true;
+	}
+
+	private boolean claimResTarget(Player corpse, long now)
+	{
+		final int objectId = corpse.getObjectId();
+		final Long until = _resClaims.get(objectId);
+		if ((until != null) && (until > now))
+		{
+			return false;
+		}
+		_resClaims.put(objectId, now + RES_CLAIM_MS);
+		return true;
 	}
 
 	/**
@@ -1759,9 +1987,10 @@ public class PhantomPartyManager
 	 * can keep taunting), then another caster (BUFFER/NUKER) - whichever is most starved below {@link #RECHARGE_MP_PERCENT}
 	 * and in range. Melee/archers are skipped (their MP isn't the bottleneck - they auto-attack with shots when dry).
 	 */
-	private Player pickRechargeTarget(Member state)
+	private Player pickRechargeTarget(Member state, boolean raid)
 	{
 		final Player npc = state.npc;
+		final int threshold = raid ? RECHARGE_RAID_MP_PERCENT : RECHARGE_MP_PERCENT;
 		Player best = null;
 		int bestScore = Integer.MAX_VALUE;
 		for (Member m : _members.values())
@@ -1771,9 +2000,13 @@ public class PhantomPartyManager
 				continue;
 			}
 			final int mp = m.npc.getCurrentMpPercent();
-			if (mp >= RECHARGE_MP_PERCENT)
+			if (mp >= threshold)
 			{
 				continue;
+			}
+			if (m.npc.getKnownSkill(RECHARGE_ID) != null)
+			{
+				continue; // Interlude Recharge cannot be used on a class that has Recharge
 			}
 			final int prio = (m.role == PartyRole.HEALER) ? 0 : (m.role == PartyRole.TANK) ? 1 : (m.isSupport() || (m.role == PartyRole.NUKER)) ? 2 : -1;
 			if (prio < 0)
@@ -1793,11 +2026,17 @@ public class PhantomPartyManager
 	/** The recruited TANK in this healer's party (the one that should be kept topped under a raid), or {@code null}. */
 	private Player findTank(Member state)
 	{
+		final Member tank = findTankState(state);
+		return (tank == null) ? null : tank.npc;
+	}
+
+	private Member findTankState(Member state)
+	{
 		for (Member m : _members.values())
 		{
 			if ((m.role == PartyRole.TANK) && (m.owner == state.owner) && !m.npc.isDead())
 			{
-				return m.npc;
+				return m;
 			}
 		}
 		return null;
