@@ -26,6 +26,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
@@ -50,6 +51,7 @@ import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
 import org.l2jmobius.gameserver.model.groups.PartyMessageType;
 import org.l2jmobius.gameserver.model.effects.EffectType;
+import org.l2jmobius.gameserver.model.skill.AbnormalType;
 import org.l2jmobius.gameserver.model.skill.BuffInfo;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.network.enums.ChatType;
@@ -128,6 +130,12 @@ public class PhantomPartyManager
 	private static final int RECHARGE_ID = 1013; // Recharge - an Elder/Shillien Elder refills a party caster's MP
 	private static final int RECHARGE_MP_PERCENT = 45; // recharge a mana-user below this MP%
 	private static final int RECHARGE_RAID_MP_PERCENT = 65; // raid support starts battery work before healers are already dry
+	// Raid tactics: kill-order, AoE step-out and debuff cleanse (all raid-gated, so normal farming is unaffected).
+	private static final int AOE_MIN_RADIUS = 150; // treat a raid cast as "AoE" if its affect radius is at least this (also catches splash on single-target skills)
+	private static final int AOE_STEP_MARGIN = 250; // ...and step this far PAST the blast radius when getting clear
+	private static final int PURIFY_ID = 1018; // dispels poison / bleed / paralyze / petrify
+	private static final int CURE_POISON_ID = 1012;
+	private static final int CURE_BLEEDING_ID = 61;
 
 	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
 	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
@@ -175,6 +183,9 @@ public class PhantomPartyManager
 		long lastTauntAt; // TANK: when it last taunted, so it doesn't re-taunt every tick and drain its own MP
 		Skill recharge; // lazy (support): Recharge, to refill party casters' MP
 		boolean rechargeLookedUp;
+		Skill cleanse; // lazy (support): a debuff strip (Purify / Cure Poison / Cure Bleeding)
+		Set<AbnormalType> cleansable; // which debuffs that cleanse can actually remove, so it isn't cast in vain
+		boolean cleanseLookedUp;
 		int lastX; // follow-stuck watchdog
 		int lastY;
 		int stuckTicks;
@@ -1213,7 +1224,24 @@ public class PhantomPartyManager
 				return;
 			}
 
-			if (haveTarget && state.role.mage)
+			// Raid tactics for a DPS member. (a) Kill order: while the boss has live minions/adds up, clear the adds
+			// first (only adds the tank already holds/are released, so this never pulls an untanked add). (b) Ranged
+			// step-out: an archer/nuker breaks out of a telegraphed boss AoE before it lands, then resumes fire.
+			Monster focus = haveTarget ? (Monster) t : null;
+			if (raidTarget && isDps(state.role))
+			{
+				if (isRanged(state.role) && avoidAoe(state))
+				{
+					return; // get clear of the AoE before resuming fire
+				}
+				final Monster add = raidKillOrderTarget(state, (Monster) t);
+				if (add != null)
+				{
+					focus = add;
+				}
+			}
+
+			if ((focus != null) && state.role.mage)
 			{
 				// A nuker assists by casting from range - it must NEVER be given a physical ATTACK intention, which
 				// walked it into melee to auto-hit the mob even on a full MP bar (it has no auto-attack action, so it
@@ -1222,34 +1250,34 @@ public class PhantomPartyManager
 				if (npc.getCurrentMpPercent() >= CASTER_MIN_MP)
 				{
 					standIfSitting(npc);
-					npc.setTarget(t);
-					positionCaster(state, (Monster) t);
+					npc.setTarget(focus);
+					positionCaster(state, focus);
 					return; // AutoUse fires the role's nukes on this target
 				}
 				npc.setTarget(null);
 			}
-			else if (haveTarget)
+			else if (focus != null)
 			{
 				standIfSitting(npc);
-				if ((state.role == PartyRole.ARCHER) && ((Monster) t).isRaid())
+				if ((state.role == PartyRole.ARCHER) && focus.isRaid())
 				{
-					npc.setTarget(t);
-					if (positionRaidBackline(state, (Monster) t, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
+					npc.setTarget(focus);
+					if (positionRaidBackline(state, focus, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
 					{
 						return; // get out of AoE/clump range before resuming bow fire
 					}
 				}
 				// A tank actively holds threat: pin a raid boss with taunts, or yank back any mob that slipped onto a
 				// squishy. If it taunted this tick, skip the attack re-issue and resume swinging next tick.
-				if ((state.role == PartyRole.TANK) && maintainThreat(state, (Monster) t))
+				if ((state.role == PartyRole.TANK) && maintainThreat(state, focus))
 				{
 					return;
 				}
-				if ((npc.getTarget() != t) || !npc.isInCombat())
+				if ((npc.getTarget() != focus) || !npc.isInCombat())
 				{
-					npc.setTarget(t);
+					npc.setTarget(focus);
 					npc.setRunning();
-					npc.getAI().setIntention(Intention.ATTACK, t);
+					npc.getAI().setIntention(Intention.ATTACK, focus);
 				}
 				return; // AutoUse fires the role's skills/shots on this target
 			}
@@ -1724,6 +1752,30 @@ public class PhantomPartyManager
 			}
 		}
 
+		// 1b) Cleanse: strip a removable debuff (poison / bleed / paralyze / petrify) off a party member, the tank
+		// first - a paralyzed or held tank loses the boss and the party wipes. Only fires when the support knows a
+		// cleanse that can actually remove the debuff carried, so it isn't wasted. Sits above res so a held tank is
+		// freed before it dies and needs raising.
+		final Skill cleanse = cleanse(state);
+		if ((cleanse != null) && castable(npc, cleanse))
+		{
+			final Player cursed = pickCleanseTarget(state);
+			if (cursed != null)
+			{
+				if (!readyToCast(npc))
+				{
+					return; // getting up first; cleanse on the next tick
+				}
+				if (DEBUG && raid)
+				{
+					dbg("CLEANSE " + npc.getName() + " -> " + roleLabel(cursed) + " '" + cursed.getName() + "' with " + cleanse.getName());
+				}
+				npc.setTarget(cursed);
+				npc.doCast(cleanse);
+				return;
+			}
+		}
+
 		// 2) Raise the fallen: a dead real player first, then a recruited bot member kept as a corpse (battle-res).
 		final Skill res = res(state);
 		if ((res != null) && !npc.isSkillDisabled(res) && (npc.getCurrentMp() >= res.getMpConsume()))
@@ -1744,6 +1796,14 @@ public class PhantomPartyManager
 				npc.doCast(res);
 				return;
 			}
+		}
+
+		// 2b) Step out of a telegraphed raid AoE - but only now that nobody is dying (emergency heal), debuffed (cleanse)
+		// or awaiting a res. A dead support heals nothing, yet abandoning a critical heal to dodge is worse, so the
+		// life-saving actions above always win and the support only repositions when the party is otherwise stable.
+		if (raid && avoidAoe(state))
+		{
+			return;
 		}
 
 		// 3) Recharge: an Elder/Shillien Elder refills a party caster's MP (healers first, then the tank, then other
@@ -2046,6 +2106,190 @@ public class PhantomPartyManager
 	private boolean raidEngaged(Member state)
 	{
 		return engagedRaid(state) != null;
+	}
+
+	// ===== Raid tactics: kill order, AoE step-out, debuff cleanse =====
+
+	/** A damage role (not the tank, not a support) - the roles that focus-fire and apply the raid kill order. */
+	private static boolean isDps(PartyRole role)
+	{
+		return (role != PartyRole.TANK) && !role.isSupport();
+	}
+
+	/** A ranged damage role (archer or nuker) - the roles that can step out of a boss AoE without giving up their dps. */
+	private static boolean isRanged(PartyRole role)
+	{
+		return (role == PartyRole.ARCHER) || role.mage;
+	}
+
+	/**
+	 * Raid kill order for a DPS member: when the boss has live minions/adds up, clear the adds before the boss. Returns
+	 * the add this member should switch to (the lowest-HP one, to finish kills fastest), or {@code null} to stay on the
+	 * boss. Only adds the member may legally attack (tank-held or released, per {@link #mayAttackRaid}) are considered,
+	 * so this never makes DPS pull an untanked add - it just re-prioritises among targets already in play.
+	 */
+	private Monster raidKillOrderTarget(Member state, Monster bossTarget)
+	{
+		Monster best = null;
+		int bestHp = Integer.MAX_VALUE;
+		for (Monster raid : engagedRaids(state))
+		{
+			if (raid.isDead() || !raid.isRaidMinion() || (raid == bossTarget) || !mayAttackRaid(state, raid))
+			{
+				continue;
+			}
+			final int hp = (int) raid.getCurrentHp();
+			if (hp < bestHp)
+			{
+				bestHp = hp;
+				best = raid;
+			}
+		}
+		return best;
+	}
+
+	/** A raid mob near the party currently mid-cast of a telegraphed AoE/teleport, or {@code null}. */
+	private Monster dangerousCaster(Member state)
+	{
+		for (Monster raid : engagedRaids(state))
+		{
+			if (raid.isCastingNow())
+			{
+				final Skill skill = raid.getLastSkillCast();
+				if ((skill != null) && isDangerousAoe(skill))
+				{
+					return raid;
+				}
+			}
+		}
+		return null;
+	}
+
+	/** {@code true} if a skill is a telegraphed area effect or teleport worth dodging (AoE target, splash radius, or a teleport). */
+	private static boolean isDangerousAoe(Skill skill)
+	{
+		return skill.isAOE() || (skill.getAffectRange() >= AOE_MIN_RADIUS) || skill.hasEffectType(EffectType.TELEPORT, EffectType.TELEPORT_TO_TARGET);
+	}
+
+	/**
+	 * If a raid mob is mid-cast of a telegraphed AoE and this member is standing inside the blast, move it out past the
+	 * radius (to a spread backline) and skip this tick's action. A member already clear of the radius keeps fighting.
+	 * @return {@code true} if the member is stepping out (the caller should return)
+	 */
+	private boolean avoidAoe(Member state)
+	{
+		final Monster src = dangerousCaster(state);
+		if (src == null)
+		{
+			return false;
+		}
+		final Skill danger = src.getLastSkillCast();
+		if (danger == null)
+		{
+			return false;
+		}
+		final int radius = Math.max(danger.getAffectRange(), AOE_MIN_RADIUS) + AOE_STEP_MARGIN;
+		if (state.npc.calculateDistance2D(src) >= radius)
+		{
+			return false; // already clear of the blast - no need to give up the dps/heal
+		}
+		standIfSitting(state.npc);
+		if (DEBUG)
+		{
+			dbg("AOE " + state.npc.getName() + " (" + state.role + ") steps out of '" + danger.getName() + "' cast by '" + src.getName() + "'");
+		}
+		positionRaidBackline(state, src, radius, RAID_BACKLINE_TOLERANCE);
+		return true;
+	}
+
+	/** The cleanse this support knows (Purify, else Cure Poison, else Cure Bleeding), or {@code null}; resolved once. */
+	private Skill cleanse(Member state)
+	{
+		if (!state.cleanseLookedUp)
+		{
+			state.cleanseLookedUp = true;
+			Skill known = state.npc.getKnownSkill(PURIFY_ID);
+			if (known != null)
+			{
+				state.cleanse = known;
+				state.cleansable = EnumSet.of(AbnormalType.POISON, AbnormalType.BLEEDING, AbnormalType.PARALYZE, AbnormalType.TURN_STONE);
+			}
+			else if ((known = state.npc.getKnownSkill(CURE_POISON_ID)) != null)
+			{
+				state.cleanse = known;
+				state.cleansable = EnumSet.of(AbnormalType.POISON);
+			}
+			else if ((known = state.npc.getKnownSkill(CURE_BLEEDING_ID)) != null)
+			{
+				state.cleanse = known;
+				state.cleansable = EnumSet.of(AbnormalType.BLEEDING);
+			}
+		}
+		return state.cleanse;
+	}
+
+	/**
+	 * A party member in range carrying a debuff this support's cleanse can actually remove (the tank first, since a
+	 * paralyzed/held tank drops the boss), or {@code null}. Matching the carried debuff against the cleanse's removable
+	 * set keeps it from casting on an uncurable debuff.
+	 */
+	private Player pickCleanseTarget(Member state)
+	{
+		final Set<AbnormalType> removable = state.cleansable;
+		if (removable == null)
+		{
+			return null;
+		}
+		if ((state.owner == null) || !state.owner.isInParty())
+		{
+			return (inSupportRange(state, state.owner) && carriesRemovable(state.owner, removable)) ? state.owner : null;
+		}
+		Player found = null;
+		for (Player member : state.owner.getParty().getMembers())
+		{
+			if (member.isDead() || !inSupportRange(state, member) || !carriesRemovable(member, removable))
+			{
+				continue;
+			}
+			if (isTankPlayer(state, member))
+			{
+				return member; // a debuffed tank is the priority
+			}
+			if (found == null)
+			{
+				found = member;
+			}
+		}
+		return found;
+	}
+
+	private boolean inSupportRange(Member state, Player who)
+	{
+		return (who != null) && (state.npc.calculateDistance2D(who) <= SUPPORT_RANGE);
+	}
+
+	/** {@code true} if {@code who} carries any debuff whose abnormal type is in this cleanse's removable set. */
+	private static boolean carriesRemovable(Player who, Set<AbnormalType> removable)
+	{
+		if (who == null)
+		{
+			return false;
+		}
+		for (BuffInfo info : who.getEffectList().getDebuffs())
+		{
+			if (removable.contains(info.getSkill().getAbnormalType()))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** {@code true} if {@code who} is this party's recruited tank. */
+	private boolean isTankPlayer(Member state, Player who)
+	{
+		final Member tank = findTankState(state);
+		return (tank != null) && (tank.npc == who);
 	}
 
 	private boolean maintainPartyBuffs(Member state)
