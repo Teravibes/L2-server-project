@@ -25,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import org.l2jmobius.gameserver.data.xml.SkillData;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.skill.Skill;
 
@@ -66,7 +67,7 @@ public final class PhantomBuffs
 	// Magic-only buffs: useless on a fighter, so skipped for fighter targets.
 	private static final Set<Integer> CASTER = Set.of( //
 		1085, 4355, 4400, // Acumen
-		1059, 4356, 4401, 5156, // Empower
+		1059, 1462, 4356, 4401, 5156, // Empower / Greater Empower
 		1303, 5164, // Wild Magic
 		1397, // Clarity
 		1078, 4351); // Concentration
@@ -75,6 +76,35 @@ public final class PhantomBuffs
 	private static final Set<Integer> HASTE = Set.of(1086, 4357, 4402);
 	private static final Set<Integer> ACUMEN = Set.of(1085, 4355, 4400);
 	private static final Set<Integer> BERSERKER = Set.of(1062, 4352, 4397);
+
+	// Pre-buff kits applied to a recruited member the moment it spawns, so it arrives already fully buffed for its
+	// level (no need to re-buff a fresh party from scratch). Prophet/Elder primary ids; an unknown id is skipped.
+	private static final int[] PREBUFF_COMMON =
+	{
+		1204 // Wind Walk
+	};
+	private static final int[] PREBUFF_MELEE =
+	{
+		1068, // Might
+		1086, // Haste
+		1077, // Focus
+		1242, // Death Whisper
+		1240, // Guidance
+		1268, // Vampiric Rage
+		1087, // Agility
+		1040, // Shield
+		1035 // Mental Shield
+	};
+	private static final int[] PREBUFF_CASTER =
+	{
+		1085, // Acumen
+		1059, // Empower (Greater Empower is maintained by the buffer if known; pre-buff uses base Empower)
+		1303, // Wild Magic
+		1078, // Concentration
+		1397, // Clarity
+		1036, // Magic Barrier
+		1035 // Mental Shield
+	};
 
 	// Buff names/aliases a player might ask for by name ("give me might", "ww pls"). Maps to a canonical word
 	// matched against the skills the buffer actually knows (so "might" finds "Greater Might" too).
@@ -167,16 +197,12 @@ public final class PhantomBuffs
 				return WIND_WALK.contains(skillId) || ACUMEN.contains(skillId);
 			}
 			case MEMBER:
-			{
-				if (WIND_WALK.contains(skillId))
-				{
-					return true;
-				}
-				return targetIsCaster ? (ACUMEN.contains(skillId) || BERSERKER.contains(skillId)) : HASTE.contains(skillId);
-			}
 			case LEADER:
 			default:
 			{
+				// Every party member now gets the full archetype-appropriate kit (was: members got bare essentials,
+				// which left caster members without Empower/Wild Magic etc.). Casters skip physical buffs and
+				// fighters skip caster buffs, but otherwise the buffer maintains the whole kit on everyone.
 				if (targetIsCaster && MELEE.contains(skillId))
 				{
 					return false;
@@ -186,6 +212,35 @@ public final class PhantomBuffs
 					return false;
 				}
 				return true;
+			}
+		}
+	}
+
+	/**
+	 * Applies the full archetype-appropriate buff kit to {@code target} directly (used to pre-buff a recruited
+	 * member the moment it spawns, so a fresh party arrives already buffed). Each buff is applied at its max level;
+	 * unknown ids are skipped. The buffs are real effects with normal durations - the party's buffer keeps them up
+	 * afterwards.
+	 */
+	public static void applyFullBuffs(Player target)
+	{
+		applyBuffs(target, PREBUFF_COMMON);
+		applyBuffs(target, isCaster(target) ? PREBUFF_CASTER : PREBUFF_MELEE);
+	}
+
+	private static void applyBuffs(Player target, int[] ids)
+	{
+		for (int id : ids)
+		{
+			final int max = SkillData.getInstance().getMaxLevel(id);
+			if (max <= 0)
+			{
+				continue;
+			}
+			final Skill skill = SkillData.getInstance().getSkill(id, max);
+			if (skill != null)
+			{
+				skill.applyEffects(target, target);
 			}
 		}
 	}

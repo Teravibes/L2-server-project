@@ -49,6 +49,7 @@ import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
 import org.l2jmobius.gameserver.model.groups.PartyMessageType;
+import org.l2jmobius.gameserver.model.effects.EffectType;
 import org.l2jmobius.gameserver.model.skill.BuffInfo;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.network.enums.ChatType;
@@ -84,12 +85,12 @@ public class PhantomPartyManager
 	private long _lastRaidLog;
 
 	private static final long TICK_INTERVAL = 1000;
-	private static final int MAX_PER_REQUEST = 6; // never spawn more than this from one shout, slots permitting
-	private static final int APPROACH_MIN = 1900; // how far out of sight a recruit spawns before walking in
-	private static final int APPROACH_MAX = 2600;
+	private static final int MAX_PER_REQUEST = 8; // a full party (minus the leader) from one shout, slots permitting
+	private static final int APPROACH_MIN = 700; // how far out a recruit spawns before walking in (close, so a raid party assembles fast)
+	private static final int APPROACH_MAX = 1300;
 	private static final long ARRIVE_RANGE = 220; // close enough to the leader to say "here, inv me"
 	private static final long RECRUIT_TIMEOUT = 150000; // give up + despawn if never invited within this window
-	private static final long SPAWN_STAGGER = 2500; // trickle arrivals so a group doesn't pop in on one tile
+	private static final long SPAWN_STAGGER = 500; // small gap so arrivals don't pop on one tile, but a full comp still assembles in a few seconds
 	private static final int FOLLOW_RANGE = 250;
 	private static final int LEASH_RANGE = 1400; // free-hunting member is pulled back if it strays this far
 	private static final long TRAVEL_GRACE = 180000; // after a "go to X" order, wait at the spot this long for the leader
@@ -218,7 +219,7 @@ public class PhantomPartyManager
 			}
 			final PhantomManager.Recruit wanted = recruit;
 			final int order = spawned;
-			ThreadPool.schedule(() -> spawnAndApproach(leader, wanted, memberLevel), 1200L + (order * SPAWN_STAGGER) + Rnd.get(900));
+			ThreadPool.schedule(() -> spawnAndApproach(leader, wanted, memberLevel), 400L + (order * SPAWN_STAGGER) + Rnd.get(300));
 			spawned++;
 		}
 	}
@@ -1329,13 +1330,19 @@ public class PhantomPartyManager
 		final Player npc = state.npc;
 		final Player owner = state.owner;
 
-		// 0) If the leader is out of support range, catching up beats trying to cast at nothing. This also keeps a
-		// buffer from getting starved on an out-of-range cast and "stopping" - it always moves to you first.
-		if (npc.calculateDistance2D(owner) > SUPPORT_RANGE)
+		// During a raid a healer must keep the TANK in range - the tank fights the boss in melee while the leader
+		// (often a caster) hangs back, so anchoring on the leader left the tank OUT of heal range and it died
+		// un-healed (the wipe in the trace). Follow/range-gate on the tank in a raid, otherwise on the leader.
+		final boolean raid = raidEngaged(state);
+		final Player anchor = healAnchor(state, raid);
+
+		// 0) If the anchor is out of support range, catching up beats trying to cast at nothing. This also keeps a
+		// buffer from getting starved on an out-of-range cast and "stopping" - it always moves into range first.
+		if (npc.calculateDistance2D(anchor) > SUPPORT_RANGE)
 		{
 			if (state.following)
 			{
-				driveFollow(state, owner);
+				driveFollow(state, anchor);
 			}
 			return;
 		}
@@ -1401,7 +1408,6 @@ public class PhantomPartyManager
 		final Skill heal = heal(state);
 		if (heal != null)
 		{
-			final boolean raid = raidEngaged(state);
 			Player worst = pickHealTarget(state, raid);
 			if ((worst == null) && (npc.getCurrentHpPercent() < SELF_HEAL_PERCENT))
 			{
@@ -1442,11 +1448,25 @@ public class PhantomPartyManager
 			return;
 		}
 
-		// 5) Default: follow the leader.
+		// 5) Default: stay near the anchor (the tank in a raid, else the leader).
 		if (state.following)
 		{
-			driveFollow(state, owner);
+			driveFollow(state, anchor);
 		}
+	}
+
+	/** Who a support should keep itself in range of: a HEALER sticks to the live tank during a raid (so it can heal it), else the leader. */
+	private Player healAnchor(Member state, boolean raid)
+	{
+		if (raid && (state.role == PartyRole.HEALER))
+		{
+			final Player tank = findTank(state);
+			if ((tank != null) && !tank.isDead())
+			{
+				return tank;
+			}
+		}
+		return state.owner;
 	}
 
 	/**
@@ -1605,7 +1625,11 @@ public class PhantomPartyManager
 		return targets;
 	}
 
-	/** The party member whose name appears in the order text ("buff Trevor"), or {@code null} if none is named. */
+	/**
+	 * The party member whose name appears in the order text ("buff Trevor"), or {@code null} if none is named. The
+	 * acting member's OWN name is skipped, so "Ulondras buff Rhael" (which names both the healer being addressed and
+	 * the target) resolves to the target Rhael, not the healer itself.
+	 */
 	private static Player findPartyMemberByName(Member state, String text)
 	{
 		final Player owner = state.owner;
@@ -1615,6 +1639,10 @@ public class PhantomPartyManager
 		}
 		for (Player member : owner.getParty().getMembers())
 		{
+			if (member == state.npc)
+			{
+				continue; // don't match the addressed member's own name - we want the target it should buff
+			}
 			final String name = member.getName().toLowerCase();
 			if (!name.isEmpty() && text.contains(name))
 			{
@@ -1775,7 +1803,9 @@ public class PhantomPartyManager
 				{
 					continue;
 				}
-				if (skill.isContinuous() && (skill.getEffectPoint() >= 0) && !isHealId(skill.getId()))
+				// Skip anything that heals - a continuous group heal/HoT (e.g. the Elder's) otherwise leaks into the
+				// buff list and gets recast on cooldown "for no reason", looking like a constant group-heal spam.
+				if (skill.isContinuous() && (skill.getEffectPoint() >= 0) && !isHealId(skill.getId()) && !skill.hasEffectType(EffectType.HEAL, EffectType.CPHEAL, EffectType.MANAHEAL_PERCENT))
 				{
 					list.add(skill);
 				}

@@ -1965,6 +1965,7 @@ public class PhantomManager implements IXmlReader
 		learnAllSkills(phantom);
 		grantHeal(phantom, level);
 		gearParty(phantom, level, true, role); // full caster loadout + jewelry + enchant chance, so supports survive content
+		PhantomBuffs.applyFullBuffs(phantom); // a support arrives self-buffed (Acumen/Empower etc.) too
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 	}
@@ -1985,6 +1986,7 @@ public class PhantomManager implements IXmlReader
 		// (tank) + a chance of enchant. gearParty picks the role's weapon itself (bow/dagger/staff/sword), so the
 		// old separate sword-then-swap step is gone.
 		gearParty(phantom, level, role.mage, role);
+		PhantomBuffs.applyFullBuffs(phantom); // arrive already buffed for its archetype, so a fresh party isn't unbuffed
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);

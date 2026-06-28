@@ -514,7 +514,12 @@ public class FakePlayerChatManager implements IXmlReader
 				continue;
 			}
 			levelToken = false;
-			final PartyRole role = PartyRole.fromToken(token);
+			// Match the word, falling back to its singular so plurals work ("2 mages", "2 healers", "tanks").
+			PartyRole role = PartyRole.fromToken(token);
+			if ((role == null) && (token.length() > 1) && token.endsWith("s"))
+			{
+				role = PartyRole.fromToken(token.substring(0, token.length() - 1));
+			}
 			if (role != null)
 			{
 				for (int i = 0; (i < pendingCount) && (recruits.size() < 8); i++)

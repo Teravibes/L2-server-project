@@ -50,6 +50,7 @@ import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
 import org.l2jmobius.gameserver.model.groups.PartyMessageType;
 import org.l2jmobius.gameserver.model.skill.BuffInfo;
+import org.l2jmobius.gameserver.model.effects.EffectType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
@@ -1284,7 +1285,8 @@ public class PhantomBuddyManager implements IXmlReader
 				{
 					continue;
 				}
-				if (skill.isContinuous() && (skill.getEffectPoint() >= 0) && !isHealSkill(skill.getId()))
+				// Exclude heals (incl. a continuous group heal/HoT) so they aren't recast on cooldown like a buff.
+				if (skill.isContinuous() && (skill.getEffectPoint() >= 0) && !isHealSkill(skill.getId()) && !skill.hasEffectType(EffectType.HEAL, EffectType.CPHEAL, EffectType.MANAHEAL_PERCENT))
 				{
 					list.add(skill);
 				}
