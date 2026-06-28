@@ -118,6 +118,9 @@ public class PhantomPartyManager
 	private static final int AGGRESSION_ID = 28; // single-target taunt (knight tree) - "provokes a target to attack"
 	private static final int AURA_OF_HATE_ID = 18; // AoE taunt (knight tree) - "provokes nearby enemies to attack"
 	private static final int THREAT_SCAN_RANGE = 1000; // how far a tank looks for a mob loose on a squishy party member
+	private static final long TAUNT_REFRESH_MS = 6000; // while already top of aggro, only re-taunt this often (its auto-attacks hold hate; spamming taunt just drains MP)
+	private static final int RECHARGE_ID = 1013; // Recharge - an Elder/Shillien Elder refills a party caster's MP
+	private static final int RECHARGE_MP_PERCENT = 45; // recharge a mana-user below this MP%
 
 	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
 	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
@@ -162,6 +165,9 @@ public class PhantomPartyManager
 		Skill aggression; // lazy (TANK): single-target taunt
 		Skill auraOfHate; // lazy (TANK): AoE taunt
 		boolean tauntLookedUp; // whether the two taunt skills have been resolved from the known list yet
+		long lastTauntAt; // TANK: when it last taunted, so it doesn't re-taunt every tick and drain its own MP
+		Skill recharge; // lazy (support): Recharge, to refill party casters' MP
+		boolean rechargeLookedUp;
 		int lastX; // follow-stuck watchdog
 		int lastY;
 		int stuckTicks;
@@ -1341,8 +1347,24 @@ public class PhantomPartyManager
 		}
 		// Pick the mob to pin: a mob loose on a squishy first (nearest one), else the raid boss we're tanking.
 		final List<Monster> loose = findLooseMobs(state);
-		final Monster victim = !loose.isEmpty() ? nearest(npc, loose) : (assistTarget.isRaid() ? assistTarget : null);
-		if (victim == null)
+		final Monster victim;
+		if (!loose.isEmpty())
+		{
+			victim = nearest(npc, loose); // a mob slipped onto a squishy - always grab it back now
+		}
+		else if (assistTarget.isRaid())
+		{
+			// Already top of the boss's aggro? DON'T re-taunt every tick - the tank's own auto-attacks keep it on
+			// top, so spamming Aggression/Aura of Hate every second just drained the tank's whole MP bar (then it
+			// couldn't taunt when a DPS spike finally pulled aggro, and the party wiped). Re-taunt only if aggro is
+			// NOT on us, or a slow refresh interval has elapsed as insurance.
+			if ((assistTarget.getMostHated() == npc) && ((System.currentTimeMillis() - state.lastTauntAt) < TAUNT_REFRESH_MS))
+			{
+				return false; // threat is held - keep swinging and save the MP
+			}
+			victim = assistTarget;
+		}
+		else
 		{
 			return false; // plain trash and nothing slipped - ordinary melee hate is enough, save the taunt
 		}
@@ -1354,6 +1376,7 @@ public class PhantomPartyManager
 			{
 				dbg("TAUNT " + npc.getName() + " casts Aggression on '" + victim.getName() + "' (was hating " + describe(victim.getMostHated()) + ")");
 			}
+			state.lastTauntAt = System.currentTimeMillis();
 			npc.setTarget(victim);
 			npc.setRunning();
 			npc.doCast(state.aggression);
@@ -1365,6 +1388,7 @@ public class PhantomPartyManager
 			{
 				dbg("TAUNT " + npc.getName() + " casts Aura of Hate near '" + victim.getName() + "' (was hating " + describe(victim.getMostHated()) + ")");
 			}
+			state.lastTauntAt = System.currentTimeMillis();
 			npc.setTarget(victim); // AURA taunt centres its effect on the caster; a valid hostile target satisfies the cast
 			npc.doCast(state.auraOfHate);
 			return true;
@@ -1550,6 +1574,29 @@ public class PhantomPartyManager
 			}
 		}
 
+		// 2c) Recharge: an Elder/Shillien Elder refills a party caster's MP (healers first, then the tank, then other
+		// casters). This is the sustain that keeps the healers from going dry on a long fight - without a recharger
+		// the healers burn their whole mana pool keeping the tank up and then the party wipes when they hit 0.
+		final Skill rech = recharge(state);
+		if ((rech != null) && castable(npc, rech))
+		{
+			final Player drained = pickRechargeTarget(state);
+			if (drained != null)
+			{
+				if (!readyToCast(npc))
+				{
+					return; // getting up first; recharge on the next tick
+				}
+				if (DEBUG && raid)
+				{
+					dbg("RECHARGE " + npc.getName() + " -> " + roleLabel(drained) + " '" + drained.getName() + "' (mp " + drained.getCurrentMpPercent() + "%)");
+				}
+				npc.setTarget(drained);
+				npc.doCast(rech);
+				return;
+			}
+		}
+
 		// 2b) On-demand "(re)buff <who>": recast a full kit on each queued target, one buff per tick, regardless of
 		// time left. Sits below res/heal so a long "buff all" can't get someone killed while it grinds through buffs.
 		if (state.rebuffing && forceRebuff(state))
@@ -1694,6 +1741,53 @@ public class PhantomPartyManager
 			}
 		}
 		return false;
+	}
+
+	/** The Recharge skill this support knows (Elder/Shillien Elder have it; Bishops don't), or {@code null}. */
+	private Skill recharge(Member state)
+	{
+		if (!state.rechargeLookedUp)
+		{
+			state.rechargeLookedUp = true;
+			state.recharge = state.npc.getKnownSkill(RECHARGE_ID);
+		}
+		return state.recharge;
+	}
+
+	/**
+	 * The party mana-user this support should Recharge: a HEALER first (so it can keep healing), then the TANK (so it
+	 * can keep taunting), then another caster (BUFFER/NUKER) - whichever is most starved below {@link #RECHARGE_MP_PERCENT}
+	 * and in range. Melee/archers are skipped (their MP isn't the bottleneck - they auto-attack with shots when dry).
+	 */
+	private Player pickRechargeTarget(Member state)
+	{
+		final Player npc = state.npc;
+		Player best = null;
+		int bestScore = Integer.MAX_VALUE;
+		for (Member m : _members.values())
+		{
+			if ((m.owner != state.owner) || (m.npc == npc) || m.npc.isDead() || (npc.calculateDistance2D(m.npc) > SUPPORT_RANGE))
+			{
+				continue;
+			}
+			final int mp = m.npc.getCurrentMpPercent();
+			if (mp >= RECHARGE_MP_PERCENT)
+			{
+				continue;
+			}
+			final int prio = (m.role == PartyRole.HEALER) ? 0 : (m.role == PartyRole.TANK) ? 1 : (m.isSupport() || (m.role == PartyRole.NUKER)) ? 2 : -1;
+			if (prio < 0)
+			{
+				continue; // melee/archer don't need recharge
+			}
+			final int score = (prio * 1000) + mp; // higher priority first, then the most drained
+			if (score < bestScore)
+			{
+				bestScore = score;
+				best = m.npc;
+			}
+		}
+		return best;
 	}
 
 	/** The recruited TANK in this healer's party (the one that should be kept topped under a raid), or {@code null}. */
