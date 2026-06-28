@@ -1862,8 +1862,12 @@ public class PhantomPartyManager
 			return;
 		}
 
-		// 6) Keep the whole party (and self) buffed; one buff per tick so it works through its list.
-		if (maintainPartyBuffs(state))
+		// 6) Keep the whole party (and self) buffed; one buff per tick so it works through its list. NOT during a raid:
+		// members arrive pre-buffed and a real party buffs BEFORE the pull, not during it. Mid-boss the maintenance
+		// re-cast just chases buffs that the boss's hits keep interrupting (it reads as a support stuck "re-buffing one
+		// person"), and it steals casts the support should be spending on heals/recharge. So while a raid boss is
+		// engaged the support skips buff upkeep entirely and stays on healing/battery duty; upkeep resumes after.
+		if (!raid && maintainPartyBuffs(state))
 		{
 			return;
 		}
@@ -2031,6 +2035,26 @@ public class PhantomPartyManager
 		return false;
 	}
 
+	/**
+	 * {@code true} if another support in the party is right now casting the same buff on the same target. With a
+	 * buffer (Prophet) and one or more healers (Elder) all maintaining their own kits, the kits overlap on the common
+	 * buffs (Wind Walk etc.); without this guard two supports both see it "missing" on the same tick and both cast it,
+	 * wasting MP and reading as several supports piling buffs on one person. The complementary buffs (a Prophet's
+	 * fighter kit, an Elder's caster kit) are unaffected - only a genuine same-buff/same-target collision is skipped.
+	 */
+	private boolean beingBuffedByAnother(Member state, Player target, Skill buff)
+	{
+		for (Member m : _members.values())
+		{
+			if ((m != state) && m.isSupport() && (m.owner == state.owner) && !m.npc.isDead() && m.npc.isCastingNow() //
+				&& (m.npc.getTarget() == target) && (m.npc.getLastSkillCast() != null) && (m.npc.getLastSkillCast().getId() == buff.getId()))
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** The Recharge skill this support knows (Elder/Shillien Elder have it; Bishops don't), or {@code null}. */
 	private Skill recharge(Member state)
 	{
@@ -2165,10 +2189,18 @@ public class PhantomPartyManager
 		return null;
 	}
 
-	/** {@code true} if a skill is a telegraphed area effect or teleport worth dodging (AoE target, splash radius, or a teleport). */
+	/**
+	 * {@code true} if a skill is a telegraphed area effect worth dodging. It must (a) hit an area - an AoE target type
+	 * or a splash radius - AND (b) actually deal damage. The damage gate matters: a boss's area <b>Root/Hold/snare</b>
+	 * (e.g. Zaken's Chief Mate "Hold", abnormal ROOT_MAGICALLY) is an AoE with no damage; stepping out of it is both
+	 * pointless (standing in a root doesn't hurt) and impossible (a rooted member can't move), and a boss that spams it
+	 * was making the whole backline abandon healing/fire every tick to "dodge" an un-dodgeable snare. Only real AoE
+	 * <i>damage</i> is worth breaking position for.
+	 */
 	private static boolean isDangerousAoe(Skill skill)
 	{
-		return skill.isAOE() || (skill.getAffectRange() >= AOE_MIN_RADIUS) || skill.hasEffectType(EffectType.TELEPORT, EffectType.TELEPORT_TO_TARGET);
+		return (skill.isAOE() || (skill.getAffectRange() >= AOE_MIN_RADIUS)) //
+			&& skill.hasEffectType(EffectType.MAGICAL_ATTACK, EffectType.PHYSICAL_ATTACK, EffectType.HP_DRAIN, EffectType.DEATH_LINK);
 	}
 
 	/**
@@ -2436,6 +2468,10 @@ public class PhantomPartyManager
 			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
 			{
+				if (beingBuffedByAnother(state, target, buff))
+				{
+					continue; // another support is already landing this exact buff on this target - don't double-cast it
+				}
 				if (!readyToCast(npc))
 				{
 					return true; // getting up first; cast on the next tick
