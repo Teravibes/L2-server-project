@@ -452,7 +452,9 @@ public class FakePlayerChatManager implements IXmlReader
 			}
 			sb.append(Pattern.quote(name));
 		}
-		CLASS_PATTERN = Pattern.compile("\\b(" + sb + ")\\b", Pattern.CASE_INSENSITIVE);
+		// Trailing "s?" so a plural class request ("2 bishops", "3 hawkeyes") still matches the class by name instead
+		// of falling through to the generic role token (which would spawn the default class, e.g. an Elven Elder).
+		CLASS_PATTERN = Pattern.compile("\\b(" + sb + ")s?\\b", Pattern.CASE_INSENSITIVE);
 	}
 
 	/**
