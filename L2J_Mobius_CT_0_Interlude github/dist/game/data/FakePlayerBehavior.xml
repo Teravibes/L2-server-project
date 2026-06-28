@@ -145,6 +145,56 @@
 		<point x="88448" y="-140512" z="-1542"/>
 	</profile>
 
+	<!-- ===== Starting villages: short landmark tours (race is set on the populations) ===== -->
+	<profile name="mv_ti_tour" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="-83990" y="243336" z="-3700"/>
+		<point x="-83964" y="242680" z="-3700"/>
+		<point x="-84512" y="242679" z="-3700"/>
+		<point x="-83742" y="242214" z="-3700"/>
+		<point x="-84903" y="243489" z="-3700"/>
+		<point x="-83808" y="243637" z="-3700"/>
+	</profile>
+	<profile name="mv_elf_tour" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="46926" y="51511" z="-2976"/>
+		<point x="45487" y="49767" z="-2950"/>
+		<point x="45896" y="49831" z="-2950"/>
+		<point x="44798" y="49475" z="-2950"/>
+		<point x="45100" y="49025" z="-2950"/>
+		<point x="45912" y="49363" z="-2950"/>
+	</profile>
+	<profile name="mv_delf_tour" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="12501" y="16768" z="-4500"/>
+		<point x="12104" y="17385" z="-4500"/>
+		<point x="12519" y="16376" z="-4500"/>
+		<point x="10355" y="17270" z="-4500"/>
+		<point x="10691" y="16343" z="-4500"/>
+		<point x="10146" y="16965" z="-4500"/>
+	</profile>
+	<profile name="mv_dwarf_tour" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="115072" y="-178176" z="-880"/>
+		<point x="115248" y="-178816" z="-850"/>
+		<point x="115271" y="-178561" z="-820"/>
+		<point x="115249" y="-177859" z="-820"/>
+		<point x="115485" y="-178077" z="-820"/>
+		<point x="115790" y="-179146" z="-890"/>
+	</profile>
+	<profile name="mv_orc_tour" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="-44316" y="-113136" z="-80"/>
+		<point x="-44296" y="-114048" z="-80"/>
+		<point x="-44704" y="-112896" z="-80"/>
+		<point x="-44206" y="-113392" z="-80"/>
+		<point x="-43970" y="-114150" z="-80"/>
+		<point x="-44232" y="-113701" z="-80"/>
+	</profile>
+	<profile name="mv_gludin_tour" type="VISIT" run="false" pauseMin="25" pauseMax="70">
+		<point x="-83520" y="150560" z="-3000"/>
+		<point x="-82464" y="150848" z="-3000"/>
+		<point x="-84064" y="150864" z="-3000"/>
+		<point x="-83408" y="151376" z="-3000"/>
+		<point x="-81787" y="150780" z="-3000"/>
+		<point x="-82909" y="150357" z="-3000"/>
+	</profile>
+
 	<profile name="loiter" type="WANDER" radius="150" run="false" pauseMin="25" pauseMax="80"/>
 
 	<population name="giran_gatekeeper" x="83384" y="148145" z="-3407" radius="240" count="15" minLevel="1" maxLevel="76" profile="mv_giran_gatekeeper" />
@@ -189,8 +239,8 @@
 	<population name="dwarf_movers" x="115072" y="-178176" z="-880" radius="400" count="2" minLevel="1" maxLevel="20" profile="mv_dwarf_movers" race="DWARF" />
 	<population name="orc_gatekeeper" x="-44316" y="-113136" z="-80" radius="220" count="3" minLevel="1" maxLevel="20" profile="mv_orc_gatekeeper" race="ORC" />
 	<population name="orc_movers" x="-44316" y="-113136" z="-80" radius="450" count="1" minLevel="1" maxLevel="20" profile="mv_orc_movers" race="ORC" />
-	<population name="gludin_gatekeeper" x="-83520" y="150560" z="-3000" radius="260" count="12" minLevel="1" maxLevel="30" profile="mv_gludin_gatekeeper" />
-	<population name="gludin_movers" x="-83520" y="150560" z="-3000" radius="600" count="1" minLevel="1" maxLevel="30" profile="mv_gludin_movers" />
+	<population name="gludin_gatekeeper" x="-83520" y="150560" z="-3000" radius="260" count="12" minLevel="1" maxLevel="30" profile="mv_gludin_gatekeeper" race="HUMAN" />
+	<population name="gludin_movers" x="-83520" y="150560" z="-3000" radius="600" count="1" minLevel="1" maxLevel="30" profile="mv_gludin_movers" race="HUMAN" />
 	<population name="gludio_gatekeeper" x="-12726" y="122792" z="-3000" radius="100" count="5" minLevel="5" maxLevel="35" profile="mv_gludio_gatekeeper" />
 	<population name="Giran Sellers" x="82094" y="148147" z="-3000" radius="649" count="150" minLevel="1" maxLevel="40" profile="mv_giran_sellers" store="SELL" fullStock="true">
 		<point x="82590" y="147888" z="-3000" />
@@ -291,6 +341,49 @@
 	<population name="Schuttgart Sellers" x="86800" y="-142400" z="-1341" radius="380" count="20" minLevel="55" maxLevel="76" profile="mv_town_seller" store="SELL" />
 	<population name="Schuttgart Buyers" x="87400" y="-142200" z="-1341" radius="350" count="10" minLevel="55" maxLevel="76" profile="mv_town_buyer" store="BUY" />
 	<population name="Schuttgart Crafters" x="86600" y="-141900" z="-1400" radius="300" count="4" minLevel="55" maxLevel="76" profile="mv_town_crafter" store="CRAFT" />
+
+	<!-- ============================================================= -->
+	<!-- Starting villages (smaller crowds, mostly the local race)      -->
+	<!-- These already have gatekeeper/movers groups above; here we add -->
+	<!-- a little town life and small shops.                            -->
+	<!-- ============================================================= -->
+
+	<!-- Talking Island (Human) -->
+	<population name="ti_crowd" x="-84000" y="243000" z="-3700" radius="350" count="6" minLevel="1" maxLevel="18" profile="mv_town_life" race="HUMAN" />
+	<population name="ti_tour" x="-84000" y="243000" z="-3700" radius="900" count="3" minLevel="1" maxLevel="18" profile="mv_ti_tour" race="HUMAN" />
+	<population name="Talking Island Sellers" x="-84050" y="243150" z="-3700" radius="260" count="8" minLevel="1" maxLevel="20" profile="mv_town_seller" store="SELL" race="HUMAN" />
+	<population name="Talking Island Buyers" x="-83820" y="242900" z="-3700" radius="240" count="4" minLevel="1" maxLevel="20" profile="mv_town_buyer" store="BUY" race="HUMAN" />
+
+	<!-- Elven Village (Elf) -->
+	<population name="elf_crowd" x="45400" y="49600" z="-2950" radius="350" count="6" minLevel="1" maxLevel="20" profile="mv_town_life" race="ELF" />
+	<population name="elf_tour" x="45400" y="49600" z="-2950" radius="900" count="3" minLevel="1" maxLevel="20" profile="mv_elf_tour" race="ELF" />
+	<population name="Elven Village Sellers" x="45450" y="49700" z="-2950" radius="260" count="8" minLevel="1" maxLevel="20" profile="mv_town_seller" store="SELL" race="ELF" />
+	<population name="Elven Village Buyers" x="45200" y="49450" z="-2950" radius="240" count="4" minLevel="1" maxLevel="20" profile="mv_town_buyer" store="BUY" race="ELF" />
+
+	<!-- Dark Elf Village (Dark Elf) -->
+	<population name="delf_crowd" x="11800" y="16800" z="-4500" radius="350" count="6" minLevel="1" maxLevel="20" profile="mv_town_life" race="DARK_ELF" />
+	<population name="delf_tour" x="11800" y="16800" z="-4500" radius="900" count="3" minLevel="1" maxLevel="20" profile="mv_delf_tour" race="DARK_ELF" />
+	<population name="Dark Elf Village Sellers" x="12200" y="16900" z="-4500" radius="260" count="8" minLevel="1" maxLevel="20" profile="mv_town_seller" store="SELL" race="DARK_ELF" />
+	<population name="Dark Elf Village Buyers" x="11900" y="16500" z="-4500" radius="240" count="4" minLevel="1" maxLevel="20" profile="mv_town_buyer" store="BUY" race="DARK_ELF" />
+
+	<!-- Dwarven Village (Dwarf - also the natural crafting hub) -->
+	<population name="dwarf_crowd" x="115400" y="-178400" z="-840" radius="350" count="6" minLevel="1" maxLevel="20" profile="mv_town_life" race="DWARF" />
+	<population name="dwarf_tour" x="115400" y="-178400" z="-840" radius="900" count="3" minLevel="1" maxLevel="20" profile="mv_dwarf_tour" race="DWARF" />
+	<population name="Dwarven Village Sellers" x="115400" y="-178300" z="-840" radius="260" count="8" minLevel="1" maxLevel="20" profile="mv_town_seller" store="SELL" race="DWARF" />
+	<population name="Dwarven Village Buyers" x="115200" y="-178600" z="-840" radius="240" count="4" minLevel="1" maxLevel="20" profile="mv_town_buyer" store="BUY" race="DWARF" />
+	<population name="Dwarven Village Crafters" x="115550" y="-178050" z="-820" radius="220" count="3" minLevel="1" maxLevel="20" profile="mv_town_crafter" store="CRAFT" />
+
+	<!-- Orc Village (Orc) -->
+	<population name="orc_crowd" x="-44400" y="-113500" z="-80" radius="350" count="6" minLevel="1" maxLevel="20" profile="mv_town_life" race="ORC" />
+	<population name="orc_tour" x="-44400" y="-113500" z="-80" radius="900" count="3" minLevel="1" maxLevel="20" profile="mv_orc_tour" race="ORC" />
+	<population name="Orc Village Sellers" x="-44350" y="-113300" z="-80" radius="260" count="8" minLevel="1" maxLevel="20" profile="mv_town_seller" store="SELL" race="ORC" />
+	<population name="Orc Village Buyers" x="-44550" y="-113600" z="-80" radius="240" count="4" minLevel="1" maxLevel="20" profile="mv_town_buyer" store="BUY" race="ORC" />
+
+	<!-- Gludin Village (Human) -->
+	<population name="gludin_crowd" x="-82800" y="150800" z="-3000" radius="400" count="8" minLevel="1" maxLevel="30" profile="mv_town_life" race="HUMAN" />
+	<population name="gludin_tour" x="-82800" y="150800" z="-3000" radius="1000" count="3" minLevel="1" maxLevel="30" profile="mv_gludin_tour" race="HUMAN" />
+	<population name="Gludin Sellers" x="-82700" y="150850" z="-3000" radius="300" count="10" minLevel="1" maxLevel="30" profile="mv_town_seller" store="SELL" race="HUMAN" />
+	<population name="Gludin Buyers" x="-83100" y="150650" z="-3000" radius="280" count="5" minLevel="1" maxLevel="30" profile="mv_town_buyer" store="BUY" race="HUMAN" />
 
 	<default profile="loiter"/>
 </list>

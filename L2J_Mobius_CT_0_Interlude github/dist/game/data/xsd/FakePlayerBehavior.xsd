@@ -11,6 +11,7 @@
 									<xs:attribute type="xs:int" name="x" use="required" />
 									<xs:attribute type="xs:int" name="y" use="required" />
 									<xs:attribute type="xs:int" name="z" use="required" />
+									<xs:attribute type="xs:int" name="delay" use="optional" />
 								</xs:complexType>
 							</xs:element>
 						</xs:sequence>
