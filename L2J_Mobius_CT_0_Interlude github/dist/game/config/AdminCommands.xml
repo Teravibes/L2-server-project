@@ -21,6 +21,8 @@
 	<admin command="givehero" description="Give unclaimed hero status." accessLevel="100" confirmDlg="true" />
 	<admin command="endolympiad" description="End current Olympiad period." accessLevel="100" confirmDlg="true" />
 	<admin command="setconfig" description="Open config server panel." accessLevel="100" />
+	<admin command="rates" description="Open the live rates panel." accessLevel="100" />
+	<admin command="setrate" description="Set a server rate live." accessLevel="100" />
 	<admin command="config_server" description="Open server config panel." accessLevel="100" />
 	<admin command="gmon" description="Enable GM mode." accessLevel="100" />
 
