@@ -113,6 +113,12 @@ public class PhantomPartyManager
 	private static final int RAID_BACKLINE_RANGE = 720; // raid ranged/support lane: far enough to avoid melee AoE, close enough for heals
 	private static final int RAID_BACKLINE_TOLERANCE = 140;
 	private static final int RAID_SPREAD_STEP = 140;
+	// Archers must hold INSIDE bow reach (the generic 720 backline is past a bow's ~500 range, so they could never fire
+	// from it - the big ranged DPS bug). Hold range is derived from the bow's actual reach; the spread is tighter than
+	// the caster lane so the outer lanes (radial + lateral) still land within reach.
+	private static final int ARCHER_RANGE_MARGIN = 80; // hold this far inside the bow's reach so it actually shoots
+	private static final int ARCHER_BACKLINE_TOLERANCE = 110;
+	private static final int ARCHER_SPREAD_STEP = 70;
 	private static final int MP_REST_SIT = 30; // a caster sits to recover when it drops to ~this and is safe
 	private static final int MP_REST_STAND = 100; // and stays seated until MP is fully restored
 	private static final long STAND_SUPPRESS = 30000; // a "stand" order keeps it on its feet this long before auto-rest resumes
@@ -1053,6 +1059,16 @@ public class PhantomPartyManager
 		return raids.isEmpty() ? null : raids.get(0);
 	}
 
+	/**
+	 * Radial hold distance for an archer fighting a raid: just inside its bow's actual reach (so it can fire), still
+	 * outside melee-AoE, and never past the normal backline. Derived from the equipped bow so it adapts to grade.
+	 */
+	private int archerHoldRange(Member state)
+	{
+		final int reach = state.npc.getPhysicalAttackRange();
+		return Math.max(350, Math.min(RAID_BACKLINE_RANGE, reach - ARCHER_RANGE_MARGIN));
+	}
+
 	/** The engaged main raid boss (a raid that is NOT a minion/add), or {@code null} - the target the tank should hold. */
 	private Monster engagedBoss(Member state)
 	{
@@ -1302,9 +1318,11 @@ public class PhantomPartyManager
 				if ((state.role == PartyRole.ARCHER) && focus.isRaid())
 				{
 					npc.setTarget(focus);
-					if (positionRaidBackline(state, focus, RAID_BACKLINE_RANGE, RAID_BACKLINE_TOLERANCE))
+					// Hold inside bow reach (not the 720 backline a bow can't shoot from), with a tight spread so the
+					// outer lanes stay in range too.
+					if (positionRaidBackline(state, focus, archerHoldRange(state), ARCHER_BACKLINE_TOLERANCE, ARCHER_SPREAD_STEP))
 					{
-						return; // get out of AoE/clump range before resuming bow fire
+						return; // get into bow range / out of a clump before resuming fire
 					}
 				}
 				// A tank actively holds threat: pin a raid boss with taunts, or yank back any mob that slipped onto a
@@ -1533,6 +1551,11 @@ public class PhantomPartyManager
 	 */
 	private boolean positionRaidBackline(Member state, Monster raid, int desiredRange, int tolerance)
 	{
+		return positionRaidBackline(state, raid, desiredRange, tolerance, RAID_SPREAD_STEP);
+	}
+
+	private boolean positionRaidBackline(Member state, Monster raid, int desiredRange, int tolerance, int spreadStep)
+	{
 		final Player npc = state.npc;
 		if (npc.isCastingNow() || npc.isMovementDisabled() || npc.isSitting())
 		{
@@ -1556,7 +1579,7 @@ public class PhantomPartyManager
 		final double ny = dy / distance;
 		final double perpX = -ny;
 		final double perpY = nx;
-		final int lane = ((npc.getObjectId() % 7) - 3) * RAID_SPREAD_STEP; // -3..+3 stable lanes
+		final int lane = ((npc.getObjectId() % 7) - 3) * spreadStep; // -3..+3 stable lanes
 		final int standX = raid.getX() + (int) (nx * desiredRange) + (int) (perpX * lane);
 		final int standY = raid.getY() + (int) (ny * desiredRange) + (int) (perpY * lane);
 		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
