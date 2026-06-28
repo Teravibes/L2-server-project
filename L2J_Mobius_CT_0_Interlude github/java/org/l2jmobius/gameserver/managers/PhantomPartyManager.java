@@ -2367,7 +2367,11 @@ public class PhantomPartyManager
 		}
 		final Player owner = state.owner;
 		// Buff SELF first (so e.g. Acumen lands and the buffer casts the rest faster), then the leader gets the
-		// full archetype-appropriate kit, then the other members get the essentials.
+		// full archetype-appropriate kit. Recruited bot members are deliberately NOT auto-rebuffed: they arrive
+		// pre-buffed at spawn (PhantomBuffs.applyFullBuffs) and Interlude buffs last 20 minutes (abnormalTime 1200s),
+		// far longer than any fight - so re-buffing them just drains the buffer's MP for no benefit and it enters the
+		// boss fight already a third down (the in-game complaint). Only the leader (a human, not pre-buffed) and any
+		// real human party members get ongoing upkeep; an explicit "buff all" order still tops up everyone via forceRebuff.
 		if (castFirstMissing(state, state.npc, PhantomBuffs.Tier.SELF))
 		{
 			return true;
@@ -2378,9 +2382,9 @@ public class PhantomPartyManager
 		}
 		for (Player member : owner.getParty().getMembers())
 		{
-			if ((member == owner) || (member == state.npc))
+			if ((member == owner) || (member == state.npc) || _members.containsKey(member.getObjectId()))
 			{
-				continue;
+				continue; // skip self, the leader (done above) and pre-buffed recruited bots
 			}
 			if (castFirstMissing(state, member, PhantomBuffs.Tier.MEMBER))
 			{
