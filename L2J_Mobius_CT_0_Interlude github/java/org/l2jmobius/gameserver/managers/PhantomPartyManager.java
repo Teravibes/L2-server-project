@@ -107,6 +107,7 @@ public class PhantomPartyManager
 	private static final int CASTER_CAST_RANGE = 650; // a nuker holds this far from the assist target so it nukes, never melees
 	private static final int CASTER_RANGE_TOLERANCE = 150; // ...with this slack, so it isn't constantly re-positioning
 	private static final int CASTER_MIN_MP = 20; // below this percent a nuker stops casting and rests instead of meleeing
+	private static final int CASTER_SPREAD_STEP = 110; // lateral spacing between casters so several don't stack and eat one AoE
 	private static final int MP_REST_SIT = 30; // a caster sits to recover when it drops to ~this and is safe
 	private static final int MP_REST_STAND = 100; // and stays seated until MP is fully restored
 	private static final long STAND_SUPPRESS = 30000; // a "stand" order keeps it on its feet this long before auto-rest resumes
@@ -148,6 +149,8 @@ public class PhantomPartyManager
 		Player owner; // the recruiter; the party bond forms when the invite is accepted
 		boolean partied;
 		long deadSince; // 0 while alive; set when first seen dead so the corpse persists for a battle-res window
+		boolean pullOrdered; // TANK only: the leader ordered the tank to initiate a raid pull ("tank attack")
+		long pullSince; // when that order was given - release the rest of the party shortly after even if aggro reads flaky
 		boolean assist = true; // assist the leader's target (default) vs. free-hunt
 		boolean following = true;
 		boolean reminded; // already whispered "here, inv me" while waiting
@@ -184,6 +187,12 @@ public class PhantomPartyManager
 	}
 
 	private final ConcurrentHashMap<Integer, Member> _members = new ConcurrentHashMap<>();
+	// Raid pull control: owner objIds whose party has been released to attack the current raid fight (the tank engaged
+	// it, or the leader said "all attack"). Not present = the party holds against a raid until the tank initiates. It
+	// is a per-fight flag (not per-target) so the party can freely switch between the boss and its adds once engaged;
+	// it clears when no raid is engaged near the party (the fight is over), re-arming the hold for the next pull.
+	private final Set<Integer> _released = ConcurrentHashMap.newKeySet();
+	private static final long PULL_RELEASE_MS = 2500; // release the party this long after the tank engages, even if the aggro read lags
 	private boolean _ticking = false;
 
 	protected PhantomPartyManager()
@@ -446,6 +455,43 @@ public class PhantomPartyManager
 				}
 				return true;
 			}
+		}
+
+		// Raid pull control. Against a raid the party HOLDS until the tank initiates (see combatTick); these orders
+		// drive that. Only the tank acknowledges out loud so a full party doesn't chatter over each other.
+		// "tank attack" - order the tank to pull the boss; the rest follow once it has aggro.
+		if (containsAny(text, "tank attack", "tank pull", "tank go", "tank engage", "tank initiate", "tank in", "pull it", "pull the boss", "pull boss", "initiate"))
+		{
+			if (state.role == PartyRole.TANK)
+			{
+				state.pullOrdered = true;
+				state.pullSince = System.currentTimeMillis();
+				deliver(state, "pulling - hold dps till i have aggro");
+			}
+			return true;
+		}
+		// "all attack" - everyone engages the current raid right now (skip the tank-initiate).
+		if (containsAny(text, "all attack", "everyone attack", "all in", "open fire", "engage all", "attack the raid", "everyone in", "burn it"))
+		{
+			_released.add(owner.getObjectId());
+			if (state.role == PartyRole.TANK)
+			{
+				state.pullOrdered = true;
+				state.pullSince = System.currentTimeMillis();
+				deliver(state, "all in!");
+			}
+			return true;
+		}
+		// "hold fire" - re-engage the hold (stop feeding the raid, wait for the tank).
+		if (containsAny(text, "hold fire", "hold dps", "wait for tank", "fall back", "stop dps", "back off"))
+		{
+			_released.remove(owner.getObjectId());
+			state.pullOrdered = false;
+			if (state.role == PartyRole.TANK)
+			{
+				deliver(state, "holding");
+			}
+			return true;
 		}
 
 		// Free-hunt vs assist toggle.
@@ -1102,6 +1148,28 @@ public class PhantomPartyManager
 		{
 			final WorldObject t = owner.getTarget();
 			final boolean haveTarget = (t instanceof Monster) && !((Monster) t).isDead() && (owner.calculateDistance2D(t) <= ASSIST_MAX_RANGE);
+
+			// Raid pull control: against a RAID target the party HOLDS until the tank initiates. The tank engages only
+			// when ordered ("tank attack"); once it has the boss's threat the rest of the party is released to assist
+			// (and can then freely switch between the boss and its adds). Normal mobs are unaffected. When no raid is
+			// targeted AND none is engaged near the party, the fight is over - re-arm the hold for the next pull.
+			final boolean raidTarget = haveTarget && ((Monster) t).isRaid();
+			if (!raidTarget)
+			{
+				// Re-arm the hold once the fight is over, but only pay for the raid scan if we're actually in a pull
+				// state (so normal farming, the common case, never scans here).
+				if ((state.pullOrdered || _released.contains(owner.getObjectId())) && (engagedRaid(state) == null))
+				{
+					state.pullOrdered = false;
+					_released.remove(owner.getObjectId());
+				}
+			}
+			else if (!mayAttackRaid(state, (Monster) t))
+			{
+				holdForPull(state); // wait near the leader, don't feed the raid yet
+				return;
+			}
+
 			if (haveTarget && state.role.mage)
 			{
 				// A nuker assists by casting from range - it must NEVER be given a physical ATTACK intention, which
@@ -1163,6 +1231,54 @@ public class PhantomPartyManager
 	}
 
 	/**
+	 * Raid pull gate. Against a RAID target: the TANK attacks only once ordered ("tank attack"), and on engaging
+	 * releases the rest of the party (records the raid as released for the owner) the moment it holds the boss's
+	 * threat, or after a short grace if the aggro read lags. Every other member attacks only once that release is
+	 * recorded - so DPS never pulls the boss off the tank at the open.
+	 */
+	private boolean mayAttackRaid(Member state, Monster raid)
+	{
+		final int ownerId = state.owner.getObjectId();
+		if (_released.contains(ownerId))
+		{
+			return true; // party already engaged this raid fight - assist freely, including switching to the adds
+		}
+		if (state.role == PartyRole.TANK)
+		{
+			if (!state.pullOrdered)
+			{
+				return false; // tank waits for the "tank attack" order before pulling
+			}
+			if ((raid.getMostHated() == state.npc) || ((System.currentTimeMillis() - state.pullSince) > PULL_RELEASE_MS))
+			{
+				_released.add(ownerId); // tank has the boss's threat - release the rest of the party
+			}
+			return true;
+		}
+		return false; // non-tank waits for the tank to engage (release)
+	}
+
+	/** A member waiting on the tank's pull: stop attacking and stay near the leader (no target, so AutoUse stays quiet). */
+	private void holdForPull(Member state)
+	{
+		final Player npc = state.npc;
+		standIfSitting(npc);
+		npc.setTarget(null);
+		if (npc.calculateDistance2D(state.owner) > FOLLOW_RANGE)
+		{
+			if (state.following)
+			{
+				driveFollow(state, state.owner);
+			}
+		}
+		else if (npc.isInCombat() || npc.isAttackingNow())
+		{
+			npc.abortAttack();
+			npc.getAI().setIntention(Intention.IDLE);
+		}
+	}
+
+	/**
 	 * Holds a nuker at casting range of the assist target so AutoUse can nuke it, instead of letting a physical
 	 * ATTACK intention drag it into melee. Walks in when too far, backs off when too close; stands still (lets the
 	 * cast happen) once already in the band. Mirrors the free-roam mage positioning in {@link PhantomManager}.
@@ -1184,8 +1300,13 @@ public class PhantomPartyManager
 		{
 			distance = 1;
 		}
-		final int standX = target.getX() + (int) ((dx / distance) * CASTER_CAST_RANGE);
-		final int standY = target.getY() + (int) ((dy / distance) * CASTER_CAST_RANGE);
+		// AoE spread: offset each caster sideways by a fixed per-member amount so several don't stack on one tile and
+		// all eat the same boss AoE. The offset is perpendicular to the target line and stable per member (objId),
+		// so it fans them out around the boss without jittering.
+		final double perp = Math.atan2(dy, dx) + (Math.PI / 2);
+		final int lateral = (((npc.getObjectId() % 5) - 2) * CASTER_SPREAD_STEP); // -2..+2 lanes
+		final int standX = target.getX() + (int) ((dx / distance) * CASTER_CAST_RANGE) + (int) (Math.cos(perp) * lateral);
+		final int standY = target.getY() + (int) ((dy / distance) * CASTER_CAST_RANGE) + (int) (Math.sin(perp) * lateral);
 		final Location destination = GeoEngine.getInstance().getValidLocation(npc, new Location(standX, standY, npc.getZ()));
 		npc.setRunning();
 		npc.getAI().setIntention(Intention.MOVE_TO, destination);
@@ -1519,9 +1640,11 @@ public class PhantomPartyManager
 		{
 			return critical;
 		}
-		// Then keep the tank topped so the next boss spike doesn't drop it from comfortable to dead.
+		// Then keep the tank topped so the next boss spike doesn't drop it from comfortable to dead - unless another
+		// healer is already healing it (coordination: don't all stack on the tank and waste heals on overheal).
 		final Player tank = findTank(state);
-		if ((tank != null) && !tank.isDead() && (state.npc.calculateDistance2D(tank) <= SUPPORT_RANGE) && (tank.getCurrentHpPercent() < RAID_TANK_HEAL_PERCENT))
+		if ((tank != null) && !tank.isDead() && (state.npc.calculateDistance2D(tank) <= SUPPORT_RANGE) && (tank.getCurrentHpPercent() < RAID_TANK_HEAL_PERCENT) //
+			&& !((tank.getCurrentHpPercent() >= CRITICAL_HEAL_PERCENT) && beingHealedByAnother(state, tank)))
 		{
 			return tank;
 		}
@@ -1529,7 +1652,11 @@ public class PhantomPartyManager
 		return mostHurtBelow(state, RAID_HEAL_PERCENT);
 	}
 
-	/** The most-hurt living party member in support range whose HP% is under {@code threshold}, or {@code null}. */
+	/**
+	 * The most-hurt living party member in support range whose HP% is under {@code threshold}, or {@code null}.
+	 * A member already being healed by another healer is skipped (so multiple healers spread out instead of all
+	 * piling onto one target) UNLESS it is critically low, where stacking heals to save it is the right call.
+	 */
 	private Player mostHurtBelow(Member state, int threshold)
 	{
 		final Player npc = state.npc;
@@ -1542,13 +1669,31 @@ public class PhantomPartyManager
 		int worstPct = threshold;
 		for (Player member : party.getMembers())
 		{
-			if (!member.isDead() && (npc.calculateDistance2D(member) <= SUPPORT_RANGE) && (member.getCurrentHpPercent() < worstPct))
+			if (member.isDead() || (npc.calculateDistance2D(member) > SUPPORT_RANGE) || (member.getCurrentHpPercent() >= worstPct))
 			{
-				worst = member;
-				worstPct = member.getCurrentHpPercent();
+				continue;
 			}
+			if ((member.getCurrentHpPercent() >= CRITICAL_HEAL_PERCENT) && beingHealedByAnother(state, member))
+			{
+				continue; // another healer has this one covered - look for someone else
+			}
+			worst = member;
+			worstPct = member.getCurrentHpPercent();
 		}
 		return worst;
+	}
+
+	/** {@code true} if another HEALER in the party is currently casting on {@code target} (so this one shouldn't pile on). */
+	private boolean beingHealedByAnother(Member state, Player target)
+	{
+		for (Member m : _members.values())
+		{
+			if ((m != state) && (m.role == PartyRole.HEALER) && (m.owner == state.owner) && !m.npc.isDead() && m.npc.isCastingNow() && (m.npc.getTarget() == target))
+			{
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** The recruited TANK in this healer's party (the one that should be kept topped under a raid), or {@code null}. */
