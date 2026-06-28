@@ -127,6 +127,7 @@ public class PhantomPartyManager
 	private static final int AURA_OF_HATE_ID = 18; // AoE taunt (knight tree) - "provokes nearby enemies to attack"
 	private static final int THREAT_SCAN_RANGE = 1000; // how far a tank looks for a mob loose on a squishy party member
 	private static final long TAUNT_REFRESH_MS = 6000; // while already top of aggro, only re-taunt this often (its auto-attacks hold hate; spamming taunt just drains MP)
+	private static final long TAUNT_MIN_INTERVAL = 1500; // floor between ANY two taunts, so the tank auto-attacks in between instead of taunt-spamming and standing idle (the post-res behaviour)
 	private static final int RECHARGE_ID = 1013; // Recharge - an Elder/Shillien Elder refills a party caster's MP
 	private static final int RECHARGE_MP_PERCENT = 45; // recharge a mana-user below this MP%
 	private static final int RECHARGE_RAID_MP_PERCENT = 65; // raid support starts battery work before healers are already dry
@@ -1052,6 +1053,19 @@ public class PhantomPartyManager
 		return raids.isEmpty() ? null : raids.get(0);
 	}
 
+	/** The engaged main raid boss (a raid that is NOT a minion/add), or {@code null} - the target the tank should hold. */
+	private Monster engagedBoss(Member state)
+	{
+		for (Monster raid : engagedRaids(state))
+		{
+			if (!raid.isRaidMinion())
+			{
+				return raid;
+			}
+		}
+		return null;
+	}
+
 	/** All live raid mobs/adds in combat near this member. */
 	private List<Monster> engagedRaids(Member state)
 	{
@@ -1252,6 +1266,18 @@ public class PhantomPartyManager
 				if (add != null)
 				{
 					focus = add;
+				}
+			}
+
+			// The TANK holds and hits the raid BOSS itself, not whatever add the player happens to be shooting - so it
+			// melees the boss (sustaining the hate that keeps the boss off the squishies) while the DPS burn the adds.
+			// Only once it's allowed to engage the raid (after the "tank attack" order), so the pre-pull hold still works.
+			if (state.role == PartyRole.TANK)
+			{
+				final Monster boss = engagedBoss(state);
+				if ((boss != null) && mayAttackRaid(state, boss))
+				{
+					focus = boss;
 				}
 			}
 
@@ -1561,6 +1587,15 @@ public class PhantomPartyManager
 		if ((state.aggression == null) && (state.auraOfHate == null))
 		{
 			return false; // too low-level to have a taunt yet - just melee (graceful degrade)
+		}
+		// Floor between taunts. Without it, a tank that has lost aggro (e.g. just after a battle-res) finds every mob
+		// "loose" every tick and taunt-spams forever - never auto-attacking, so it does no melee damage, builds no
+		// melee hate and stands idle between casts (the "tank didn't resume hitting the boss after res" bug). Throttling
+		// taunts makes it spend the in-between ticks auto-attacking, which both does damage and sustains the hate that
+		// keeps the mobs on it. The longer most-hated refresh below still applies on top.
+		if ((System.currentTimeMillis() - state.lastTauntAt) < TAUNT_MIN_INTERVAL)
+		{
+			return false;
 		}
 		// Pick the mob to pin: a mob loose on a squishy first (nearest one), else the raid boss we're tanking.
 		final List<Monster> loose = findLooseMobs(state);
