@@ -159,6 +159,14 @@ public class PhantomPartyManager
 		1011 // Heal
 	};
 
+	// Cheap heals for small top-offs, weakest first - so a 15% tank top-off doesn't burn a Greater Battle Heal.
+	private static final int[] LIGHT_HEAL_PRIORITY =
+	{
+		1011, // Heal
+		1015 // Battle Heal
+	};
+	private static final int BIG_HEAL_DEFICIT = 35; // missing HP% at/above which the strong heal is worth its MP
+
 	/** Per-member state. */
 	private static class Member
 	{
@@ -175,7 +183,8 @@ public class PhantomPartyManager
 		long pendingSince; // spawn time; despawn if never invited within RECRUIT_TIMEOUT
 		long graceUntil;
 		List<Skill> buffs; // lazy
-		Skill heal; // lazy
+		Skill heal; // lazy (strongest known heal, for real damage / emergencies)
+		Skill lightHeal; // lazy (cheapest known heal, for small top-offs)
 		Skill res; // lazy
 		Skill aggression; // lazy (TANK): single-target taunt
 		Skill auraOfHate; // lazy (TANK): AoE taunt
@@ -217,6 +226,10 @@ public class PhantomPartyManager
 	private final Set<Integer> _released = ConcurrentHashMap.newKeySet();
 	private final Set<Long> _releasedRaidTargets = ConcurrentHashMap.newKeySet();
 	private final ConcurrentHashMap<Integer, Long> _resClaims = new ConcurrentHashMap<>();
+	// Targets a support has already committed a heal to THIS tick. Cleared each tick. Stops two healers (processed in
+	// the same tick pass) both landing a big heal on the same target before either is flagged "casting" - the in-game
+	// double/triple overheal that burned the healers' MP twice as fast and ended raids in a mass-OOM wipe.
+	private final Set<Integer> _healedThisTick = ConcurrentHashMap.newKeySet();
 	private boolean _ticking = false;
 
 	protected PhantomPartyManager()
@@ -930,6 +943,7 @@ public class PhantomPartyManager
 	private void tick()
 	{
 		final long now = System.currentTimeMillis();
+		_healedThisTick.clear(); // fresh per-tick heal claims, so two healers don't stack on one target this tick
 		if (DEBUG && ((now - _lastRaidLog) >= RAID_LOG_INTERVAL))
 		{
 			_lastRaidLog = now;
@@ -1273,7 +1287,12 @@ public class PhantomPartyManager
 				{
 					return;
 				}
-				if ((npc.getTarget() != focus) || !npc.isInCombat())
+				// Keep a live auto-attack on the focus. The old guard only re-issued ATTACK when out of combat, so a
+				// clientless archer/melee that finished a shot (or an AutoUse skill cast) dropped to IDLE and just stood
+				// there until its MP let AutoUse fire another skill - which is why archers went silent at low MP and the
+				// boss/adds barely lost HP. Re-assert the attack whenever the member isn't mid-swing or mid-cast, so it
+				// keeps plinking with soulshots (which cost no MP) between skills and right through an empty MP bar.
+				if ((npc.getTarget() != focus) || (!npc.isAttackingNow() && !npc.isCastingNow()))
 				{
 					npc.setTarget(focus);
 					npc.setRunning();
@@ -1726,6 +1745,7 @@ public class PhantomPartyManager
 				state.healNow = false;
 				npc.setTarget(owner);
 				npc.doCast(onDemandHeal);
+				_healedThisTick.add(owner.getObjectId());
 				return;
 			}
 			state.healNow = false; // can't satisfy it right now
@@ -1748,6 +1768,7 @@ public class PhantomPartyManager
 				}
 				npc.setTarget(urgent);
 				npc.doCast(heal);
+				_healedThisTick.add(urgent.getObjectId());
 				return;
 			}
 		}
@@ -1839,7 +1860,11 @@ public class PhantomPartyManager
 			{
 				worst = npc;
 			}
-			if ((worst != null) && !npc.isSkillDisabled(heal) && (npc.getCurrentMp() >= heal.getMpConsume()))
+			// Use a cheap heal for a small top-off and save the big (Greater) heal for a real gap. Keeping the tank
+			// topped to 90% with Greater Battle Heal every tick was the other half of the MP drain - a 15% top-off
+			// does not need the most expensive heal in the book.
+			final Skill h = (worst == null) ? heal : chooseHeal(state, worst);
+			if ((worst != null) && (h != null) && !npc.isSkillDisabled(h) && (npc.getCurrentMp() >= h.getMpConsume()))
 			{
 				if (!readyToCast(npc))
 				{
@@ -1847,10 +1872,11 @@ public class PhantomPartyManager
 				}
 				if (DEBUG && raid)
 				{
-					dbg("HEAL " + npc.getName() + " -> " + roleLabel(worst) + " '" + worst.getName() + "' (hp " + worst.getCurrentHpPercent() + "%) with " + heal.getName());
+					dbg("HEAL " + npc.getName() + " -> " + roleLabel(worst) + " '" + worst.getName() + "' (hp " + worst.getCurrentHpPercent() + "%) with " + h.getName());
 				}
 				npc.setTarget(worst);
-				npc.doCast(heal);
+				npc.doCast(h);
+				_healedThisTick.add(worst.getObjectId());
 				return;
 			}
 		}
@@ -2022,12 +2048,21 @@ public class PhantomPartyManager
 		return worst;
 	}
 
-	/** {@code true} if another HEALER in the party is currently casting on {@code target} (so this one shouldn't pile on). */
+	/**
+	 * {@code true} if {@code target} is already covered by another support this tick - either one committed a heal to
+	 * it earlier in this same tick pass ({@link #_healedThisTick}, which catches same-tick simultaneity the casting
+	 * check misses), or another healer is mid-cast on it. Lets the others spread to the next-most-hurt instead of
+	 * stacking heals and wasting MP on overheal.
+	 */
 	private boolean beingHealedByAnother(Member state, Player target)
 	{
+		if (_healedThisTick.contains(target.getObjectId()))
+		{
+			return true;
+		}
 		for (Member m : _members.values())
 		{
-			if ((m != state) && (m.role == PartyRole.HEALER) && (m.owner == state.owner) && !m.npc.isDead() && m.npc.isCastingNow() && (m.npc.getTarget() == target))
+			if ((m != state) && m.isSupport() && (m.owner == state.owner) && !m.npc.isDead() && m.npc.isCastingNow() && (m.npc.getTarget() == target))
 			{
 				return true;
 			}
@@ -2588,6 +2623,42 @@ public class PhantomPartyManager
 			}
 		}
 		return state.heal;
+	}
+
+	/** The cheapest heal this support knows (for small top-offs); falls back to the strong heal if it knows no cheap one. */
+	private Skill lightHeal(Member state)
+	{
+		if (state.lightHeal == null)
+		{
+			for (int id : LIGHT_HEAL_PRIORITY)
+			{
+				final Skill known = state.npc.getKnownSkill(id);
+				if (known != null)
+				{
+					state.lightHeal = known;
+					break;
+				}
+			}
+			if (state.lightHeal == null)
+			{
+				state.lightHeal = heal(state); // no cheap heal known - just use the strong one
+			}
+		}
+		return state.lightHeal;
+	}
+
+	/**
+	 * The heal to use on {@code target}: the strong (Greater) heal for a real gap or a critically low target, else the
+	 * cheap heal for a small top-off. Saves the expensive heal's MP for when it actually matters.
+	 */
+	private Skill chooseHeal(Member state, Player target)
+	{
+		if ((target.getCurrentHpPercent() <= CRITICAL_HEAL_PERCENT) || ((100 - target.getCurrentHpPercent()) >= BIG_HEAL_DEFICIT))
+		{
+			return heal(state);
+		}
+		final Skill light = lightHeal(state);
+		return (light != null) ? light : heal(state);
 	}
 
 	private Skill res(Member state)
