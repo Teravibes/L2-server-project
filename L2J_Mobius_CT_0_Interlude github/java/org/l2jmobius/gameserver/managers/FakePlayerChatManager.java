@@ -267,6 +267,7 @@ public class FakePlayerChatManager implements IXmlReader
 
 	// Matches a trade ad and captures the direction (sell/buy) plus the item phrase after it.
 	private static final Pattern TRADE_AD = Pattern.compile("(wts|selling|s>|wtb|buying|b>)\\s*(.*)", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TRADE_QUANTITY = Pattern.compile("\\b(\\d{1,9})(k|kk|m)?\\b", Pattern.CASE_INSENSITIVE);
 
 	/**
 	 * Handles a WTS/WTB ad (off the network thread): the AI translates the slang to an item name, we
@@ -311,7 +312,8 @@ public class FakePlayerChatManager implements IXmlReader
 
 		// Player selling -> bot buys it; player buying -> bot sells it.
 		final int storeType = playerSelling ? PrivateStoreType.BUY.getId() : PrivateStoreType.SELL.getId();
-		final List<FakePlayerStoreItem> stock = playerSelling ? FakePlayerStoreFactory.dealBuyStock(item.getId()) : FakePlayerStoreFactory.dealSellStock(item.getId());
+		final int requestedCount = parseTradeQuantity(matcher.group(2), item);
+		final List<FakePlayerStoreItem> stock = playerSelling ? FakePlayerStoreFactory.dealBuyStock(item.getId(), 0, requestedCount) : FakePlayerStoreFactory.dealSellStock(item.getId(), 0, requestedCount);
 		if (stock.isEmpty())
 		{
 			return;
@@ -323,7 +325,9 @@ public class FakePlayerChatManager implements IXmlReader
 		FakePlayerBehaviorManager.getInstance().setupDeal(bot, storeType, stock, title);
 
 		final int unit = stock.get(0).getPrice();
-		final String deal = (playerSelling ? "buy their " : "sell them ") + item.getName() + " for about " + unit
+		final String deal = (playerSelling ? "buy their " : "sell them ")
+			+ (requestedCount > 0 ? (requestedCount + "x ") : "")
+			+ item.getName() + " for about " + unit
 			+ " adena each; state your price and ask if they want to deal and where to meet (gatekeeper, warehouse or shop) - do not commit to walking anywhere yet";
 		final String fpcName = bot.getName();
 		final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal);
@@ -343,6 +347,34 @@ public class FakePlayerChatManager implements IXmlReader
 		}
 		final String name = reply.trim();
 		return (name.isEmpty() || name.equalsIgnoreCase("none")) ? null : name;
+	}
+
+	private static int parseTradeQuantity(String phrase, ItemTemplate item)
+	{
+		if ((phrase == null) || (item == null) || !item.isStackable())
+		{
+			return 0;
+		}
+		final Matcher matcher = TRADE_QUANTITY.matcher(phrase);
+		while (matcher.find())
+		{
+			long value = Long.parseLong(matcher.group(1));
+			final String suffix = matcher.group(2);
+			if ("k".equalsIgnoreCase(suffix))
+			{
+				value *= 1000L;
+			}
+			else if ("kk".equalsIgnoreCase(suffix) || "m".equalsIgnoreCase(suffix))
+			{
+				value *= 1000000L;
+			}
+
+			if ((value > 0) && (value <= 2_000_000L))
+			{
+				return (int) value;
+			}
+		}
+		return 0;
 	}
 	
 	// Called from ChatGeneral when a real player uses normal (say) chat.
@@ -944,11 +976,12 @@ public class FakePlayerChatManager implements IXmlReader
 						price *= 1000000;
 					}
 					final int storeType = botSells ? PrivateStoreType.SELL.getId() : PrivateStoreType.BUY.getId();
-					final List<FakePlayerStoreItem> stock = botSells ? FakePlayerStoreFactory.dealSellStock(item.getId(), price) : FakePlayerStoreFactory.dealBuyStock(item.getId(), price);
+					final FakePlayerBehaviorManager behavior = FakePlayerBehaviorManager.getInstance();
+					final int requestedCount = behavior.getPendingDealCount(bot, item.getId());
+					final List<FakePlayerStoreItem> stock = botSells ? FakePlayerStoreFactory.dealSellStock(item.getId(), price, requestedCount) : FakePlayerStoreFactory.dealBuyStock(item.getId(), price, requestedCount);
 					if (!stock.isEmpty())
 					{
 						final String title = FakePlayerStoreFactory.title(botSells ? "SELL" : "BUY", stock);
-						final FakePlayerBehaviorManager behavior = FakePlayerBehaviorManager.getInstance();
 						handledShop = true;
 						if (behavior.isWaitingAtMeet(bot))
 						{

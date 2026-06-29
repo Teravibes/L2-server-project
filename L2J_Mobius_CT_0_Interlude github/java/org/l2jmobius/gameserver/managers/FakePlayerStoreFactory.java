@@ -374,16 +374,29 @@ public class FakePlayerStoreFactory
 	 */
 	public static List<FakePlayerStoreItem> dealSellStock(int itemId)
 	{
+		return dealSellStock(itemId, 0, 0);
+	}
+
+	/**
+	 * Sell stock at an optional explicit agreed price per unit and optional requested quantity.
+	 * @param itemId the item to sell
+	 * @param unitPrice the agreed adena per unit, or 0 to auto-price
+	 * @param requestedCount requested stack count, or 0 to auto-size
+	 * @return a one-entry sell stock
+	 */
+	public static List<FakePlayerStoreItem> dealSellStock(int itemId, int unitPrice, int requestedCount)
+	{
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
 		if (item != null)
 		{
-			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
-			stock.add(line(item, 0, count, priced(item.getReferencePrice(), 1.0, 1.6)));
+			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
+			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
+			final int price = unitPrice > 0 ? Math.max(1, unitPrice) : priced(item.getReferencePrice(), 1.0, 1.6);
+			stock.add(line(item, 0, count, price));
 		}
 		return stock;
 	}
-
 	/**
 	 * Sell stock at an explicit agreed price per unit (from a whisper-negotiated deal).
 	 * @param itemId the item to sell
@@ -392,14 +405,7 @@ public class FakePlayerStoreFactory
 	 */
 	public static List<FakePlayerStoreItem> dealSellStock(int itemId, int unitPrice)
 	{
-		final List<FakePlayerStoreItem> stock = new ArrayList<>();
-		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
-		if (item != null)
-		{
-			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
-			stock.add(line(item, 0, count, Math.max(1, unitPrice)));
-		}
-		return stock;
+		return dealSellStock(itemId, unitPrice, 0);
 	}
 
 	/**
@@ -409,30 +415,26 @@ public class FakePlayerStoreFactory
 	 */
 	public static List<FakePlayerStoreItem> dealBuyStock(int itemId)
 	{
-		final List<FakePlayerStoreItem> stock = new ArrayList<>();
-		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
-		if (item != null)
-		{
-			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
-			stock.add(line(item, 0, count, priced(item.getReferencePrice(), 0.5, 0.85)));
-		}
-		return stock;
+		return dealBuyStock(itemId, 0, 0);
 	}
 
 	/**
-	 * Buy stock at an explicit agreed price per unit (from a whisper-negotiated deal).
+	 * Buy stock at an optional explicit agreed price per unit and optional requested quantity.
 	 * @param itemId the item to buy
-	 * @param unitPrice the agreed adena per unit
+	 * @param unitPrice the agreed adena per unit, or 0 to auto-price
+	 * @param requestedCount requested stack count, or 0 to auto-size
 	 * @return a one-entry buy stock
 	 */
-	public static List<FakePlayerStoreItem> dealBuyStock(int itemId, int unitPrice)
+	public static List<FakePlayerStoreItem> dealBuyStock(int itemId, int unitPrice, int requestedCount)
 	{
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final ItemTemplate item = ItemData.getInstance().getTemplate(itemId);
 		if (item != null)
 		{
-			final int count = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
-			stock.add(line(item, 0, count, Math.max(1, unitPrice)));
+			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
+			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
+			final int price = unitPrice > 0 ? Math.max(1, unitPrice) : priced(item.getReferencePrice(), 0.5, 0.85);
+			stock.add(line(item, 0, count, price));
 		}
 		return stock;
 	}
@@ -465,6 +467,19 @@ public class FakePlayerStoreFactory
 		final double factor = lo + (Rnd.nextDouble() * (hi - lo));
 		final long value = Math.round(referencePrice * factor);
 		return (int) Math.max(1L, Math.min(value, Integer.MAX_VALUE));
+	}
+
+	private static int normalizedDealCount(ItemTemplate item, int requestedCount, int fallbackCount)
+	{
+		if ((item == null) || !item.isStackable())
+		{
+			return 1;
+		}
+		if (requestedCount > 0)
+		{
+			return Math.max(1, Math.min(requestedCount, 2_000_000));
+		}
+		return Math.max(1, fallbackCount);
 	}
 
 	private static FakePlayerStoreItem line(ItemTemplate item, int enchant, int count, int price)

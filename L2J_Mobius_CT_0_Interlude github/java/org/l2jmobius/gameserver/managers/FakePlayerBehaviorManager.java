@@ -95,6 +95,10 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	// for the requested landmark NPC (kept tight so meetups stay within the bot's own town).
 	private static final int SUMMON_ARRIVE_DIST = 120;
 	private static final int SUMMON_SEARCH_RANGE = 6000;
+	// Meet beside a landmark NPC instead of on top of it, so the fake player does not overlap the gatekeeper,
+	// warehouse keeper or merchant model.
+	private static final int MEET_OFFSET_MIN = 160;
+	private static final int MEET_OFFSET_MAX = 260;
 	// Travel time before giving up (e.g. no path) instead of wall-banging.
 	private static final long SUMMON_GIVEUP = 45000;
 	// While waiting at the meet spot: ask "still coming?" after this, then leave if no reply within the grace.
@@ -1195,6 +1199,27 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		return true;
 	}
 
+	public int getPendingDealCount(Npc bot, int itemId)
+	{
+		if (bot == null)
+		{
+			return 0;
+		}
+		final BotState state = _bots.get(bot.getObjectId());
+		if ((state == null) || (state.pendingStock == null))
+		{
+			return 0;
+		}
+		for (FakePlayerStoreItem entry : state.pendingStock)
+		{
+			if ((entry.getItemId() == itemId) && (entry.getCount() > 0))
+			{
+				return entry.getCount();
+			}
+		}
+		return 0;
+	}
+
 	/** @return {@code true} if the bot is parked at a meet spot waiting for the player. */
 	public boolean isWaitingAtMeet(Npc bot)
 	{
@@ -1309,7 +1334,33 @@ public class FakePlayerBehaviorManager implements IXmlReader
 				nearest = n;
 			}
 		}
-		return nearest == null ? null : new Location(nearest.getX(), nearest.getY(), nearest.getZ());
+		return nearest == null ? null : nearbyMeetLocation(bot, nearest);
+	}
+
+	private Location nearbyMeetLocation(Npc bot, Npc landmark)
+	{
+		// Prefer standing on the side facing the approaching bot, so the destination is usually reachable
+		// and visually reads as "next to the NPC" instead of hidden behind it.
+		final double baseAngle = Math.atan2(bot.getY() - landmark.getY(), bot.getX() - landmark.getX());
+		for (int attempt = 0; attempt < 12; attempt++)
+		{
+			final double angle = baseAngle + ((attempt % 2 == 0 ? 1 : -1) * ((attempt + 1) / 2) * (Math.PI / 6));
+			final int distance = Rnd.get(MEET_OFFSET_MIN, MEET_OFFSET_MAX);
+			final int x = landmark.getX() + (int) (Math.cos(angle) * distance);
+			final int y = landmark.getY() + (int) (Math.sin(angle) * distance);
+			final Location candidate = GeoEngine.getInstance().getValidLocation(bot, new Location(x, y, landmark.getZ()));
+
+			// Keep the chosen spot close to the landmark, but avoid picking the exact landmark tile again.
+			if ((candidate.calculateDistance2D(landmark) >= MEET_OFFSET_MIN / 2) && GeoEngine.getInstance().canMoveToTarget(bot, candidate))
+			{
+				return candidate;
+			}
+		}
+
+		// Fallback: still offset from the NPC even if geodata rejects every sampled point.
+		final int x = landmark.getX() + MEET_OFFSET_MIN;
+		final int y = landmark.getY();
+		return GeoEngine.getInstance().getValidLocation(bot, new Location(x, y, landmark.getZ()));
 	}
 
 	/**

@@ -1,5 +1,7 @@
 import os
 import re
+import json
+import time
 import hashlib
 import random
 from collections import defaultdict, deque
@@ -25,6 +27,15 @@ conversations = defaultdict(lambda: deque(maxlen=20))  # private whisper memory 
 trade_log = deque(maxlen=12)                            # shared global TRADE memory
 say_log = deque(maxlen=12)                              # shared local SAY memory
 shout_log = deque(maxlen=12)                            # shared global SHOUT (!) memory
+
+# ===== Persistent lightweight player memory =====
+# Player-global on purpose: generated fake-player names are random across server restarts, so tying
+# memories to a bot name would orphan most memories after a restart. This makes the server population
+# remember useful player habits/preferences.
+MEMORY_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory")
+MEMORY_FILE = os.path.join(MEMORY_DIR, "fpc_memory.json")
+MEMORY_MAX_FACTS_PER_CATEGORY = 18
+_memory = {}
 
 # ===== Guardrails: a single "constitution" prepended to every in-character persona =====
 # Keeps bots in character, resistant to prompt-injection, within a normal player's powers, and PG-13.
@@ -122,6 +133,158 @@ def sanitize(text):
     t = _EMAIL_RE.sub("", t)
     return t.strip()
 
+# ===== Persistent memory helpers =====
+
+def load_memory():
+    """Load player-global memory from disk. Safe when the file/folder does not exist yet."""
+    global _memory
+    try:
+        with open(MEMORY_FILE, encoding="utf-8") as fh:
+            data = json.load(fh)
+            _memory = data if isinstance(data, dict) else {}
+    except OSError:
+        _memory = {}
+    except json.JSONDecodeError:
+        print("Memory: fpc_memory.json is invalid, starting with empty memory.")
+        _memory = {}
+
+def save_memory():
+    """Atomically save memory so a crash does not corrupt the file."""
+    try:
+        os.makedirs(MEMORY_DIR, exist_ok=True)
+        tmp = MEMORY_FILE + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(_memory, fh, ensure_ascii=False, indent=2, sort_keys=True)
+        os.replace(tmp, MEMORY_FILE)
+    except OSError as e:
+        print("Memory save error:", e)
+
+def _player_key(player):
+    return (player or "").strip().lower()
+
+def _memory_entry(player):
+    key = _player_key(player)
+    if not key:
+        return None
+    entry = _memory.setdefault(key, {
+        "player": player,
+        "trade": [],
+        "party": [],
+        "social": [],
+    })
+    entry["player"] = player
+    for category in ("trade", "party", "social"):
+        if category not in entry or not isinstance(entry[category], list):
+            entry[category] = []
+    return entry
+
+def remember_fact(player, category, fact):
+    """Remember one useful player-global fact."""
+    if category not in ("trade", "party", "social"):
+        category = "social"
+    fact = (fact or "").strip()
+    if not player or not fact:
+        return
+    if len(fact) > 220:
+        fact = fact[:217] + "..."
+    entry = _memory_entry(player)
+    if entry is None:
+        return
+    facts = entry[category]
+    # De-dupe exact text while keeping newest timestamp.
+    facts = [x for x in facts if (x.get("text") if isinstance(x, dict) else str(x)) != fact]
+    facts.append({
+        "text": fact,
+        "seen": int(time.time()),
+    })
+    entry[category] = facts[-MEMORY_MAX_FACTS_PER_CATEGORY:]
+    save_memory()
+
+def memory_note(player, categories=None, k=8):
+    """Small prompt block with useful facts remembered about this player."""
+    if not player:
+        return ""
+    entry = _memory.get(_player_key(player))
+    if not entry:
+        return ""
+    categories = categories or ("trade", "party", "social")
+    texts = []
+    for category in categories:
+        for fact in entry.get(category, [])[-k:]:
+            text = fact.get("text", "") if isinstance(fact, dict) else str(fact)
+            text = text.strip()
+            if text and text not in texts:
+                texts.append(text)
+    if not texts:
+        return ""
+    return ("\n\nMemory about this player (use naturally when relevant, do not recite mechanically):\n- "
+            + "\n- ".join(texts[-k:]))
+
+_MEET_MEMORY_RE = re.compile(r"\[\[\s*MEET\s*:\s*([a-zA-Z]+)\s*\]\]", re.IGNORECASE)
+_SHOP_MEMORY_RE = re.compile(r"\[\[\s*SHOP\s*:\s*(SELL|BUY)\s*:\s*([^:\]]+?)\s*:\s*(\d+)\s*(?:k|kk)?\s*\]\]", re.IGNORECASE)
+
+def remember_trade_ad(player, ad_text):
+    """Extract persistent trade habits from public WTB/WTS ads."""
+    text = (ad_text or "").strip()
+    low = text.lower()
+    if not player or not text:
+        return
+    remember_fact(player, "trade", f"Player recently posted trade ad: {text}")
+
+    wants_to_buy = bool(re.search(r"\b(wtb|buying|b>)\b", low))
+    wants_to_sell = bool(re.search(r"\b(wts|selling|s>)\b", low))
+
+    if wants_to_buy and re.search(r"\b(ssd|soulshot\s*d|soulshots\s*d|bssd|bspsd|spsd|spiritshot\s*d)\b", low):
+        remember_fact(player, "trade", "Player has looked for D-grade shots in bulk.")
+    elif wants_to_buy and re.search(r"\b(ss|soulshot|spiritshot|sps|bsps)\b", low):
+        remember_fact(player, "trade", "Player has looked for shots in trade.")
+    elif wants_to_buy:
+        remember_fact(player, "trade", "Player uses trade chat to buy items.")
+    elif wants_to_sell:
+        remember_fact(player, "trade", "Player uses trade chat to sell items.")
+
+def remember_from_exchange(player, user_text, reply_text, mode):
+    """Extract stable useful memories from a player message + bot reply."""
+    if not player:
+        return
+
+    user_low = (user_text or "").lower()
+    reply = reply_text or ""
+
+    meet = _MEET_MEMORY_RE.search(reply)
+    if meet:
+        spot = meet.group(1).lower()
+        if spot == "cancel":
+            remember_fact(player, "trade", "Player cancelled or backed out of a meetup/trade.")
+        else:
+            remember_fact(player, "trade", f"Player agreed to meet at {spot}.")
+
+    shop = _SHOP_MEMORY_RE.search(reply)
+    if shop:
+        side = shop.group(1).upper()
+        item = shop.group(2).strip()
+        price = shop.group(3).strip()
+        if side == "SELL":
+            remember_fact(player, "trade", f"Player agreed to buy {item} for {price} adena each.")
+        else:
+            remember_fact(player, "trade", f"Player agreed to sell {item} for {price} adena each.")
+
+    if "gatekeeper" in user_low or " gk" in f" {user_low} ":
+        remember_fact(player, "trade", "Player often uses gatekeeper as a meeting point.")
+    elif "warehouse" in user_low or " wh" in f" {user_low} ":
+        remember_fact(player, "trade", "Player often uses warehouse as a meeting point.")
+    elif "shop" in user_low or "store" in user_low:
+        remember_fact(player, "trade", "Player is okay meeting near shops.")
+
+    if any(x in user_low for x in ("ty", "thanks", "thank you", "nice", "gj", "good job")):
+        remember_fact(player, "social", "Player has been friendly/appreciative.")
+    if any(x in user_low for x in ("brb", "afk", "bio")):
+        remember_fact(player, "party", "Player sometimes goes AFK during party play.")
+    if mode in ("WHISPER", "OFFER") and any(x in user_low for x in ("deal", "ok", "okay", "sure", "fine", "sounds good")):
+        remember_fact(player, "trade", "Player usually completes trade negotiations normally.")
+    if mode in ("WHISPER", "OFFER") and any(x in user_low for x in ("too much", "cheaper", "lower", "discount", "expensive")):
+        remember_fact(player, "trade", "Player sometimes haggles trade prices.")
+
 # ===== L2 knowledge base: grounded facts injected into prompts so bots don't invent =====
 # Tagged plain-text fact files under knowledge/*.txt. Each non-empty, non-'#' line is:
 #   [tag tokens here] The fact text the bot can rely on.
@@ -195,6 +358,8 @@ def knowledge_note(message, k=4, allow=None):
             "ranges, NPCs, quests or items beyond what you actually know):\n- " + "\n- ".join(facts))
 
 load_knowledge()
+load_memory()
+print(f"Memory: {sum(len(v.get(c, [])) for v in _memory.values() if isinstance(v, dict) for c in ('trade', 'party', 'social'))} remembered fact(s).")
 
 def whisper_persona(fpc, voice):
     return (GLOBAL_RULES + "\n\n" + voice + "\n\n"
@@ -327,14 +492,17 @@ def chat():
             player = request.headers.get("X-Player", "someone")
             deal = request.headers.get("X-Deal", "").strip()
             hist = conversations[(player, fpc)]
-            system = whisper_persona(fpc, voice) + loc_note
+            remember_trade_ad(player, message)
+            system = whisper_persona(fpc, voice) + loc_note + memory_note(player, ("trade", "social"), k=8)
             prompt = (f'{player} just posted in trade chat: "{message}". '
                       f"You want to {deal}. Send them ONE short, casual whisper that opens the deal by "
                       "stating your price and asking if they want to trade and where they want to meet. "
+                      "Use memory naturally if relevant, but do not act like a stalker. "
                       "Do NOT pick or agree a meeting place yourself yet, and do NOT add any tag.")
             reply = sanitize(call_llm(system, [{"role": "user", "content": prompt}], 70, temperature))
             # Seed the private memory so the follow-up conversation remembers this deal.
             hist.append({"role": "assistant", "content": reply})
+            remember_from_exchange(player, message, reply, "OFFER")
         elif mode == "PARTY":
             # A player chatting/giving orders to a recruited combat party member. Reply naturally and, when it
             # fits, append an action tag the Java side parses (assist/free/follow/stay/tp/grace/disband).
@@ -342,9 +510,10 @@ def chat():
             role = request.headers.get("X-Role", "party member")
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})
-            reply = sanitize(call_llm(party_persona(fpc, role, voice) + loc_note + knowledge_note(message),
+            reply = sanitize(call_llm(party_persona(fpc, role, voice) + loc_note + memory_note(player, ("party", "social"), k=8) + knowledge_note(message),
                 list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
+            remember_from_exchange(player, message, reply, "PARTY")
         elif mode == "BUDDY":
             # A player giving orders/chatting to their personal support buddy. Reply naturally and, when it
             # fits, append an action tag the Java side parses (follow/stay/tp/grace/buff/disband).
@@ -353,9 +522,10 @@ def chat():
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})
             note = " You are currently partied with them." if partied else " You are NOT partied with them yet."
-            reply = sanitize(call_llm(buddy_persona(fpc, voice) + note + knowledge_note(message),
+            reply = sanitize(call_llm(buddy_persona(fpc, voice) + note + memory_note(player, ("party", "social"), k=8) + knowledge_note(message),
                 list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
+            remember_from_exchange(player, message, reply, "BUDDY")
         elif mode == "BUDDYCHAT":
             # The buddy spontaneously opens a bit of small talk in party chat (started server-side on a long
             # random timer), so it doesn't feel like a silent bot.
@@ -364,7 +534,7 @@ def chat():
             prompt = ("Out of nowhere, start a little casual small talk with your partymate - a quick comment, "
                       "question or banter (the grind, a drop, taking a break, how they're doing, etc). Keep it "
                       "natural and ONE short line. Do not repeat your last lines. Do NOT add any tag.")
-            reply = sanitize(call_llm(buddy_persona(fpc, voice) + " You are currently partied with them.",
+            reply = sanitize(call_llm(buddy_persona(fpc, voice) + " You are currently partied with them." + memory_note(player, ("party", "social"), k=8),
                 list(hist) + [{"role": "user", "content": prompt}], 50, temperature))
             if reply:
                 hist.append({"role": "assistant", "content": reply})
@@ -373,10 +543,11 @@ def chat():
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})
             recent = "\n".join(trade_log) if trade_log else "(nothing recent)"
-            system = (whisper_persona(fpc, voice) + loc_note + knowledge_note(message)
+            system = (whisper_persona(fpc, voice) + loc_note + memory_note(player, ("trade", "party", "social"), k=8) + knowledge_note(message)
                       + f"\n\nRecent public trade chat you saw:\n{recent}")
             reply = sanitize(call_llm(system, list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
+            remember_from_exchange(player, message, reply, "WHISPER")
         elif mode == "SAY":
             speaker = request.headers.get("X-Speaker", "")
             overheard = f"{speaker}: {message}" if speaker else message

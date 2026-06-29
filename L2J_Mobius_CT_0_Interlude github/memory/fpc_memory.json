@@ -1,0 +1,38 @@
+{
+  "beregot": {
+    "party": [],
+    "player": "Beregot",
+    "social": [
+      {
+        "seen": 1782733975,
+        "text": "Player has been friendly/appreciative."
+      }
+    ],
+    "trade": [
+      {
+        "seen": 1782733914,
+        "text": "Player recently posted trade ad: wtb ssd 1k"
+      },
+      {
+        "seen": 1782733914,
+        "text": "Player has looked for D-grade shots in bulk."
+      },
+      {
+        "seen": 1782733940,
+        "text": "Player agreed to meet at gatekeeper."
+      },
+      {
+        "seen": 1782733940,
+        "text": "Player agreed to buy Soulshot D-grade for 13 adena each."
+      },
+      {
+        "seen": 1782733940,
+        "text": "Player often uses gatekeeper as a meeting point."
+      },
+      {
+        "seen": 1782733940,
+        "text": "Player usually completes trade negotiations normally."
+      }
+    ]
+  }
+}
