@@ -211,7 +211,8 @@ public class PhantomPartyManager
 		int rebuffIdx; // which buff in the list is next for the current target
 		List<Player> rebuffQueue; // targets still owed a full kit (leader only, a named member, or the whole party)
 		boolean healNow; // "heal me" order: heal the leader once even at full HP
-		Skill pendingBuff; // "give me X" order: a specific buff to cast on the leader next tick
+		Skill pendingBuff; // "give me X" / "X on <name>" order: a specific buff to cast next tick
+		Player pendingBuffTarget; // who that on-demand buff goes on (the leader, or a named party member)
 		long noSitUntil; // "stand" order: don't auto-sit for MP until this time (so it doesn't pop straight back down)
 		long recoveryUntil; // after a battle-res, especially the tank, pause DPS until it is stable again
 
@@ -490,8 +491,12 @@ public class PhantomPartyManager
 				final Skill known = PhantomBuffs.findKnown(buffs(state), requested);
 				if (known != null)
 				{
+					// "<buff> on me" / "<buff> on <member>": a named party member is the target, else the leader.
+					final Player named = findPartyMemberByName(state, text);
+					final Player target = (named != null) ? named : state.owner;
 					state.pendingBuff = known;
-					deliver(state, "sure, " + known.getName().toLowerCase());
+					state.pendingBuffTarget = target;
+					deliver(state, "sure, " + known.getName().toLowerCase() + ((target == state.owner) ? "" : " on " + target.getName()));
 				}
 				else
 				{
@@ -1798,23 +1803,27 @@ public class PhantomPartyManager
 			return;
 		}
 
-		// On-demand specific buff ("give me X"): cast it on the leader (honoured even if their archetype would
-		// normally skip it - they explicitly asked).
+		// On-demand specific buff ("give me X" / "greater might on <name>"): cast it on the requested target (the
+		// leader, or a named party member), honoured even if that target's archetype would normally skip it.
 		if (state.pendingBuff != null)
 		{
 			final Skill buff = state.pendingBuff;
-			if (!owner.isDead() && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()))
+			final Player target = (state.pendingBuffTarget != null) ? state.pendingBuffTarget : owner;
+			final boolean targetOk = (target != null) && !target.isDead() && (npc.calculateDistance2D(target) <= SUPPORT_RANGE);
+			if (targetOk && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()))
 			{
 				if (!readyToCast(npc))
 				{
 					return; // getting up first; cast on the next tick (pendingBuff kept so the order isn't lost)
 				}
 				state.pendingBuff = null;
-				npc.setTarget(owner);
+				state.pendingBuffTarget = null;
+				npc.setTarget(target);
 				npc.doCast(buff);
 				return;
 			}
-			state.pendingBuff = null; // can't satisfy it right now (dead / oom / disabled) - drop the request
+			state.pendingBuff = null; // can't satisfy it right now (dead / oom / disabled / out of range) - drop it
+			state.pendingBuffTarget = null;
 		}
 
 		// On-demand "heal me": one heal on the leader even at full HP.
@@ -2553,7 +2562,7 @@ public class PhantomPartyManager
 			while (state.rebuffIdx < all.size())
 			{
 				final Skill buff = all.get(state.rebuffIdx);
-				if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()))
+				if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()) && PhantomBuffs.canAffordReagent(npc, buff))
 				{
 					if (!readyToCast(npc))
 					{
@@ -2585,9 +2594,9 @@ public class PhantomPartyManager
 		final boolean caster = PhantomBuffs.isCaster(target);
 		for (Skill buff : buffs(state))
 		{
-			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) || (npc.getCurrentMp() < buff.getMpConsume()))
+			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) || (npc.getCurrentMp() < buff.getMpConsume()) || !PhantomBuffs.canAffordReagent(npc, buff))
 			{
-				continue;
+				continue; // wrong archetype, out of MP, or out of the buff's reagent (don't loop re-casting a buff that will be rejected)
 			}
 			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))

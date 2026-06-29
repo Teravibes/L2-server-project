@@ -26,6 +26,7 @@ import java.util.Comparator;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -134,6 +135,13 @@ public class PhantomManager implements IXmlReader
 	private static final int HP_POTION_ID = 1539; // Greater Healing Potion
 	private static final int HP_POTION_COUNT = 20000;
 	private static final int HP_POTION_PERCENT = 60;
+	// Buff reagents: a few support buffs consume an item per cast (the prophet's Greater Might / Greater Shield
+	// and the caster's Clarity all eat Spirit Ore, id 3031). A clientless buffer that has none silently fails the
+	// cast - the engine rejects it in checkDoCastConditions - and, since the buff never lands, re-tries it every
+	// tick forever (the "high-level buffer stuck buffing in a loop"; a low-level one doesn't know those buffs, so
+	// it never hit it). We hand every support phantom a large stack of whatever reagents its known buffs require,
+	// so the greater buffs actually land and upkeep completes. Weight is a non-issue: diet mode zeroes it.
+	private static final int BUFF_REAGENT_COUNT = 20000;
 	// Heal skill ids a buddy may already know (Heal, Battle Heal, Greater Heal, Greater Battle Heal). If it
 	// knows none (Prophet/Warcryer), it is granted Heal (1011) so every buddy can top its owner up.
 	private static final int[] HEAL_SKILL_IDS =
@@ -1008,6 +1016,7 @@ public class PhantomManager implements IXmlReader
 		}
 		learnAllSkills(phantom);
 		grantHeal(phantom, level);
+		giveBuffReagents(phantom); // Spirit Ore etc. so consumable buffs (Greater Might/Shield, Clarity) actually land
 		gear(phantom, level, true); // cast loadout
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
@@ -1055,6 +1064,40 @@ public class PhantomManager implements IXmlReader
 		if (heal != null)
 		{
 			phantom.addSkill(heal, true);
+		}
+	}
+
+	/**
+	 * Stocks a support phantom with the item reagents its buffs consume (Spirit Ore for the prophet's Greater
+	 * Might / Greater Shield and the caster's Clarity, etc.), scanned data-driven from the buffs it actually knows
+	 * so it adapts to whatever class/level kit it ended up with. Without the reagent the engine rejects the cast and
+	 * the buffer loops on the missing buff forever - so this both fixes that loop and keeps the greater buffs usable.
+	 * Must run AFTER the skill tree is learned. A big stack so a long session never runs dry; diet mode keeps the
+	 * weight off.
+	 * @param phantom the support phantom (buddy or recruited buffer/healer)
+	 */
+	private void giveBuffReagents(Player phantom)
+	{
+		final Set<Integer> reagents = new HashSet<>();
+		for (Skill skill : phantom.getAllSkills())
+		{
+			if ((skill == null) || skill.isPassive() || (skill.getItemConsumeId() <= 0) || (skill.getItemConsumeCount() <= 0))
+			{
+				continue;
+			}
+			// Only beneficial buffs - never stock reagents for offensive/summon/debuff skills.
+			if (skill.isContinuous() && (skill.getEffectPoint() >= 0) && !skill.isDebuff())
+			{
+				reagents.add(skill.getItemConsumeId());
+			}
+		}
+		for (int reagentId : reagents)
+		{
+			phantom.getInventory().addItem(ItemProcessType.REWARD, reagentId, BUFF_REAGENT_COUNT, phantom, null);
+		}
+		if (!reagents.isEmpty())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": Stocked " + phantom.getName() + " with buff reagents " + reagents + " (x" + BUFF_REAGENT_COUNT + " each).");
 		}
 	}
 
@@ -1968,6 +2011,7 @@ public class PhantomManager implements IXmlReader
 		}
 		learnAllSkills(phantom);
 		grantHeal(phantom, level);
+		giveBuffReagents(phantom); // Spirit Ore etc. so consumable buffs (Greater Might/Shield, Clarity) actually land
 		gearParty(phantom, level, true, role); // full caster loadout + jewelry + enchant chance, so supports survive content
 		PhantomBuffs.applyFullBuffs(phantom); // a support arrives self-buffed (Acumen/Empower etc.) too
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
