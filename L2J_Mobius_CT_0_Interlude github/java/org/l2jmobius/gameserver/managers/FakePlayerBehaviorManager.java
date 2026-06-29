@@ -1351,7 +1351,10 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			final Location candidate = GeoEngine.getInstance().getValidLocation(bot, new Location(x, y, landmark.getZ()));
 
 			// Keep the chosen spot close to the landmark, but avoid picking the exact landmark tile again.
-			if ((candidate.calculateDistance2D(landmark) >= MEET_OFFSET_MIN / 2) && GeoEngine.getInstance().canMoveToTarget(bot, candidate))
+			final int dx = candidate.getX() - landmark.getX();
+			final int dy = candidate.getY() - landmark.getY();
+			final double distanceFromLandmark = Math.sqrt((dx * dx) + (dy * dy));
+			if ((distanceFromLandmark >= MEET_OFFSET_MIN / 2) && GeoEngine.getInstance().canMoveToTarget(bot, candidate))
 			{
 				return candidate;
 			}
