@@ -1095,6 +1095,10 @@ public class PhantomManager implements IXmlReader
 		{
 			phantom.getInventory().addItem(ItemProcessType.REWARD, reagentId, BUFF_REAGENT_COUNT, phantom, null);
 		}
+		if (!reagents.isEmpty())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": Stocked " + phantom.getName() + " with buff reagents " + reagents + " (x" + BUFF_REAGENT_COUNT + " each).");
+		}
 	}
 
 	/**

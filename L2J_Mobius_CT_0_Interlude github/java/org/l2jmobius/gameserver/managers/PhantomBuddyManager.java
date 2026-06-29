@@ -1085,7 +1085,7 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				continue;
 			}
-			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
+			final BuffInfo info = PhantomBuffs.activeBuffInfo(target, buff);
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
 			{
 				return buff;
@@ -1297,7 +1297,9 @@ public class PhantomBuddyManager implements IXmlReader
 					list.add(skill);
 				}
 			}
-			state.buffs = list;
+			// Keep only the strongest buff per abnormal slot, so the buddy doesn't flap between two buffs that share a
+			// slot (and so a high-level kit can't overflow the 20 buff slots and rotate forever).
+			state.buffs = PhantomBuffs.strongestPerAbnormal(list);
 		}
 		return state.buffs;
 	}

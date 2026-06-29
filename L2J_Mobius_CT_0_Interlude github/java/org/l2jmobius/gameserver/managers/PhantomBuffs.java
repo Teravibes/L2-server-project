@@ -20,6 +20,7 @@
  */
 package org.l2jmobius.gameserver.managers;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,8 @@ import java.util.Set;
 
 import org.l2jmobius.gameserver.data.xml.SkillData;
 import org.l2jmobius.gameserver.model.actor.Player;
+import org.l2jmobius.gameserver.model.skill.AbnormalType;
+import org.l2jmobius.gameserver.model.skill.BuffInfo;
 import org.l2jmobius.gameserver.model.skill.Skill;
 
 /**
@@ -196,6 +199,68 @@ public final class PhantomBuffs
 			return true;
 		}
 		return caster.getInventory().getInventoryItemCount(reagentId, -1) >= buff.getItemConsumeCount();
+	}
+
+	/**
+	 * Reduces a buff kit to one skill per abnormal slot, keeping the strongest (highest magic level, then id).
+	 * <p>
+	 * Two buffs that share an abnormal type overwrite each other in the engine (only one occupies the slot at a
+	 * time), so a buffer that maintains BOTH flaps between them forever - each tick the one not currently up reads as
+	 * "missing" and gets recast, evicting the other (e.g. the prophet's Greater Might / War Chant, both pAtk, or
+	 * Might and its Greater upgrade). Keeping only the best per slot stops that flap AND bounds the kit so a
+	 * high-level buffer's long list can't blow past the target's 20 buff slots (which made the engine evict the
+	 * oldest buff on every cast - the whole-kit re-buff loop). Buffs with no abnormal type are all kept (each is its
+	 * own slot).
+	 */
+	public static List<Skill> strongestPerAbnormal(List<Skill> buffs)
+	{
+		final List<Skill> result = new ArrayList<>();
+		final Map<AbnormalType, Integer> indexByType = new HashMap<>();
+		for (Skill skill : buffs)
+		{
+			final AbnormalType type = skill.getAbnormalType();
+			if ((type == null) || type.isNone())
+			{
+				result.add(skill); // untyped buffs don't share a slot - keep each
+				continue;
+			}
+			final Integer at = indexByType.get(type);
+			if (at == null)
+			{
+				indexByType.put(type, result.size());
+				result.add(skill);
+			}
+			else if (isStronger(skill, result.get(at)))
+			{
+				result.set(at, skill); // a stronger variant of the same slot supersedes the one we had
+			}
+		}
+		return result;
+	}
+
+	private static boolean isStronger(Skill a, Skill b)
+	{
+		if (a.getMagicLevel() != b.getMagicLevel())
+		{
+			return a.getMagicLevel() > b.getMagicLevel(); // the higher-level (e.g. Greater) variant
+		}
+		return a.getId() > b.getId();
+	}
+
+	/**
+	 * @return the buff currently occupying {@code buff}'s slot on {@code target}, or {@code null} if the slot is
+	 *         empty. Looks up by abnormal type (so a slot filled by a different skill of the same type - e.g. base
+	 *         Might where we maintain Greater Might - counts as present and isn't re-cast), falling back to the skill
+	 *         id for the rare untyped buff.
+	 */
+	public static BuffInfo activeBuffInfo(Player target, Skill buff)
+	{
+		final AbnormalType type = buff.getAbnormalType();
+		if ((type == null) || type.isNone())
+		{
+			return target.getEffectList().getBuffInfoBySkillId(buff.getId());
+		}
+		return target.getEffectList().getBuffInfoByAbnormalType(type);
 	}
 
 	/**

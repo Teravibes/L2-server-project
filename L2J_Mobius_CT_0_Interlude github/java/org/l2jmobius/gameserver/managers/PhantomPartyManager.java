@@ -2589,7 +2589,7 @@ public class PhantomPartyManager
 			{
 				continue; // wrong archetype, out of MP, or out of the buff's reagent (don't loop re-casting a buff that will be rejected)
 			}
-			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
+			final BuffInfo info = PhantomBuffs.activeBuffInfo(target, buff);
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
 			{
 				if (beingBuffedByAnother(state, target, buff))
@@ -2692,7 +2692,10 @@ public class PhantomPartyManager
 					list.add(skill);
 				}
 			}
-			state.buffs = list;
+			// Keep only the strongest buff per abnormal slot: stops the support flapping between two buffs that share a
+			// slot, and bounds the kit so a high-level buffer's long list can't overflow the 20 buff slots (which made
+			// the engine evict the oldest buff on every cast - the endless whole-party re-buff loop).
+			state.buffs = PhantomBuffs.strongestPerAbnormal(list);
 		}
 		return state.buffs;
 	}
