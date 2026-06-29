@@ -54,6 +54,7 @@ import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.actor.instance.Teleporter;
 import org.l2jmobius.gameserver.model.actor.instance.Warehouse;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
+import org.l2jmobius.gameserver.network.serverpackets.DeleteObject;
 
 /**
  * Gives fake players a sense of purpose: instead of standing still (or following a single hand-drawn
@@ -774,10 +775,24 @@ public class FakePlayerBehaviorManager implements IXmlReader
 					look.setStoreItems(state.pendingStock);
 					look.setStore(state.pendingStoreType, state.pendingTitle);
 					state.dealActive = true;
+
+					LOGGER.info("FPC_DEAL_OPEN_ARRIVAL bot=" + npc.getName()
+						+ " objId=" + npc.getObjectId()
+						+ " storeType=" + look.getPrivateStoreType()
+						+ " sitting=" + look.isSitting()
+						+ " title=\"" + look.getStoreMessage() + "\""
+						+ " stock=" + look.getStoreItems().size()
+						+ " decayed=" + npc.isDecayed()
+						+ " moving=" + npc.isMoving()
+						+ " immobilized=" + npc.isImmobilized()
+						+ " x=" + npc.getX()
+						+ " y=" + npc.getY()
+						+ " z=" + npc.getZ());
+
 					state.pendingStoreType = 0;
 					state.pendingStock = null;
 					state.pendingTitle = null;
-					npc.broadcastInfo(); // re-render as a seated vendor so the store pose + sign actually show
+					refreshFakePlayerVisual(npc); // force client to rebuild fake-player visual with sitting/store state
 				}
 				if (who != null)
 				{
@@ -1073,7 +1088,17 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		}
 	}
 
-	/** Clears a meetup (and any deal store it opened) and un-pins the bot so its routine takes back over. */
+	/** Forces nearby clients to rebuild this fake player's visual state. */
+	private void refreshFakePlayerVisual(Npc bot)
+	{
+		World.getInstance().forEachVisibleObjectInRange(bot, Player.class, 2000, player ->
+		{
+			player.sendPacket(new DeleteObject(bot));
+			bot.sendInfo(player);
+		});
+	}
+
+	/** Clears a meetup (and any deal store it opened) and un-pins the bot so its routine takes back over. */	
 	private void endMeet(Npc bot, BotState state)
 	{
 		state.summonTarget = null;
@@ -1088,9 +1113,21 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		final FakePlayerAppearance look = bot.getFakePlayerAppearance();
 		if (state.dealActive && (look != null))
 		{
-			look.setStore(0, "");
-			look.setStoreItems(null);
-			bot.broadcastInfo(); // re-render as a normal standing roamer (drops the store pose + sign)
+			LOGGER.info("FPC_DEAL_CLOSE bot=" + bot.getName()
+			+ " objId=" + bot.getObjectId()
+			+ " oldStoreType=" + look.getPrivateStoreType()
+			+ " oldSitting=" + look.isSitting()
+			+ " oldTitle=\"" + look.getStoreMessage() + "\"");
+
+		look.setStore(0, "");
+		look.setStoreItems(null);
+
+		LOGGER.info("FPC_DEAL_CLOSED bot=" + bot.getName()
+			+ " objId=" + bot.getObjectId()
+			+ " storeType=" + look.getPrivateStoreType()
+			+ " sitting=" + look.isSitting());
+
+		refreshFakePlayerVisual(bot); // force client to rebuild fake-player visual without store state
 		}
 		state.dealActive = false;
 		bot.setImmobilized(false);
@@ -1188,6 +1225,19 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		look.setStoreItems(stock);
 		look.setStore(storeType, title);
 		state.dealActive = true;
+
+		LOGGER.info("FPC_DEAL_OPEN_NOW bot=" + bot.getName()
+			+ " objId=" + bot.getObjectId()
+			+ " storeType=" + look.getPrivateStoreType()
+			+ " sitting=" + look.isSitting()
+			+ " title=\"" + look.getStoreMessage() + "\""
+			+ " stock=" + look.getStoreItems().size()
+			+ " decayed=" + bot.isDecayed()
+			+ " moving=" + bot.isMoving()
+			+ " immobilized=" + bot.isImmobilized()
+			+ " x=" + bot.getX()
+			+ " y=" + bot.getY()
+			+ " z=" + bot.getZ());
 		state.pendingStoreType = 0;
 		state.pendingStock = null;
 		state.pendingTitle = null;
@@ -1196,7 +1246,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 		state.summonNudged = false;
 		bot.disableCoreAI(true);
 		bot.setImmobilized(true);
-		bot.broadcastInfo(); // re-render as a seated vendor so the store pose + sign actually show
+		refreshFakePlayerVisual(bot); // force client to rebuild fake-player visual with sitting/store state
 		return true;
 	}
 
