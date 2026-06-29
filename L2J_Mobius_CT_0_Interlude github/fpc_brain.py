@@ -449,6 +449,38 @@ def clean_reply(text):
         return ""
     return t
 
+def deal_note_from_headers():
+    side = request.headers.get("X-Deal-Side", "").strip().upper()
+    item = request.headers.get("X-Deal-Item", "").strip()
+    count = request.headers.get("X-Deal-Count", "").strip()
+    unit = request.headers.get("X-Deal-Unit-Price", "").strip()
+    total = request.headers.get("X-Deal-Total-Price", "").strip()
+
+    if not side or not item or not unit:
+        return ""
+
+    if side == "SELL":
+        action = "You are selling this item to the player."
+        shop_tag = f"[[SHOP:SELL:{item}:{unit}]]"
+    elif side == "BUY":
+        action = "You are buying this item from the player."
+        shop_tag = f"[[SHOP:BUY:{item}:{unit}]]"
+    else:
+        action = "You are negotiating a trade with the player."
+        shop_tag = ""
+
+    qty = f"{count}x " if count else ""
+    total_line = f" Total price is about {total} adena." if total else ""
+
+    return (
+        "\n\nStructured current trade context. Prefer this over guessing from chat text:\n"
+        f"- {action}\n"
+        f"- Item: {qty}{item}\n"
+        f"- Unit price: {unit} adena each.\n"
+        f"-{total_line}\n"
+        f"- If the player agrees price and meeting place, use this exact shop tag: {shop_tag}"
+    )
+
 @app.route("/chat", methods=["POST"])
 def chat():
     fpc = request.headers.get("X-FPC", "a player")
@@ -462,6 +494,7 @@ def chat():
                 "meet, answer truthfully with that.") if location else ""
     message = request.get_data(as_text=True)
     voice, temperature = _voice(fpc)  # this bot's stable personality + creativity
+    deal_note = deal_note_from_headers()
     reply = ""
     try:
         if mode == "ITEM":
@@ -493,10 +526,11 @@ def chat():
             deal = request.headers.get("X-Deal", "").strip()
             hist = conversations[(player, fpc)]
             remember_trade_ad(player, message)
-            system = whisper_persona(fpc, voice) + loc_note + memory_note(player, ("trade", "social"), k=8)
+            system = whisper_persona(fpc, voice) + loc_note + memory_note(player, ("trade", "social"), k=8) + deal_note
             prompt = (f'{player} just posted in trade chat: "{message}". '
                       f"You want to {deal}. Send them ONE short, casual whisper that opens the deal by "
                       "stating your price and asking if they want to trade and where they want to meet. "
+                      "Use the structured trade context exactly for item, quantity and price. "
                       "Use memory naturally if relevant, but do not act like a stalker. "
                       "Do NOT pick or agree a meeting place yourself yet, and do NOT add any tag.")
             reply = sanitize(call_llm(system, [{"role": "user", "content": prompt}], 70, temperature))
@@ -543,7 +577,8 @@ def chat():
             hist = conversations[(player, fpc)]
             hist.append({"role": "user", "content": message})
             recent = "\n".join(trade_log) if trade_log else "(nothing recent)"
-            system = (whisper_persona(fpc, voice) + loc_note + memory_note(player, ("trade", "party", "social"), k=8) + knowledge_note(message)
+            system = (whisper_persona(fpc, voice) + loc_note + memory_note(player, ("trade", "party", "social"), k=8)
+                      + deal_note + knowledge_note(message)
                       + f"\n\nRecent public trade chat you saw:\n{recent}")
             reply = sanitize(call_llm(system, list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})

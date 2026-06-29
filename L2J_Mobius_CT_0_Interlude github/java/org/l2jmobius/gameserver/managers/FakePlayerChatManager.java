@@ -17,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -76,6 +77,28 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final long SHOUT_AMBIENT_INTERVAL = 300000; // spontaneous shout (LFM / chit-chat) every ~5 min
 	private static final AtomicInteger MESSAGES_THIS_MINUTE = new AtomicInteger();
 	private static boolean SOCIAL_STARTED = false;
+
+	// Structured deal context kept while a trade responder is negotiating with a player.
+	// Keyed by playerName|botName so follow-up whispers can include the same exact item/count/price.
+	private static final Map<String, BrainDealContext> ACTIVE_DEALS = new ConcurrentHashMap<>();
+
+	private static class BrainDealContext
+	{
+		final String side; // Bot perspective: SELL means bot sells to player, BUY means bot buys from player.
+		final String item;
+		final int count;
+		final int unitPrice;
+		final long totalPrice;
+
+		BrainDealContext(String side, String item, int count, int unitPrice)
+		{
+			this.side = side;
+			this.item = item;
+			this.count = Math.max(1, count);
+			this.unitPrice = Math.max(1, unitPrice);
+			totalPrice = (long) this.count * this.unitPrice;
+		}
+	}
 
 	// The brain appends [[MEET:spot]] to a whisper when it agrees to walk over; we act on it then strip it.
 	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
@@ -325,12 +348,16 @@ public class FakePlayerChatManager implements IXmlReader
 		FakePlayerBehaviorManager.getInstance().setupDeal(bot, storeType, stock, title);
 
 		final int unit = stock.get(0).getPrice();
+		final int actualCount = stock.get(0).getCount();
+		final String botSide = playerSelling ? "BUY" : "SELL";
 		final String deal = (playerSelling ? "buy their " : "sell them ")
-			+ (requestedCount > 0 ? (requestedCount + "x ") : "")
+			+ (actualCount > 0 ? (actualCount + "x ") : "")
 			+ item.getName() + " for about " + unit
 			+ " adena each; state your price and ask if they want to deal and where to meet (gatekeeper, warehouse or shop) - do not commit to walking anywhere yet";
 		final String fpcName = bot.getName();
-		final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal);
+		final BrainDealContext dealContext = new BrainDealContext(botSide, item.getName(), actualCount, unit);
+		ACTIVE_DEALS.put(dealKey(player.getName(), fpcName), dealContext);
+		final String line = callBridge(fpcName, "OFFER", player.getName(), "", text, nearestLocation(bot), deal, dealContext);
 		sendChat(player, fpcName, (line == null) || line.isEmpty() //
 			? ("saw ur post - i " + (playerSelling ? "buy " : "sell ") + item.getName() + " for " + unit + " adena each, wanna deal? where u wanna meet?") //
 			: line);
@@ -347,6 +374,11 @@ public class FakePlayerChatManager implements IXmlReader
 		}
 		final String name = reply.trim();
 		return (name.isEmpty() || name.equalsIgnoreCase("none")) ? null : name;
+	}
+
+	private static String dealKey(String playerName, String fpcName)
+	{
+		return ((playerName == null ? "" : playerName.trim().toLowerCase()) + "|" + (fpcName == null ? "" : fpcName.trim().toLowerCase()));
 	}
 
 	private static int parseTradeQuantity(String phrase, ItemTemplate item)
@@ -828,7 +860,7 @@ public class FakePlayerChatManager implements IXmlReader
 	
 	private String askBrain(String playerName, String fpcName, String message, String location)
 	{
-		return callBridge(fpcName, "WHISPER", playerName, "", message, location, "");
+		return callBridge(fpcName, "WHISPER", playerName, "", message, location, "", ACTIVE_DEALS.get(dealKey(playerName, fpcName)));
 	}
 
 	private String askBrainPublic(String fpcName, String speakerName, String overheard, String mode, String location, boolean human)
@@ -838,14 +870,24 @@ public class FakePlayerChatManager implements IXmlReader
 
 	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location, String deal)
 	{
-		return callBridge(fpcName, mode, playerName, speakerName, body, location, deal, false);
+		return callBridge(fpcName, mode, playerName, speakerName, body, location, deal, false, null);
+	}
+
+	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location, String deal, BrainDealContext dealContext)
+	{
+		return callBridge(fpcName, mode, playerName, speakerName, body, location, deal, false, dealContext);
 	}
 
 	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location, String deal, boolean human)
 	{
+		return callBridge(fpcName, mode, playerName, speakerName, body, location, deal, human, null);
+	}
+
+	private String callBridge(String fpcName, String mode, String playerName, String speakerName, String body, String location, String deal, boolean human, BrainDealContext dealContext)
+	{
 		try
 		{
-			final HttpRequest request = HttpRequest.newBuilder() //
+			final HttpRequest.Builder builder = HttpRequest.newBuilder() //
 				.uri(URI.create(BRAIN_URL)) //
 				.timeout(Duration.ofSeconds(20)) //
 				.header("X-FPC", fpcName) //
@@ -854,10 +896,22 @@ public class FakePlayerChatManager implements IXmlReader
 				.header("X-Speaker", speakerName) //
 				.header("X-Location", location == null ? "" : location) //
 				.header("X-Deal", deal == null ? "" : deal) //
-				.header("X-Human", human ? "true" : "false") //
+				.header("X-Human", human ? "true" : "false");
+
+			if (dealContext != null)
+			{
+				builder.header("X-Deal-Side", dealContext.side);
+				builder.header("X-Deal-Item", dealContext.item);
+				builder.header("X-Deal-Count", Integer.toString(dealContext.count));
+				builder.header("X-Deal-Unit-Price", Integer.toString(dealContext.unitPrice));
+				builder.header("X-Deal-Total-Price", Long.toString(dealContext.totalPrice));
+			}
+
+			final HttpRequest request = builder //
 				.header("Content-Type", "text/plain; charset=utf-8") //
 				.POST(HttpRequest.BodyPublishers.ofString(body)) //
 				.build();
+
 			final HttpResponse<String> response = BRAIN_HTTP.send(request, HttpResponse.BodyHandlers.ofString());
 			if (response.statusCode() == 200)
 			{
@@ -1008,6 +1062,7 @@ public class FakePlayerChatManager implements IXmlReader
 					if ("cancel".equalsIgnoreCase(spot))
 					{
 						FakePlayerBehaviorManager.getInstance().cancelMeet(bot);
+						ACTIVE_DEALS.remove(dealKey(player.getName(), bot.getName()));
 						cancelled = true;
 					}
 					else
