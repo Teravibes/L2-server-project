@@ -77,6 +77,12 @@ public class FakePlayerStoreFactory
 	private static final int ADENA_ID = 57;
 	private static final int ANCIENT_ADENA_ID = 5575;
 
+	// Percent of normal SELL shops that should also carry combat shots.
+	// 50% makes small villages reliable without making every private store identical.
+	private static final int SHOT_SELLER_CHANCE = 50;
+	private static final int SHOT_STACK_MIN = 5000;
+	private static final int SHOT_STACK_MAX = 25000;
+
 	// Filler words to ignore when matching a trade-ad phrase to an item name.
 	private static final Set<String> MATCH_STOPWORDS = Set.of("grade", "gr", "the", "a", "an", "of", "for", "pls", "plz", "pm", "cheap", "each", "ea", "some", "any", "my", "g", "lvl");
 	// Variant prefixes that should lose to the plain item when the rest matches (e.g. prefer "Soulshot: D-grade" over "Beast Soulshot").
@@ -282,6 +288,87 @@ public class FakePlayerStoreFactory
 	private static ItemTemplate pickBulk(int maxOrdinal)
 	{
 		return pickGraded(BULK, maxOrdinal);
+	}
+
+	/**
+	 * Adds a reliable shot pair to some SELL stores.
+	 * Regular towns use the vendor's grade cap.
+	 * Full-stock hubs randomize D/C/B/A so the hub market naturally covers all common shot grades.
+	 */
+	private static void maybeAddShotStock(List<FakePlayerStoreItem> stock, Set<Integer> seen, int cap, boolean fullStock)
+	{
+		if (Rnd.get(100) >= SHOT_SELLER_CHANCE)
+		{
+			return;
+		}
+
+		final CrystalType grade = fullStock ? randomShotGrade(cap) : shotGradeForCap(cap);
+		addShotLine(stock, seen, "Soulshot " + shotGradeLetter(grade));
+		addShotLine(stock, seen, "Blessed Spiritshot " + shotGradeLetter(grade));
+	}
+
+	/**
+	 * For normal towns, use the highest appropriate D/C/B/A/S grade.
+	 */
+	private static CrystalType shotGradeForCap(int cap)
+	{
+		final int min = CrystalType.D.ordinal();
+		final int max = Math.min(cap, CrystalType.S.ordinal());
+		return CrystalType.values()[Math.max(min, max)];
+	}
+
+	/**
+	 * For market hubs, spread selected shot sellers across D/C/B/A/S.
+	 */
+	private static CrystalType randomShotGrade(int cap)
+	{
+		final int min = CrystalType.D.ordinal();
+		final int max = Math.min(cap, CrystalType.S.ordinal());
+		return CrystalType.values()[Rnd.get(min, Math.max(min, max))];
+	}
+
+	private static String shotGradeLetter(CrystalType grade)
+	{
+		switch (grade)
+		{
+			case D:
+			{
+				return "D";
+			}
+			case C:
+			{
+				return "C";
+			}
+			case B:
+			{
+				return "B";
+			}
+			case A:
+			{
+				return "A";
+			}
+			case S:
+			{
+				return "S";
+			}
+			default:
+			{
+				return "D";
+			}
+		}
+	}
+
+	private static void addShotLine(List<FakePlayerStoreItem> stock, Set<Integer> seen, String phrase)
+	{
+		final ItemTemplate item = findItemByName(phrase);
+		if ((item == null) || !seen.add(item.getId()))
+		{
+			return;
+		}
+
+		final int count = Rnd.get(SHOT_STACK_MIN, SHOT_STACK_MAX);
+		final int price = priced(item.getReferencePrice(), 1.0, 1.25);
+		stock.add(line(item, 0, count, price));
 	}
 
 	/** The grade cap a vendor surfaces: full range for a market hub, else gated by its level. */
@@ -499,6 +586,11 @@ public class FakePlayerStoreFactory
 		final int cap = gradeCap(level, fullStock);
 		final List<FakePlayerStoreItem> stock = new ArrayList<>();
 		final Set<Integer> seen = new HashSet<>();
+
+		// Reliability pass: some SELL shops always carry a grade-appropriate soulshot + blessed spiritshot pair.
+		// This is intentionally done before the normal random stock so the rest of the shop still looks organic.
+		maybeAddShotStock(stock, seen, cap, fullStock);
+
 		final int lines = Rnd.get(2, 5);
 		for (int i = 0; i < lines; i++)
 		{
