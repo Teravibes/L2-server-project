@@ -1,4 +1,31 @@
 {
+  "admin": {
+    "party": [],
+    "player": "Admin",
+    "social": [],
+    "trade": [
+      {
+        "seen": 1782749605,
+        "text": "Player recently posted trade ad: wtb ssd"
+      },
+      {
+        "seen": 1782749605,
+        "text": "Player has looked for D-grade shots in bulk."
+      },
+      {
+        "seen": 1782749708,
+        "text": "Player agreed to meet at gk."
+      },
+      {
+        "seen": 1782749708,
+        "text": "Player often uses gatekeeper as a meeting point."
+      },
+      {
+        "seen": 1782749708,
+        "text": "Player usually completes trade negotiations normally."
+      }
+    ]
+  },
   "beregot": {
     "party": [],
     "player": "Beregot",
