@@ -72,10 +72,12 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final int MAX_REPLIERS = 2; // at most N bots answer one line
 	private static final int SOCIAL_RANGE = 3000; // trade: how close a bot must be to react
 	private static final int SAY_RANGE = 1250; // say: local hearing/broadcast range
-	private static final int MAX_MESSAGES_PER_MINUTE = 8; // global rate cap (throttle 3)
+	private static final int MAX_MESSAGES_PER_MINUTE = 8; // public/social rate cap: shout/trade/say/ambient banter
+	private static final int MAX_TRADE_OFFERS_PER_MINUTE = 20; // important WTB/WTS responder PM cap
 	private static final long AMBIENT_INTERVAL = 240000; // spontaneous trade line every ~4 min
 	private static final long SHOUT_AMBIENT_INTERVAL = 300000; // spontaneous shout (LFM / chit-chat) every ~5 min
 	private static final AtomicInteger MESSAGES_THIS_MINUTE = new AtomicInteger();
+	private static final AtomicInteger TRADE_OFFERS_THIS_MINUTE = new AtomicInteger();
 	private static boolean SOCIAL_STARTED = false;
 
 	// Structured deal context kept while a trade responder is negotiating with a player.
@@ -263,7 +265,11 @@ public class FakePlayerChatManager implements IXmlReader
 			return;
 		}
 		SOCIAL_STARTED = true;
-		ThreadPool.scheduleAtFixedRate(() -> MESSAGES_THIS_MINUTE.set(0), 60000, 60000); // reset rate cap each minute
+		ThreadPool.scheduleAtFixedRate(() ->
+		{
+			MESSAGES_THIS_MINUTE.set(0);
+			TRADE_OFFERS_THIS_MINUTE.set(0);
+		}, 60000, 60000); // reset rate caps each minute
 		ThreadPool.scheduleAtFixedRate(this::ambientTradeChat, AMBIENT_INTERVAL, AMBIENT_INTERVAL);
 		ThreadPool.scheduleAtFixedRate(this::ambientShoutChat, SHOUT_AMBIENT_INTERVAL, SHOUT_AMBIENT_INTERVAL);
 		LOGGER.info(getClass().getSimpleName() + ": Server-wide social chat enabled.");
@@ -299,7 +305,11 @@ public class FakePlayerChatManager implements IXmlReader
 	 */
 	private void respondToTradeAd(Player player, String text)
 	{
-		if ((player == null) || (MESSAGES_THIS_MINUTE.get() >= MAX_MESSAGES_PER_MINUTE))
+		if (player == null)
+		{
+			return;
+		}
+		if (TRADE_OFFERS_THIS_MINUTE.get() >= MAX_TRADE_OFFERS_PER_MINUTE)
 		{
 			return;
 		}
@@ -361,7 +371,7 @@ public class FakePlayerChatManager implements IXmlReader
 		sendChat(player, fpcName, (line == null) || line.isEmpty() //
 			? ("saw ur post - i " + (playerSelling ? "buy " : "sell ") + item.getName() + " for " + unit + " adena each, wanna deal? where u wanna meet?") //
 			: line);
-		MESSAGES_THIS_MINUTE.incrementAndGet();
+		TRADE_OFFERS_THIS_MINUTE.incrementAndGet();
 	}
 
 	/** Asks the brain to translate trade-chat shorthand into a plain item name; {@code null} if unclear. */

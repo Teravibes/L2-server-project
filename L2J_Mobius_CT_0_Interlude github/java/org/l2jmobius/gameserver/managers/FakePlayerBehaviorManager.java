@@ -95,6 +95,8 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	// for the requested landmark NPC (kept tight so meetups stay within the bot's own town).
 	private static final int SUMMON_ARRIVE_DIST = 120;
 	private static final int SUMMON_SEARCH_RANGE = 6000;
+	// Wider than landmark search: used only to find a roaming fake player who can answer a WTB/WTS ad.
+	private static final int TRADE_RESPONDER_SEARCH_RANGE = 12000;
 	// Meet beside a landmark NPC instead of on top of it, so the fake player does not overlap the gatekeeper,
 	// warehouse keeper or merchant model.
 	private static final int MEET_OFFSET_MIN = 160;
@@ -1150,7 +1152,7 @@ public class FakePlayerBehaviorManager implements IXmlReader
 			return null;
 		}
 		final List<Npc> candidates = new ArrayList<>();
-		World.getInstance().forEachVisibleObjectInRange(player, Npc.class, SUMMON_SEARCH_RANGE, npc ->
+		World.getInstance().forEachVisibleObjectInRange(player, Npc.class, TRADE_RESPONDER_SEARCH_RANGE, npc ->
 		{
 			if (!npc.isFakePlayer())
 			{
