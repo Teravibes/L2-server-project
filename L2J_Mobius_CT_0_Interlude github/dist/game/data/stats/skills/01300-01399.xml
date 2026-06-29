@@ -3315,7 +3315,7 @@
 		<targetType>ONE</targetType>
 		<abnormalLevel>#abnormalLevels</abnormalLevel>
 		<abnormalTime>1200</abnormalTime>
-		<abnormalType>PA_UP</abnormalType>
+		<abnormalType>PA_PD_UP</abnormalType>
 		<castRange>400</castRange>
 		<effectPoint>#effectPoints</effectPoint>
 		<effectRange>900</effectRange>
@@ -3349,7 +3349,7 @@
 		<targetType>ONE</targetType>
 		<abnormalLevel>#abnormalLevels</abnormalLevel>
 		<abnormalTime>1200</abnormalTime>
-		<abnormalType>PD_UP</abnormalType>
+		<abnormalType>PA_PD_UP</abnormalType>
 		<castRange>400</castRange>
 		<effectPoint>#effectPoints</effectPoint>
 		<effectRange>900</effectRange>
@@ -3383,7 +3383,7 @@
 		<targetType>PARTY</targetType>
 		<abnormalLevel>#abnormalLevels</abnormalLevel>
 		<abnormalTime>1200</abnormalTime>
-		<abnormalType>PA_UP</abnormalType>
+		<abnormalType>PA_PD_UP</abnormalType>
 		<affectRange>1000</affectRange>
 		<effectPoint>#effectPoints</effectPoint>
 		<hitTime>2500</hitTime>
@@ -3416,7 +3416,7 @@
 		<targetType>PARTY</targetType>
 		<abnormalLevel>#abnormalLevels</abnormalLevel>
 		<abnormalTime>1200</abnormalTime>
-		<abnormalType>PD_UP</abnormalType>
+		<abnormalType>PA_PD_UP</abnormalType>
 		<affectRange>1000</affectRange>
 		<effectPoint>#effectPoints</effectPoint>
 		<hitTime>2500</hitTime>

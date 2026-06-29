@@ -147,7 +147,8 @@ public class PhantomBuddyManager implements IXmlReader
 		int rebuffIdx; // which buff in the list is next for the current target
 		List<Player> rebuffQueue; // targets still owed a full kit (owner only, a named member, or the whole party)
 		boolean healNow; // "heal me" order: heal the owner once even at full HP
-		Skill pendingBuff; // "give me X" order: a specific buff to cast on the owner next tick
+		Skill pendingBuff; // "give me X" / "X on <name>" order: a specific buff to cast next tick
+		Player pendingBuffTarget; // who that on-demand buff goes on (the owner, or a named party member)
 		long noSitUntil; // "stand" order: don't auto-sit for MP until this time (so it doesn't pop straight back down)
 
 		Buddy(Player npc)
@@ -313,8 +314,12 @@ public class PhantomBuddyManager implements IXmlReader
 			final Skill known = PhantomBuffs.findKnown(buffList(state, buddy), requested);
 			if (known != null)
 			{
+				// "<buff> on me" / "<buff> on <member>": a named party member is the target, otherwise the owner.
+				final Player named = findPartyMemberByName(owner, text);
+				final Player target = ((named != null) && (named != buddy)) ? named : owner;
 				state.pendingBuff = known;
-				deliver(state, owner, party, "sure, " + known.getName().toLowerCase());
+				state.pendingBuffTarget = target;
+				deliver(state, owner, party, "sure, " + known.getName().toLowerCase() + ((target == owner) ? "" : " on " + target.getName()));
 			}
 			else
 			{
@@ -905,22 +910,27 @@ public class PhantomBuddyManager implements IXmlReader
 
 		final boolean ownerInRange = buddy.calculateDistance2D(owner) <= SUPPORT_RANGE;
 
-		// On-demand specific buff ("give me X"): cast it on the owner (honoured even if archetype would skip it).
+		// On-demand specific buff ("give me X" / "greater might on <name>"): cast it on the requested target (the
+		// owner, or a named party member), honoured even if that target's archetype would normally skip it.
 		if (state.pendingBuff != null)
 		{
 			final Skill buff = state.pendingBuff;
-			if (ownerInRange && !owner.isDead() && !buddy.isSkillDisabled(buff) && (buddy.getCurrentMp() >= buff.getMpConsume()))
+			final Player target = (state.pendingBuffTarget != null) ? state.pendingBuffTarget : owner;
+			final boolean targetOk = (target != null) && !target.isDead() && (buddy.calculateDistance2D(target) <= SUPPORT_RANGE);
+			if (targetOk && !buddy.isSkillDisabled(buff) && (buddy.getCurrentMp() >= buff.getMpConsume()))
 			{
 				if (!readyToCast(buddy))
 				{
 					return true; // getting up first; cast next tick (pendingBuff kept so the order isn't lost)
 				}
 				state.pendingBuff = null;
-				buddy.setTarget(owner);
+				state.pendingBuffTarget = null;
+				buddy.setTarget(target);
 				buddy.doCast(buff);
 				return true;
 			}
 			state.pendingBuff = null; // can't satisfy it right now (out of range / dead / oom / disabled)
+			state.pendingBuffTarget = null;
 		}
 
 		// On-demand "heal me": heal the owner once if not hurt.
@@ -1085,7 +1095,7 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				continue;
 			}
-			final BuffInfo info = PhantomBuffs.activeBuffInfo(target, buff);
+			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))
 			{
 				return buff;
@@ -1297,9 +1307,7 @@ public class PhantomBuddyManager implements IXmlReader
 					list.add(skill);
 				}
 			}
-			// Keep only the strongest buff per abnormal slot, so the buddy doesn't flap between two buffs that share a
-			// slot (and so a high-level kit can't overflow the 20 buff slots and rotate forever).
-			state.buffs = PhantomBuffs.strongestPerAbnormal(list);
+			state.buffs = list;
 		}
 		return state.buffs;
 	}

@@ -20,7 +20,6 @@
  */
 package org.l2jmobius.gameserver.managers;
 
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,8 +27,6 @@ import java.util.Set;
 
 import org.l2jmobius.gameserver.data.xml.SkillData;
 import org.l2jmobius.gameserver.model.actor.Player;
-import org.l2jmobius.gameserver.model.skill.AbnormalType;
-import org.l2jmobius.gameserver.model.skill.BuffInfo;
 import org.l2jmobius.gameserver.model.skill.Skill;
 
 /**
@@ -57,28 +54,42 @@ public final class PhantomBuffs
 		SELF
 	}
 
-	// Physical-only buffs: useless on a caster, so skipped for caster targets.
-	private static final Set<Integer> MELEE = Set.of( //
+	// The buffs the support keeps up AUTOMATICALLY - a curated core set, on purpose. A high-level Prophet/Elder
+	// knows far more buffs than a target's 20 buff slots (MaxBuffAmount) can hold: every resistance, both the base
+	// and "greater" variant of a buff, War/Earth Chant, and so on. Auto-maintaining all of them overflowed the slot
+	// cap, and because the engine evicts the OLDEST buff on each new cast, the buffer rotated through the whole kit
+	// forever (the endless re-buff loop a low-level buffer never hit, because its short kit fit). So the buffer keeps
+	// only this fixed core that fits comfortably; the situational / consumable "greater" buffs and the resistances
+	// are cast ONLY when the player asks for them by name (see requestedBuff / "<buff> on <name>"). Class variants
+	// are listed so the same plan works for Prophet / Elder / Warcryer.
+	private static final Set<Integer> AUTO_COMMON = Set.of(1204, 4342, 4391); // Wind Walk
+	private static final Set<Integer> AUTO_MELEE = Set.of( //
 		1086, 4357, 4402, // Haste
-		1068, 4345, 4393, 5154, 1388, // Might / Greater Might
-		1077, 4359, 4404, 5163, // Focus
+		1068, 4345, 4393, // Might (base; Greater Might is on request only - it shares a slot with Greater Shield)
+		1077, 4359, 4404, // Focus
 		1242, 4360, 4405, // Death Whisper
-		1240, 4358, 4403, 5162, // Guidance
+		1240, 4358, 4403, // Guidance
 		1268, 4354, 4399, // Vampiric Rage
-		1087, 4406, 5161); // Agility
-
-	// Magic-only buffs: useless on a fighter, so skipped for fighter targets.
-	private static final Set<Integer> CASTER = Set.of( //
+		1087, 4406, // Agility
+		1040, // Shield (base; Greater Shield is on request only)
+		1035, // Mental Shield
+		1036, // Magic Barrier
+		1045, // Blessed Body
+		1048, // Blessed Soul
+		1062, 4352, 4397); // Berserker Spirit
+	private static final Set<Integer> AUTO_CASTER = Set.of( //
 		1085, 4355, 4400, // Acumen
-		1059, 1462, 4356, 4401, 5156, // Empower / Greater Empower
+		1059, 4356, 4401, // Empower (base; Greater Empower is on request only)
 		1303, 5164, // Wild Magic
-		1397, // Clarity
-		1078, 4351); // Concentration
+		1078, 4351, // Concentration
+		1035, // Mental Shield
+		1036, // Magic Barrier
+		1045, // Blessed Body
+		1048, // Blessed Soul
+		1062); // Berserker Spirit
 
 	private static final Set<Integer> WIND_WALK = Set.of(1204, 4342, 4391);
-	private static final Set<Integer> HASTE = Set.of(1086, 4357, 4402);
 	private static final Set<Integer> ACUMEN = Set.of(1085, 4355, 4400);
-	private static final Set<Integer> BERSERKER = Set.of(1062, 4352, 4397);
 
 	// Pre-buff kits applied to a recruited member the moment it spawns, so it arrives already fully buffed for its
 	// level (no need to re-buff a fresh party from scratch). Prophet/Elder primary ids; an unknown id is skipped.
@@ -119,12 +130,24 @@ public final class PhantomBuffs
 		BUFF_ALIASES.put("haste", "haste");
 		BUFF_ALIASES.put("acumen", "acumen");
 		BUFF_ALIASES.put("might", "might");
+		BUFF_ALIASES.put("greater might", "greater might");
+		BUFF_ALIASES.put("gmight", "greater might");
 		BUFF_ALIASES.put("shield", "shield");
+		BUFF_ALIASES.put("greater shield", "greater shield");
+		BUFF_ALIASES.put("gshield", "greater shield");
 		BUFF_ALIASES.put("focus", "focus");
 		BUFF_ALIASES.put("death whisper", "death whisper");
 		BUFF_ALIASES.put("dw", "death whisper");
 		BUFF_ALIASES.put("guidance", "guidance");
 		BUFF_ALIASES.put("empower", "empower");
+		BUFF_ALIASES.put("greater empower", "greater empower");
+		BUFF_ALIASES.put("war chant", "war chant");
+		BUFF_ALIASES.put("earth chant", "earth chant");
+		BUFF_ALIASES.put("holy resist", "holy resist");
+		BUFF_ALIASES.put("holy resistance", "holy resist");
+		BUFF_ALIASES.put("unholy resist", "unholy resist");
+		BUFF_ALIASES.put("unholy resistance", "unholy resist");
+		BUFF_ALIASES.put("resist shock", "resist shock");
 		BUFF_ALIASES.put("berserker", "berserker");
 		BUFF_ALIASES.put("zerk", "berserker");
 		BUFF_ALIASES.put("vampiric rage", "vampiric rage");
@@ -202,72 +225,12 @@ public final class PhantomBuffs
 	}
 
 	/**
-	 * Reduces a buff kit to one skill per abnormal slot, keeping the strongest (highest magic level, then id).
-	 * <p>
-	 * Two buffs that share an abnormal type overwrite each other in the engine (only one occupies the slot at a
-	 * time), so a buffer that maintains BOTH flaps between them forever - each tick the one not currently up reads as
-	 * "missing" and gets recast, evicting the other (e.g. the prophet's Greater Might / War Chant, both pAtk, or
-	 * Might and its Greater upgrade). Keeping only the best per slot stops that flap AND bounds the kit so a
-	 * high-level buffer's long list can't blow past the target's 20 buff slots (which made the engine evict the
-	 * oldest buff on every cast - the whole-kit re-buff loop). Buffs with no abnormal type are all kept (each is its
-	 * own slot).
-	 */
-	public static List<Skill> strongestPerAbnormal(List<Skill> buffs)
-	{
-		final List<Skill> result = new ArrayList<>();
-		final Map<AbnormalType, Integer> indexByType = new HashMap<>();
-		for (Skill skill : buffs)
-		{
-			final AbnormalType type = skill.getAbnormalType();
-			if ((type == null) || type.isNone())
-			{
-				result.add(skill); // untyped buffs don't share a slot - keep each
-				continue;
-			}
-			final Integer at = indexByType.get(type);
-			if (at == null)
-			{
-				indexByType.put(type, result.size());
-				result.add(skill);
-			}
-			else if (isStronger(skill, result.get(at)))
-			{
-				result.set(at, skill); // a stronger variant of the same slot supersedes the one we had
-			}
-		}
-		return result;
-	}
-
-	private static boolean isStronger(Skill a, Skill b)
-	{
-		if (a.getMagicLevel() != b.getMagicLevel())
-		{
-			return a.getMagicLevel() > b.getMagicLevel(); // the higher-level (e.g. Greater) variant
-		}
-		return a.getId() > b.getId();
-	}
-
-	/**
-	 * @return the buff currently occupying {@code buff}'s slot on {@code target}, or {@code null} if the slot is
-	 *         empty. Looks up by abnormal type (so a slot filled by a different skill of the same type - e.g. base
-	 *         Might where we maintain Greater Might - counts as present and isn't re-cast), falling back to the skill
-	 *         id for the rare untyped buff.
-	 */
-	public static BuffInfo activeBuffInfo(Player target, Skill buff)
-	{
-		final AbnormalType type = buff.getAbnormalType();
-		if ((type == null) || type.isNone())
-		{
-			return target.getEffectList().getBuffInfoBySkillId(buff.getId());
-		}
-		return target.getEffectList().getBuffInfoByAbnormalType(type);
-	}
-
-	/**
 	 * @param skillId the buff the buffer knows
 	 * @param targetIsCaster whether the target is a magic user
 	 * @param tier the target's role relative to the buffer
-	 * @return {@code true} if this buff should be maintained on that target
+	 * @return {@code true} if this buff should be maintained automatically on that target. Only the curated core
+	 *         kit is auto-maintained (so it fits the 20 buff-slot cap and never rotates); the situational /
+	 *         consumable buffs left out here are cast on request only.
 	 */
 	public static boolean wanted(int skillId, boolean targetIsCaster, Tier tier)
 	{
@@ -281,18 +244,10 @@ public final class PhantomBuffs
 			case LEADER:
 			default:
 			{
-				// Every party member now gets the full archetype-appropriate kit (was: members got bare essentials,
-				// which left caster members without Empower/Wild Magic etc.). Casters skip physical buffs and
-				// fighters skip caster buffs, but otherwise the buffer maintains the whole kit on everyone.
-				if (targetIsCaster && MELEE.contains(skillId))
-				{
-					return false;
-				}
-				if (!targetIsCaster && CASTER.contains(skillId))
-				{
-					return false;
-				}
-				return true;
+				// Curated whitelist: the core archetype kit only. A fighter gets the melee core, a caster the magic
+				// core, both get Wind Walk. Anything not listed (Greater Might/Shield, War/Earth Chant, Clarity,
+				// Greater Empower, resistances, ...) is deliberately NOT auto-maintained - it's available on request.
+				return AUTO_COMMON.contains(skillId) || (targetIsCaster ? AUTO_CASTER.contains(skillId) : AUTO_MELEE.contains(skillId));
 			}
 		}
 	}
