@@ -183,6 +183,22 @@ public final class PhantomBuffs
 	}
 
 	/**
+	 * @return {@code true} if {@code caster} can pay this buff's item reagent (Spirit Ore for Greater Might /
+	 *         Greater Shield / Clarity, etc.), or it needs none. Support phantoms are stocked with reagents at spawn
+	 *         (see PhantomManager), but if the stock ever runs dry this lets the buff loop SKIP the unaffordable buff
+	 *         instead of re-issuing a cast the engine will reject every tick (which froze the buffer on one buff).
+	 */
+	public static boolean canAffordReagent(Player caster, Skill buff)
+	{
+		final int reagentId = buff.getItemConsumeId();
+		if (reagentId <= 0)
+		{
+			return true;
+		}
+		return caster.getInventory().getInventoryItemCount(reagentId, -1) >= buff.getItemConsumeCount();
+	}
+
+	/**
 	 * @param skillId the buff the buffer knows
 	 * @param targetIsCaster whether the target is a magic user
 	 * @param tier the target's role relative to the buffer

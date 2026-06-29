@@ -2553,7 +2553,7 @@ public class PhantomPartyManager
 			while (state.rebuffIdx < all.size())
 			{
 				final Skill buff = all.get(state.rebuffIdx);
-				if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()))
+				if (PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) && !npc.isSkillDisabled(buff) && (npc.getCurrentMp() >= buff.getMpConsume()) && PhantomBuffs.canAffordReagent(npc, buff))
 				{
 					if (!readyToCast(npc))
 					{
@@ -2585,9 +2585,9 @@ public class PhantomPartyManager
 		final boolean caster = PhantomBuffs.isCaster(target);
 		for (Skill buff : buffs(state))
 		{
-			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) || (npc.getCurrentMp() < buff.getMpConsume()))
+			if (!PhantomBuffs.wanted(buff.getId(), caster, tier) || (npc.getCurrentMp() < buff.getMpConsume()) || !PhantomBuffs.canAffordReagent(npc, buff))
 			{
-				continue;
+				continue; // wrong archetype, out of MP, or out of the buff's reagent (don't loop re-casting a buff that will be rejected)
 			}
 			final BuffInfo info = target.getEffectList().getBuffInfoBySkillId(buff.getId());
 			if ((info == null) || (info.getTime() <= BUFF_REFRESH_SECONDS))

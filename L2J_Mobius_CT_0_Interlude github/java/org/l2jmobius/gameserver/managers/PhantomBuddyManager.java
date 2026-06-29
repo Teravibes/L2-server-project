@@ -1074,6 +1074,12 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				continue;
 			}
+			// Out of the buff's item reagent (Spirit Ore for Greater Might/Shield/Clarity): skip it, don't loop
+			// re-casting a buff the engine will reject every tick. Buffers are stocked at spawn, so this is a backstop.
+			if (!PhantomBuffs.canAffordReagent(buddy, buff))
+			{
+				continue;
+			}
 			// Don't keep re-applying the short Chant of Life on a healthy target; only top it up when hurt.
 			if ((buff.getId() == CHANT_OF_LIFE_ID) && (target.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT))
 			{
@@ -1155,7 +1161,7 @@ public class PhantomBuddyManager implements IXmlReader
 				final Skill buff = all.get(state.rebuffIdx);
 				final boolean wanted = PhantomBuffs.wanted(buff.getId(), caster, PhantomBuffs.Tier.LEADER) || (buff.getId() == CHANT_OF_LIFE_ID);
 				final boolean chantNotNeeded = (buff.getId() == CHANT_OF_LIFE_ID) && (target.getCurrentHpPercent() >= CHANT_OF_LIFE_HP_PERCENT);
-				if (!wanted || chantNotNeeded || buddy.isSkillDisabled(buff) || (buddy.getCurrentMp() < buff.getMpConsume()))
+				if (!wanted || chantNotNeeded || buddy.isSkillDisabled(buff) || (buddy.getCurrentMp() < buff.getMpConsume()) || !PhantomBuffs.canAffordReagent(buddy, buff))
 				{
 					state.rebuffIdx++; // skip this one
 					continue;
