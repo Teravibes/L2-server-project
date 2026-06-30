@@ -74,6 +74,7 @@ public final class PhantomBuffs
 		1040, // Shield (base; Greater Shield is on request only) - PD_UP slot
 		1243, // Bless Shield (shield block rate, SHIELD_PROB_UP - its own slot, distinct from Shield's PD_UP)
 		1044, // Regeneration (HP regen, HP_REGEN_UP - only lands if the buffer is an Elder/cleric line that knows it)
+		1259, 4350, // Resist Shock (anti-stun, RESIST_SHOCK - own slot, no reagent)
 		1035, // Mental Shield
 		1036, // Magic Barrier
 		1045, // Blessed Body
@@ -86,6 +87,7 @@ public final class PhantomBuffs
 		1078, 4351, // Concentration
 		1040, // Shield (casters take P.Def for survivability too - this was missing, so mages got no Shield)
 		1047, // Mana Regeneration (MP_REGEN_UP - standard caster sustain; only lands if the buffer knows it)
+		1259, 4350, // Resist Shock (anti-stun, RESIST_SHOCK - a stunned caster is a dead caster; own slot, no reagent)
 		1035, // Mental Shield
 		1036, // Magic Barrier
 		1045, // Blessed Body
