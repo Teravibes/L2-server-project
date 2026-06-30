@@ -103,7 +103,7 @@ public class FakePlayerChatManager implements IXmlReader
 	}
 
 	// The brain appends [[MEET:spot]] to a whisper when it agrees to walk over; we act on it then strip it.
-	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*(?:\\]\\]|\\]|\\))", Pattern.CASE_INSENSITIVE);
 	// [[SHOP:SELL|BUY:<item>:<price>]] - the bot commits to actually trading a specific item at a price.
 	private static final Pattern SHOP_TAG = Pattern.compile("\\[\\[\\s*SHOP\\s*:\\s*(SELL|BUY)\\s*:\\s*([^:\\]]+?)\\s*:\\s*(\\d+)\\s*(kk|k)?\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 
@@ -1003,6 +1003,46 @@ public class FakePlayerChatManager implements IXmlReader
 		return null;
 	}
 
+	private static String normalizeMeetSpot(String spot)
+	{
+		if (spot == null)
+		{
+			return "gatekeeper";
+		}
+
+		final String normalized = spot.trim().toLowerCase();
+		switch (normalized)
+		{
+			case "gk":
+			case "gate":
+			case "gatekeeper":
+			{
+				return "gatekeeper";
+			}
+			case "wh":
+			case "warehouse":
+			case "ware":
+			{
+				return "warehouse";
+			}
+			case "shop":
+			case "store":
+			case "merchant":
+			{
+				return "shop";
+			}
+			case "cancel":
+			case "no":
+			case "nvm":
+			case "nevermind":
+			{
+				return "cancel";
+			}
+		}
+
+		return "gatekeeper";
+	}
+
 	/**
 	 * If the bot's whisper reply carries a {@code [[MEET:spot]]} tag, send it walking to that spot, then
 	 * strip the tag so the player only sees the natural line.
@@ -1014,8 +1054,10 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return "";
 		}
+
 		boolean cancelled = false;
 		boolean handledShop = false;
+
 		// Roaming bots and bots running a temporary deal store both negotiate here (the latter so the player
 		// can renegotiate or cancel mid-deal); only static AFK vendors are excluded.
 		if ((bot != null) && (!isStoreVendor(bot) || FakePlayerBehaviorManager.getInstance().isDealVendor(bot)))
@@ -1039,6 +1081,7 @@ public class FakePlayerChatManager implements IXmlReader
 					{
 						price *= 1000000;
 					}
+
 					final int storeType = botSells ? PrivateStoreType.SELL.getId() : PrivateStoreType.BUY.getId();
 					final FakePlayerBehaviorManager behavior = FakePlayerBehaviorManager.getInstance();
 					final int requestedCount = behavior.getPendingDealCount(bot, item.getId());
@@ -1054,8 +1097,8 @@ public class FakePlayerChatManager implements IXmlReader
 						else
 						{
 							behavior.setupDeal(bot, storeType, stock, title);
-							final Matcher m = MEET_TAG.matcher(reply);
-							final String spot = (m.find() && !"cancel".equalsIgnoreCase(m.group(1))) ? m.group(1) : "gatekeeper";
+							final Matcher meet = MEET_TAG.matcher(reply);
+							final String spot = (meet.find() && !"cancel".equalsIgnoreCase(normalizeMeetSpot(meet.group(1)))) ? normalizeMeetSpot(meet.group(1)) : "gatekeeper";
 							behavior.requestMeet(bot, spot, player);
 						}
 					}
@@ -1068,7 +1111,7 @@ public class FakePlayerChatManager implements IXmlReader
 				final Matcher meet = MEET_TAG.matcher(reply);
 				if (meet.find())
 				{
-					final String spot = meet.group(1);
+					final String spot = normalizeMeetSpot(meet.group(1));
 					if ("cancel".equalsIgnoreCase(spot))
 					{
 						FakePlayerBehaviorManager.getInstance().cancelMeet(bot);
@@ -1087,6 +1130,7 @@ public class FakePlayerChatManager implements IXmlReader
 				}
 			}
 		}
+
 		final String cleaned = MEET_TAG.matcher(SHOP_TAG.matcher(reply).replaceAll("")).replaceAll("").trim();
 		if (!cleaned.isEmpty())
 		{

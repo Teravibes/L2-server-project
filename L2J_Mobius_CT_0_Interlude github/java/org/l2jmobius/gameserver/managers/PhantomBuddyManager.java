@@ -45,6 +45,7 @@ import org.l2jmobius.gameserver.model.Location;
 import org.l2jmobius.gameserver.model.StatSet;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
+import org.l2jmobius.gameserver.model.actor.enums.player.PlayerClass;
 import org.l2jmobius.gameserver.model.actor.instance.Monster;
 import org.l2jmobius.gameserver.model.groups.Party;
 import org.l2jmobius.gameserver.model.groups.PartyDistributionType;
@@ -54,6 +55,7 @@ import org.l2jmobius.gameserver.model.effects.EffectType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
+
 
 /**
  * Personal support buddy brain.
@@ -116,6 +118,7 @@ public class PhantomBuddyManager implements IXmlReader
 	private static final Pattern TAG_TP = Pattern.compile("\\[\\[\\s*TP\\s*:\\s*([^\\]]+?)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 	private static final Pattern TAG_GRACE = Pattern.compile("\\[\\[\\s*GRACE\\s*:\\s*(\\d+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*\\]\\]");
+	private static final Pattern HTML_TAG = Pattern.compile("</?\\s*[a-zA-Z][a-zA-Z0-9]*\\s*/?>");
 
 	// Heal skills a buddy may know, best (highest id here = strongest) first.
 	private static final int[] HEAL_PRIORITY =
@@ -328,11 +331,28 @@ public class PhantomBuddyManager implements IXmlReader
 			return null;
 		}
 
-		// Party request: the buddy always agrees - that's the whole point. The real bond forms when the player
-		// sends the invite (RequestJoinParty auto-accepts and routes to onInvited).
-		if (containsAny(text, "party", "group", "join me", "wanna pt", "want to pt", "lets party", "let's party", "lets pt", "lf buff", "can you buff"))
+		// Party / buff-service request: the buddy always agrees - that's the whole point. The real bond forms
+		// when the player sends the invite (RequestJoinParty auto-accepts and routes to onInvited). Catch broad
+		// "give me buffs" phrasing here before the later AFK/grace matcher can mistake "give me" for "give me a min".
+		if (containsAny(text, "party", "group", "join me", "wanna pt", "want to pt", "lets party", "let's party", "lets pt",
+			"lf buff", "lf buffs", "need buff", "need buffs", "need some buffs", "want buff", "want buffs",
+			"can you buff", "can u buff", "can you give me buff", "can you give me buffs", "can you give me some buff",
+			"can you give me some buffs", "can u give me buff", "can u give me buffs", "can u give me some buff",
+			"can u give me some buffs", "give me buff", "give me buffs", "give me some buff", "give me some buffs",
+			"gimme buff", "gimme buffs", "gimme some buff", "gimme some buffs", "some buffs",
+			"mind if you give me buff", "mind if you give me buffs", "mind if you give me some buff",
+			"mind if you give me some buffs", "mind giving me buff", "mind giving me buffs",
+			"come buff", "come give me buff", "come give me buffs", "come give me some buff", "come give me some buffs"))
 		{
-			deliver(state, owner, party, isPartiedWith(state, owner) ? "already with you :)" : "sure, invite me");
+			if (isPartiedWith(state, owner))
+			{
+				startRebuff(state, new ArrayList<>(List.of(owner)));
+				deliver(state, owner, party, "buffing you up");
+			}
+			else
+			{
+				deliver(state, owner, party, "sure, invite me first");
+			}
 			return null;
 		}
 
@@ -368,8 +388,12 @@ public class PhantomBuddyManager implements IXmlReader
 			return null;
 		}
 
-		// Grace extension (brb / give me a minute).
-		if (containsAny(text, "brb", "be right back", "give me", "gimme", "min", "sec", "moment", "afk"))
+		// Grace extension (brb / give me a minute). Do NOT match plain "give me" or "gimme" because that steals
+		// "give me buffs" / "mind if you give me some buffs" from the buff-service parser above.
+		if (containsAny(text, "brb", "be right back", "afk", "bio", "give me a min", "give me a minute",
+			"give me a sec", "give me a second", "gimme a min", "gimme a minute", "gimme a sec",
+			"gimme a second", "one min", "one minute", "one sec", "one second", "wait a min",
+			"wait a minute", "hold on", "hold up"))
 		{
 			state.graceUntil = System.currentTimeMillis() + BRB_GRACE;
 			deliver(state, owner, party, "np, take your time");
@@ -575,15 +599,16 @@ public class PhantomBuddyManager implements IXmlReader
 			{
 				return;
 			}
+
 			String reply = callBrain(state.npc.getName(), ownerNow.getName(), isPartiedWith(state, ownerNow), message);
 			if ((reply == null) || reply.isEmpty())
 			{
-				reply = "hm? (try: party, follow, stay, a place to tp, or brb)";
+				// Brain was slow/offline or chose silence. Do not send a canned command-help line into live chat;
+				// it breaks immersion, especially for simple greetings like "hey man".
+				return;
 			}
-			else
-			{
-				reply = applyBuddyTags(reply, state, ownerNow, state.npc, message);
-			}
+
+			reply = applyBuddyTags(reply, state, ownerNow, state.npc, message);
 			if (!reply.isEmpty())
 			{
 				// Answer on the same channel the order came in on.
@@ -645,7 +670,9 @@ public class PhantomBuddyManager implements IXmlReader
 			release(state, true);
 		}
 		// [[BUFF]] needs no action: the buff loop already keeps the owner topped up.
-		return ANY_TAG.matcher(reply).replaceAll("").trim();
+		reply = ANY_TAG.matcher(reply).replaceAll("");
+		reply = HTML_TAG.matcher(reply).replaceAll("");
+		return reply.trim();
 	}
 
 	/** Calls the brain bridge in BUDDY mode; returns the raw reply (possibly with tags), or null if offline. */
@@ -653,6 +680,12 @@ public class PhantomBuddyManager implements IXmlReader
 	{
 		try
 		{
+			final Player buddy = World.getInstance().getPlayer(buddyName);
+			final String buddyLevel = (buddy != null) ? Integer.toString(buddy.getLevel()) : "";
+			final String buddyClass = className(buddy);
+			final String location = (buddy != null) ? nearestTownLocation(buddy) : "";
+			final String state = partied ? "partied support buddy" : "idle support buddy waiting to be invited";
+
 			final HttpRequest request = HttpRequest.newBuilder() //
 				.uri(URI.create(BRAIN_URL)) //
 				.timeout(Duration.ofSeconds(20)) //
@@ -660,9 +693,14 @@ public class PhantomBuddyManager implements IXmlReader
 				.header("X-Mode", "BUDDY") //
 				.header("X-Player", ownerName) //
 				.header("X-Partied", Boolean.toString(partied)) //
+				.header("X-Buddy-Level", buddyLevel) //
+				.header("X-Buddy-Class", buddyClass) //
+				.header("X-Location", location) //
+				.header("X-Buddy-State", state) //
 				.header("Content-Type", "text/plain; charset=utf-8") //
 				.POST(HttpRequest.BodyPublishers.ofString(message)) //
 				.build();
+
 			final HttpResponse<String> response = BRAIN_HTTP.send(request, HttpResponse.BodyHandlers.ofString());
 			if (response.statusCode() == 200)
 			{
@@ -678,6 +716,76 @@ public class PhantomBuddyManager implements IXmlReader
 			LOGGER.fine(getClass().getSimpleName() + ": Brain bridge unreachable: " + e.getMessage());
 		}
 		return null;
+	}
+
+	private static String className(Player player)
+	{
+		if (player == null)
+		{
+			return "";
+		}
+
+		final PlayerClass playerClass = player.getPlayerClass();
+		if (playerClass == null)
+		{
+			return "";
+		}
+
+		final String[] words = playerClass.name().toLowerCase().split("_");
+		final StringBuilder name = new StringBuilder();
+		for (String word : words)
+		{
+			if (word.isEmpty())
+			{
+				continue;
+			}
+			if (name.length() > 0)
+			{
+				name.append(' ');
+			}
+			name.append(Character.toUpperCase(word.charAt(0))).append(word.substring(1));
+		}
+		return name.toString();
+	}
+
+	private static String nearestTownLocation(Player player)
+	{
+		if (player == null)
+		{
+			return "";
+		}
+
+		final String[] names =
+		{
+			"Talking Island Village", "Elven Village", "Dark Elven Village", "Orc Village", "Dwarven Village",
+			"Gludin Village", "Gludio", "Dion", "Giran", "Oren", "Aden", "Heine", "Hunter's Village", "Rune", "Goddard"
+		};
+		final int[][] coords =
+		{
+			{-84176, 243382, -3126}, {46934, 51567, -2976}, {9709, 15566, -4500}, {-44836, -112352, -240}, {115113, -178212, -901},
+			{-80826, 149775, -3043}, {-12672, 122776, -3116}, {15670, 142983, -2705}, {83400, 147943, -3404}, {82956, 53162, -1495},
+			{147450, 27064, -2208}, {111396, 219254, -3543}, {117088, 76931, -2695}, {43835, -47749, -792}, {147725, -56517, -2776}
+		};
+
+		int best = -1;
+		double bestDist = Double.MAX_VALUE;
+		for (int i = 0; i < names.length; i++)
+		{
+			final long dx = player.getX() - coords[i][0];
+			final long dy = player.getY() - coords[i][1];
+			final double dist = Math.sqrt((dx * dx) + (dy * dy));
+			if (dist < bestDist)
+			{
+				bestDist = dist;
+				best = i;
+			}
+		}
+
+		if (best < 0)
+		{
+			return "";
+		}
+		return (bestDist <= 2500) ? ("in " + names[best]) : ("near " + names[best]);
 	}
 
 	/** Picks the next time this buddy may open small talk: a long, jittered gap so it stays occasional. */

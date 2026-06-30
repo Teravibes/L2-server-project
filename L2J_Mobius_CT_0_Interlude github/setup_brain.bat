@@ -21,7 +21,7 @@ REM ===========================================================================
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-if "%OLLAMA_MODEL%"=="" set "OLLAMA_MODEL=llama3.1"
+if "%OLLAMA_MODEL%"=="" set "OLLAMA_MODEL=gemma3:12b"
 
 echo.
 echo ==^> FPC brain setup - model: %OLLAMA_MODEL%

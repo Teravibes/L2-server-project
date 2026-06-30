@@ -85,5 +85,21 @@
         "text": "Player cancelled or backed out of a meetup/trade."
       }
     ]
+  },
+  "beregotgr": {
+    "party": [],
+    "player": "BeregotGR",
+    "social": [
+      {
+        "seen": 1782816502,
+        "text": "Player has been friendly/appreciative."
+      }
+    ],
+    "trade": [
+      {
+        "seen": 1782821663,
+        "text": "Player often uses warehouse as a meeting point."
+      }
+    ]
   }
 }
