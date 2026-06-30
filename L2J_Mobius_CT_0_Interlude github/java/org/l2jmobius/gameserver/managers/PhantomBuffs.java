@@ -71,7 +71,9 @@ public final class PhantomBuffs
 		1240, 4358, 4403, // Guidance
 		1268, 4354, 4399, // Vampiric Rage
 		1087, 4406, // Agility
-		1040, // Shield (base; Greater Shield is on request only)
+		1040, // Shield (base; Greater Shield is on request only) - PD_UP slot
+		1243, // Bless Shield (shield block rate, SHIELD_PROB_UP - its own slot, distinct from Shield's PD_UP)
+		1044, // Regeneration (HP regen, HP_REGEN_UP - only lands if the buffer is an Elder/cleric line that knows it)
 		1035, // Mental Shield
 		1036, // Magic Barrier
 		1045, // Blessed Body
@@ -83,6 +85,7 @@ public final class PhantomBuffs
 		1303, 5164, // Wild Magic
 		1078, 4351, // Concentration
 		1040, // Shield (casters take P.Def for survivability too - this was missing, so mages got no Shield)
+		1047, // Mana Regeneration (MP_REGEN_UP - standard caster sustain; only lands if the buffer knows it)
 		1035, // Mental Shield
 		1036, // Magic Barrier
 		1045, // Blessed Body
@@ -108,6 +111,7 @@ public final class PhantomBuffs
 		1268, // Vampiric Rage
 		1087, // Agility
 		1040, // Shield
+		1243, // Bless Shield (shield block rate)
 		1035 // Mental Shield
 	};
 	private static final int[] PREBUFF_CASTER =
@@ -135,6 +139,8 @@ public final class PhantomBuffs
 		BUFF_ALIASES.put("greater might", "greater might");
 		BUFF_ALIASES.put("gmight", "greater might");
 		BUFF_ALIASES.put("shield", "shield");
+		BUFF_ALIASES.put("bless shield", "bless shield");
+		BUFF_ALIASES.put("blessed shield", "bless shield");
 		BUFF_ALIASES.put("greater shield", "greater shield");
 		BUFF_ALIASES.put("gshield", "greater shield");
 		BUFF_ALIASES.put("focus", "focus");

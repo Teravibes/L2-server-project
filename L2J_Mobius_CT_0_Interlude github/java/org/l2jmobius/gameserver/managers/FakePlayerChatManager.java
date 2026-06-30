@@ -389,6 +389,22 @@ public class FakePlayerChatManager implements IXmlReader
 		return (name.isEmpty() || name.equalsIgnoreCase("none")) ? null : name;
 	}
 
+	/**
+	 * Drops the stored structured trade context for a player/bot deal. Called when the deal lifecycle ends
+	 * (store sold out / closed, meet hard-cap, grace timeout, or cancel - all funnel through the behavior
+	 * manager's endMeet) so a finished deal's stale X-Deal-* terms never get injected into a later, unrelated
+	 * whisper to the same bot. Safe no-op when there is no active deal for that pair.
+	 * @param playerName the player the deal was with
+	 * @param fpcName the bot that held the deal
+	 */
+	public void clearDeal(String playerName, String fpcName)
+	{
+		if ((playerName != null) && (fpcName != null))
+		{
+			ACTIVE_DEALS.remove(dealKey(playerName, fpcName));
+		}
+	}
+
 	private static String dealKey(String playerName, String fpcName)
 	{
 		return ((playerName == null ? "" : playerName.trim().toLowerCase()) + "|" + (fpcName == null ? "" : fpcName.trim().toLowerCase()));
