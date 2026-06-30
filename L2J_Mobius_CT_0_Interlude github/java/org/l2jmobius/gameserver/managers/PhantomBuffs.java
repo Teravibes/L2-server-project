@@ -82,6 +82,7 @@ public final class PhantomBuffs
 		1059, 4356, 4401, // Empower (base; Greater Empower is on request only)
 		1303, 5164, // Wild Magic
 		1078, 4351, // Concentration
+		1040, // Shield (casters take P.Def for survivability too - this was missing, so mages got no Shield)
 		1035, // Mental Shield
 		1036, // Magic Barrier
 		1045, // Blessed Body
@@ -116,6 +117,7 @@ public final class PhantomBuffs
 		1303, // Wild Magic
 		1078, // Concentration
 		1397, // Clarity
+		1040, // Shield (P.Def survivability for casters too)
 		1036, // Magic Barrier
 		1035 // Mental Shield
 	};

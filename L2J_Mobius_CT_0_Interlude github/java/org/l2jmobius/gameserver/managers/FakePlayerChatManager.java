@@ -103,7 +103,10 @@ public class FakePlayerChatManager implements IXmlReader
 	}
 
 	// The brain appends [[MEET:spot]] to a whisper when it agrees to walk over; we act on it then strip it.
-	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	// The closing is deliberately tolerant: Ollama sometimes emits a malformed close ("[[MEET:gk])", "[[MEET:gk]",
+	// "[[MEET:gk)") and a strict "\]\]" would neither act on nor strip it, leaking the tag into visible chat. We
+	// accept one or two of "]" / ")" as the close so every variant is caught and removed.
+	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
 	// [[SHOP:SELL|BUY:<item>:<price>]] - the bot commits to actually trading a specific item at a price.
 	private static final Pattern SHOP_TAG = Pattern.compile("\\[\\[\\s*SHOP\\s*:\\s*(SELL|BUY)\\s*:\\s*([^:\\]]+?)\\s*:\\s*(\\d+)\\s*(kk|k)?\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 
