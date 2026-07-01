@@ -360,10 +360,10 @@ player-global memory
 bot-specific memory
 ```
 
-Status: **Phase 1 done (2026-07-01).** See §12b below. Phantom populations can now define fixed
+Status: **Phases 1-2 done (2026-07-01).** See §12b/§12c below. Phantom populations can now define fixed
 `<regular>` identities (stable name + appearance, optional class) that recur in a zone; a stable name
-already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name). Phases 2-3
-(persistence + friend tier) remain future — see §10b.
+already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name). Regulars also now
+persist across reboots with a stable `charId` (Phase 2). Phase 3 (friend tier) remains future — see §10b.
 
 ---
 
@@ -808,10 +808,9 @@ code — **the three "High" items were already fixed**, so **do not re-implement
     auto-generated stable slots (`regularCount="N"`, no authoring) or hand-authored `<regular>` entries,
     with a `regularChance`. Stable name → stable brain voice. Phantom is still ephemeral (not persisted,
     not a friend).
-  - ⬜ **Phase 2 (persistence):** give regulars a distinct account name (e.g. `phantom_regular`) that the
-    boot sweep (§10 fix) skips, and create their rows once so `charId` is stable. Prereq for the friend
-    tier (`character_friends` references `charId`; the current sweep would delete a `phantom`-account
-    friend's row every boot).
+  - ✅ **Phase 2 (persistence) DONE (2026-07-01):** regulars now get a distinct account
+    (`phantom_regular`) that the boot sweep (§10 fix, scoped to `phantom` only) skips, and their row is
+    created once so `charId` is stable across reboots. See §12c for the full mechanism.
   - ⬜ **Phase 3 (friend tier):** auto-accept friend invites for regulars (server-side, like the res
     ConfirmDlg auto-accept — see `RequestAnswerFriendInvite`), spawn friend-regulars at the owner's
     `EnterWorld` so they show "online" (`FriendList` checks `World.getPlayer` != null), route friend PMs
@@ -912,3 +911,52 @@ the identity block in `createAndSpawn()`; constants `REGULAR_CHANCE_DEFAULT`, `M
 
 Deploy: Java (rebuild jar) **and** copy `dist/game/data/PhantomPopulations.xml` (only if you actually
 add regular entries to it — the code change is what ships in the jar).
+
+---
+
+## 12c. Stable identity "regulars" — Phase 2 (persistence — 2026-07-01)
+
+Goal: give a regular a real, persistent DB row with a **stable `charId`** across reboots, so a future
+friend tier (Phase 3, §10b) can reference it by id. Only regulars get this — random phantoms stay
+ephemeral exactly as before (fresh row per spawn, deleted on despawn, swept as orphans at boot).
+
+How it works:
+- New account `phantom_regular` (constant `ACCOUNT_NAME_REGULAR`), distinct from the random-phantom
+  account `phantom` (`ACCOUNT_NAME`). `sweepOrphanedPhantoms()` only ever queried `account_name='phantom'`,
+  so it already leaves `phantom_regular` rows alone untouched — no change needed there.
+- `findRegularCharId(name)`: a direct, account-scoped `SELECT charId FROM characters WHERE char_name=? AND
+  account_name=?` (mirrors `sweepOrphanedPhantoms`'s query style). Scoping to `phantom_regular` means a
+  real player who happens to share the regular's name is never matched. Returns 0 if the regular has never
+  been spawned before.
+- `createAndSpawn()`'s regular branch now checks that lookup before creating anything:
+  - **First-ever spawn** (`findRegularCharId` returns 0): behaves like before, except the row is created
+    under `ACCOUNT_NAME_REGULAR` instead of `ACCOUNT_NAME` (`Player.create(template, ACCOUNT_NAME_REGULAR,
+    regular.name, appearance)`), then runs the normal level/skill/gear pipeline (`outfit`/`outfitBuddy`).
+  - **Returning spawn** (`findRegularCharId` returns a charId > 0): `Player.load(existingId)` restores the
+    same character row instead of creating a new one — **same charId**, same persisted level/class/skills.
+    Its inventory is then wiped (`destroyAllItems`) and the normal `outfit`/`outfitBuddy` pipeline is re-run
+    so it comes back fully kitted. This is deliberate: consumables (soulshots/potions/buff reagents) were
+    spent while hunting and the auto-use/soulshot registrations are runtime-only, not persisted — skipping
+    the pipeline (an earlier cut did) would return an inert regular that never casts and fights without shots.
+    The wipe-then-regear avoids stacking duplicate weapons/armor. The exp/class/skill steps in that pipeline
+    are guarded no-ops on an already-leveled char, made safe by two safeguards:
+    - `transferClass()` is now **idempotent**: it bails if the char is already at (or past) the class tier
+      its level warrants (`getPlayerClass().level() >= targetTier`). Without this, re-running it on a loaded,
+      already-transferred regular would walk it *further* forward and over-advance its class.
+    - the caster flag (`mage`) for a loaded regular is derived from its **restored** class
+      (`isMageClass(phantom.getPlayerClass().getId())`), not the pre-load roll — so gear/combat archetype
+      matches the real class even for an authored `<regular>` with no explicit `classId`.
+    `enterWorld()` then runs for everyone, restoring full HP/MP/CP and spawning it into the world.
+  - Random phantoms (`regular == null`) are completely unaffected: still `Player.create(template,
+    ACCOUNT_NAME, nextName(), appearance)` every time.
+- `despawn()` now branches on `ACCOUNT_NAME_REGULAR.equals(data.player.getAccountName())`: a persistent
+  regular is saved (`data.player.storeMe()`) before `deleteMe()` (world removal) and its row is **kept** —
+  the `GameClient.deleteCharByObjId(objectId)` call is skipped entirely for it. A random phantom is
+  unchanged: no store, row deleted as before.
+
+Code touchpoints: `PhantomManager` — constant `ACCOUNT_NAME_REGULAR`; new `findRegularCharId(String)`;
+the load-vs-create branch (`existingId`, `loadedRegular`, `effectiveMage`, inventory wipe) in
+`createAndSpawn()`; the tier guard in `transferClass()`; the `persistent` branch in `despawn()`. No DB
+schema change (reuses the stock `characters` table); no XML/config change.
+
+Deploy: Java only (rebuild jar and move it to the live server) — no other files changed.

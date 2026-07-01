@@ -104,6 +104,10 @@ public class PhantomManager implements IXmlReader
 	private static final Logger LOGGER = Logger.getLogger(PhantomManager.class.getName());
 
 	private static final String ACCOUNT_NAME = "phantom";
+	// Regulars persist across restarts (stable charId) so a future friend tier can reference them by id; they
+	// live under this distinct account so the boot sweep (which only targets ACCOUNT_NAME) never touches them
+	// and despawn() knows to keep their row instead of deleting it.
+	private static final String ACCOUNT_NAME_REGULAR = "phantom_regular";
 	// Supervisor cadence: cleanup gone phantoms and revive/respawn dead ones. Combat runs on AutoPlay's
 	// own 700ms loop, so this can be lazy.
 	private static final long SUPERVISE_INTERVAL = 5000;
@@ -936,6 +940,33 @@ public class PhantomManager implements IXmlReader
 		return free.isEmpty() ? null : free.get(Rnd.get(free.size()));
 	}
 
+	/**
+	 * Looks up the charId of an already-persisted regular by name, scoped to the {@link #ACCOUNT_NAME_REGULAR}
+	 * account so a real player who happens to share the name is never matched.
+	 * @return the stored charId, or 0 if this regular has no persisted row yet
+	 */
+	private int findRegularCharId(String name)
+	{
+		try (Connection con = DatabaseFactory.getConnection();
+			PreparedStatement ps = con.prepareStatement("SELECT charId FROM characters WHERE char_name=? AND account_name=?"))
+		{
+			ps.setString(1, name);
+			ps.setString(2, ACCOUNT_NAME_REGULAR);
+			try (ResultSet rs = ps.executeQuery())
+			{
+				if (rs.next())
+				{
+					return rs.getInt("charId");
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to look up persisted regular '" + name + "': " + e.getMessage());
+		}
+		return 0;
+	}
+
 	/** @return {@code true} if the class id belongs to the DD-mage pool (so the caster gear/combat tick applies). */
 	private static boolean isMageClass(int classId)
 	{
@@ -1019,12 +1050,38 @@ public class PhantomManager implements IXmlReader
 			final PlayerAppearance appearance = (regular != null) //
 				? new PlayerAppearance(regular.face, regular.hairColor, regular.hairStyle, female) //
 				: new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
-			final Player phantom = Player.create(template, ACCOUNT_NAME, (regular != null) ? regular.name : nextName(), appearance);
-			if (phantom == null)
+
+			// A regular gets a PERSISTENT row under ACCOUNT_NAME_REGULAR so its charId is stable across reboots
+			// (the future friend tier references it by id). First spawn creates that row; every spawn after
+			// loads the same row back instead of creating a new character - keeping its charId and its persisted
+			// level/class/skills (only the consumable loadout is refreshed below, see the gearing block). Random
+			// phantoms (regular == null) are unchanged: ephemeral, ACCOUNT_NAME.
+			final int existingId = (regular != null) ? findRegularCharId(regular.name) : 0;
+			final boolean loadedRegular = (regular != null) && (existingId > 0);
+			final Player phantom;
+			if (loadedRegular)
 			{
-				LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null (duplicate name / db error?).");
-				return null;
+				phantom = Player.load(existingId);
+				if (phantom == null)
+				{
+					LOGGER.warning(getClass().getSimpleName() + ": Player.load(" + existingId + ") returned null for persisted regular '" + regular.name + "'.");
+					return null;
+				}
 			}
+			else
+			{
+				phantom = Player.create(template, (regular != null) ? ACCOUNT_NAME_REGULAR : ACCOUNT_NAME, (regular != null) ? regular.name : nextName(), appearance);
+				if (phantom == null)
+				{
+					LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null (duplicate name / db error?).");
+					return null;
+				}
+			}
+
+			// A loaded regular's class/appearance came back from its DB row, so the pre-load roll above is moot -
+			// derive the caster flag from the ACTUAL restored class (the auto-hunt combat tick and gear pick both
+			// key off it, and a mismatched flag would gear/fight it as the wrong archetype).
+			final boolean effectiveMage = loadedRegular ? isMageClass(phantom.getPlayerClass().getId()) : mage;
 
 			// Ignore the weight penalty. Phantoms carry a large stack of healing potions (+ soulshots), which
 			// easily exceeds a non-Dwarf's max load - at >=100% load the engine applies Weight Penalty (skill
@@ -1033,22 +1090,29 @@ public class PhantomManager implements IXmlReader
 			// regardless of load (set before items are added so the inventory weight never pins them).
 			phantom.setDietMode(true);
 
-			// Level, skill and gear the phantom BEFORE it enters the world, so the very first CharInfo
-			// nearby players receive already shows its full set. (A post-spawn equip update can be throttled
-			// or coalesced by broadcastCharInfo, leaving gear invisible even though it was equipped.)
+			// Level, skill and gear the phantom BEFORE it enters the world, so the very first CharInfo nearby
+			// players receive already shows its full set. (A post-spawn equip update can be throttled or coalesced
+			// by broadcastCharInfo, leaving gear invisible even though it was equipped.) A loaded regular already
+			// has its level/class/skills persisted, so the exp/class/skill steps below are guarded no-ops for it -
+			// but its consumables were spent hunting and its auto-use/soulshot registrations are runtime-only, so
+			// it still needs re-gearing. Wipe its stale inventory first so the restock doesn't stack duplicates.
 			phantom.setOnlineStatus(true, false);
+			if (loadedRegular)
+			{
+				phantom.getInventory().destroyAllItems(ItemProcessType.DESTROY, phantom, null);
+			}
 			if (role.isBuddy())
 			{
 				outfitBuddy(phantom, level, role);
 			}
 			else
 			{
-				outfit(phantom, level, mage);
+				outfit(phantom, level, effectiveMage);
 			}
 			phantom.refreshOverloaded();
 			enterWorld(phantom, spawnLocation);
 
-			final PhantomData data = new PhantomData(phantom, spawnLocation, population, mage, role);
+			final PhantomData data = new PhantomData(phantom, spawnLocation, population, effectiveMage, role);
 			_phantoms.put(phantom.getObjectId(), data);
 			if (role.isBuddy())
 			{
@@ -1264,6 +1328,13 @@ public class PhantomManager implements IXmlReader
 		if (targetTier == 0)
 		{
 			return; // base class is correct below level 20
+		}
+		// Idempotent: a reloaded regular is already transferred to its warranted tier. transferClass walks
+		// forward from the CURRENT class, so re-running it on such a char would over-advance it (e.g. bump a
+		// tier-2 fighter to a tier-3 class). Only transfer a char still short of its target tier (a fresh one).
+		if (phantom.getPlayerClass().level() >= targetTier)
+		{
+			return;
 		}
 		PlayerClass current = phantom.getPlayerClass();
 		for (int step = 0; step < targetTier; step++)
@@ -1915,17 +1986,26 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
-	 * Stops the auto-hunt, removes the phantom from the world, forgets it, and deletes its character row.
-	 * The row must go because phantoms are now spawned/despawned on demand - without it every zone visit
-	 * would leak an orphan {@code phantom}-account character.
+	 * Stops the auto-hunt, removes the phantom from the world, forgets it, and - for an ordinary (ephemeral)
+	 * phantom - deletes its character row. The row must go for those because phantoms are spawned/despawned on
+	 * demand - without deleting it every zone visit would leak an orphan {@code phantom}-account character.
+	 * <p>
+	 * A persisted regular ({@code account_name='phantom_regular'}) is the opposite: its row is the whole point
+	 * (stable charId across reboots for the future friend tier), so it is stored and kept instead - only its
+	 * live world/AutoPlay state is torn down.
 	 */
 	private void despawn(PhantomData data)
 	{
 		final int objectId = data.player.getObjectId();
+		final boolean persistent = ACCOUNT_NAME_REGULAR.equals(data.player.getAccountName());
 		try
 		{
 			AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
 			AutoUseTaskManager.getInstance().stopAutoUseTask(data.player);
+			if (persistent)
+			{
+				data.player.storeMe();
+			}
 			data.player.deleteMe();
 		}
 		catch (Exception e)
@@ -1933,6 +2013,10 @@ public class PhantomManager implements IXmlReader
 			LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + objectId + ": " + e.getMessage());
 		}
 		_phantoms.remove(objectId);
+		if (persistent)
+		{
+			return; // keep the row - this regular respawns into the same character next time
+		}
 		try
 		{
 			GameClient.deleteCharByObjId(objectId);
