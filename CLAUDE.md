@@ -97,6 +97,31 @@ Config via `.env` (git-ignored): `PROVIDER=deepseek` (needs `DEEPSEEK_API_KEY`) 
 - In-game admin tooling for testing changes without a full restart: `//reloadfakeplayers`,
   `//reload fakeplayerchat`, `//rates`, `//phantom ...`, `//record_route` (PROGRESS.md §8).
 
+## Model workflow (preferred)
+
+Use the strongest model where judgment matters and a faster one for the grind:
+
+1. **Plan on Opus 4.8** — design in plan mode; present the plan and get approval
+   before editing anything non-trivial.
+2. **Implement on Sonnet** — either switch with `/model claude-sonnet-5`, or (better)
+   stay on Opus as lead and delegate the implementation to a **Sonnet subagent** so
+   context isn't lost.
+3. **Review on Opus 4.8 before commit** — run `/code-review` (and `/security-review`
+   when relevant) on the diff; only commit after it passes.
+
+Note: model choice is per-session and resets to the default in a new session —
+re-establish this rhythm each session.
+
+## Cost / usage awareness
+
+Claude cannot see the user's plan usage or the 5-hour rate-limit state — there's no
+tool for it, so never claim to be "monitoring" it or predict when a request crosses
+the limit. The user checks real usage with `/usage` and `/status`. What Claude should
+do instead: **flag up front when a request is inherently heavy** (many files, full
+review pass, large refactor) so the user can decide before it starts, and prefer the
+cheaper path (Sonnet subagent for mechanical work, batch edits, avoid needless
+re-reads).
+
 ## Workflow expectations
 
 - Development happens on the designated feature branch. Commit with clear messages;
