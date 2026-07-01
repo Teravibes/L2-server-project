@@ -804,9 +804,10 @@ code — **the three "High" items were already fixed**, so **do not re-implement
   unconfirmed `[[TP]]`/`[[DISBAND]]` from brain output.
 - **Stable identity "regulars" — Phase 1 DONE (2026-07-01), Phases 2-3 pending.** See §12b for the full
   three-phase plan.
-  - ✅ **Phase 1 (identity only):** phantom populations can define `<regular>` entries (fixed
-    name/appearance, optional class) with a `regularChance`. Stable name → stable brain voice; recurring
-    recognizable faces in a zone. Phantom is still ephemeral (not persisted, not a friend).
+  - ✅ **Phase 1 (identity only):** phantom populations get recurring, recognizable faces — either
+    auto-generated stable slots (`regularCount="N"`, no authoring) or hand-authored `<regular>` entries,
+    with a `regularChance`. Stable name → stable brain voice. Phantom is still ephemeral (not persisted,
+    not a friend).
   - ⬜ **Phase 2 (persistence):** give regulars a distinct account name (e.g. `phantom_regular`) that the
     boot sweep (§10 fix) skips, and create their rows once so `charId` is stable. Prereq for the friend
     tier (`character_friends` references `charId`; the current sweep would delete a `phantom`-account
@@ -816,6 +817,12 @@ code — **the three "High" items were already fixed**, so **do not re-implement
     `EnterWorld` so they show "online" (`FriendList` checks `World.getPlayer` != null), route friend PMs
     (`RequestSendFriendMsg`) into the brain, and flag "we're friends" in memory. Touches stock Mobius
     packet handlers — get user approval before editing those.
+  - ⬜ **Phase 3 add-on — player-crafted phantoms (user idea):** let a player create a persistent phantom
+    to their own spec (name + appearance, maybe class/level) — e.g. recreate an old friend to "play
+    together" — via an in-game UI/command, then befriend it. Builds directly on the Phase 2 persistent
+    `phantom_regular` character + the Phase 3 friend/spawn-on-login machinery; the only new part is the
+    authoring UI and persisting a user-authored identity (vs. config/auto-generated). Design/approve with
+    the friend tier.
 
 ---
 
@@ -882,20 +889,26 @@ the LLM brain (which hashes the bot name into a persistent personality via `_voi
 each time and the player recognizes the character. Phase 1 is **identity only** — the phantom is still
 ephemeral (fresh DB row per spawn, swept at boot); persistence and the friend tier are Phases 2-3 (§10b).
 
-How it works:
-- `PhantomPopulations.xml` populations may now carry `<regular>` children (fixed `name`, `female`,
-  `face` 0-2, `hairColor` 0-3, `hairStyle` 0-2, optional `classId`) and a `regularChance` attribute
-  (default 25). See the file's header comment + commented example for the full attribute reference.
-- On each spawn, `PhantomManager.createAndSpawn()` calls `pickRegular(population)`: rolls `regularChance`,
-  and if it hits picks a regular whose name isn't already live (a regular never appears twice at once),
-  else returns null (spawn a random identity as before). A chosen regular pins name + appearance, and its
-  class if `classId > 0` (else the class still rolls). Buddies keep their role class regardless.
+How it works — two ways to define regulars (mixable):
+- **`regularCount="N"` (auto, recommended, no authoring):** at load, `generateAutoRegulars()` builds N
+  regulars seeded deterministically from the population name + slot index, so the same slot is the same
+  name/appearance/class on **every restart**. Reuses the shared name pools (`FakePlayerAppearanceFactory
+  .generateName(Random)`, a new seeded overload) and the fighter/mage class pools, so they blend in.
+  Capped at `MAX_AUTO_REGULARS` (30).
+- **`<regular>` children (hand-authored):** fixed `name`, `female`, `face` 0-2, `hairColor` 0-3,
+  `hairStyle` 0-2, optional `classId`. For specific characters you want to pin exactly.
+- `regularChance` (default 25) = % of spawns that use a regular (authored or auto) instead of random.
+- On each spawn, `createAndSpawn()` calls `pickRegular(population)`: rolls `regularChance`, and if it hits
+  picks a regular whose name isn't already live (a regular never appears twice at once), else returns null
+  (random identity as before). A chosen regular pins name + appearance, and its class if `classId > 0`
+  (else class rolls). Buddies keep their role class regardless.
 - No brain changes were needed: `fpc_brain.py` `_voice()` already derives a stable persona from the name.
   No DB schema change; nothing to persist in Phase 1.
 
-Code touchpoints (all in `PhantomManager.java`): `Regular` inner class; `Population.regulars` /
-`Population.regularChance`; `<regular>` parsing in `parseDocument`; `pickRegular()` + `isMageClass()`
-helpers; the identity block in `createAndSpawn()`. Constant `REGULAR_CHANCE_DEFAULT`.
+Code touchpoints: `PhantomManager` — `Regular` inner class; `Population.regulars` / `regularCount` /
+`regularChance`; parsing in `parseDocument`; `generateAutoRegulars()`, `pickRegular()`, `isMageClass()`;
+the identity block in `createAndSpawn()`; constants `REGULAR_CHANCE_DEFAULT`, `MAX_AUTO_REGULARS`.
+`FakePlayerAppearanceFactory` — seeded `generateName(Random)` overload.
 
 Deploy: Java (rebuild jar) **and** copy `dist/game/data/PhantomPopulations.xml` (only if you actually
 add regular entries to it — the code change is what ships in the jar).

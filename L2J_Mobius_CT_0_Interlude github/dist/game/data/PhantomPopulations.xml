@@ -28,16 +28,23 @@
 	              to ~half health, follows you, warns when low on MP, and teleports to a named gatekeeper
 	              destination on command ("going to ruins of agony"). Place buddies in town at level 40+ so
 	              they have a real buff kit; count = how many copies to offer.
-	  regularChance - (optional, default 25) % chance a spawn uses one of this group's fixed <regular>
-	              identities instead of a fresh random one. Only matters if <regular> children are defined.
+	  regularCount  - (optional, default 0) auto-generate this many stable "regular" identities for the group,
+	              with NO manual authoring. Each is built from a fixed seed (population name + slot), so the
+	              same slot is the same name/appearance/class on every restart. Easiest way to get recurring
+	              faces. Combine with <regular> children to mix hand-picked characters and auto ones.
+	  regularChance - (optional, default 25) % chance a spawn uses one of this group's regular identities
+	              (authored or auto-generated) instead of a fresh random one. Only matters if regulars exist.
 
-	Regulars - recurring, recognizable faces (optional <regular> children):
+	Regulars - recurring, recognizable faces (regularCount and/or <regular> children):
 	  By default every spawn is a brand-new random identity, so the "person" you chatted with yesterday is
-	  gone. Define <regular> entries to give a group a few fixed identities that keep the SAME name and
-	  appearance every time they spawn. The LLM brain hashes the name into a persistent personality, so a
-	  regular also sounds the same each session - a character you actually recognize. The rest of the crowd
-	  stays randomized. A regular is never spawned twice at once. (Identity only for now: the phantom is still
-	  ephemeral - not yet a persistent character or friend. That is a later phase.)
+	  gone. Regulars are fixed identities that keep the SAME name and appearance every time they spawn. The
+	  LLM brain hashes the name into a persistent personality, so a regular also sounds the same each session -
+	  a character you actually recognize. The rest of the crowd stays randomized. A regular is never spawned
+	  twice at once. Two ways to define them (mixable):
+	    - regularCount="N"  -> auto-generate N stable regulars (no authoring; recommended).
+	    - <regular .../>     -> hand-pick a specific name/look/class (below).
+	  (Identity only for now: the phantom is still ephemeral - not yet a persistent character or friend. Player-
+	  crafted phantoms and persistence/friends come in a later phase.)
 	  <regular> attributes:
 	    name      - the fixed character name (required; must be a valid, unique character name).
 	    female    - true/false (default false).
@@ -61,11 +68,13 @@
 
 	<population name="Giran Field" x="83400" y="147600" z="-3400" radius="1500" count="10" minLevel="20" maxLevel="30" respawn="true" />
 
-	Same group, but with a few recognizable "regulars" mixed into the random crowd (~40% of spawns):
-	<population name="Giran Field" x="83400" y="147600" z="-3400" radius="1500" count="10" minLevel="20" maxLevel="30" regularChance="40">
+	Easiest: auto-generate 4 stable regulars (no authoring), appearing ~40% of spawns:
+	<population name="Giran Field" x="83400" y="147600" z="-3400" radius="1500" count="10" minLevel="20" maxLevel="30" regularCount="4" regularChance="40" />
+
+	Or mix auto-generated regulars with a couple of hand-picked characters:
+	<population name="Giran Field" x="83400" y="147600" z="-3400" radius="1500" count="10" minLevel="20" maxLevel="30" regularCount="3" regularChance="40">
 		<regular name="Halvard" face="1" hairColor="0" hairStyle="2" classId="18" />
 		<regular name="Sable" female="true" face="0" hairColor="2" hairStyle="1" classId="38" />
-		<regular name="Bruk" face="2" hairColor="1" hairStyle="0" classId="44" />
 	</population>
 
 	Support buddies idling in Giran (whisper one to party up - it then buffs/heals/follows you):

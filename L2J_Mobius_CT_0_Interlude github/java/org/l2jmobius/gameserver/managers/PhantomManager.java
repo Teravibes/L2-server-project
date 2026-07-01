@@ -32,6 +32,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -199,6 +200,8 @@ public class PhantomManager implements IXmlReader
 	// of a fresh random one, giving that zone a few recognizable recurring faces. Only applies when the
 	// population actually defines <regular> entries; overridable per-population via the regularChance attribute.
 	private static final int REGULAR_CHANCE_DEFAULT = 25;
+	// Safety ceiling on auto-generated regulars per population (regularCount), so a stray config can't flood one.
+	private static final int MAX_AUTO_REGULARS = 30;
 	// Mage combat: casters don't move under AutoPlay, so a faster tick positions them. They hold at
 	// CAST_RANGE to nuke; when MP drops below CAST_MP_PERCENT they melee the target until MP recovers
 	// (a pure caster is otherwise passive with no MP). TOLERANCE stops constant micro-repositioning.
@@ -546,7 +549,8 @@ public class PhantomManager implements IXmlReader
 		boolean respawn = true;
 		BuddyRole role = BuddyRole.NONE; // NONE = ordinary field hunter; otherwise an idle support buddy
 		final List<Location> polygon = new ArrayList<>(); // optional area; spawn inside it instead of a circle
-		final List<Regular> regulars = new ArrayList<>(); // optional fixed identities that recur in this area
+		final List<Regular> regulars = new ArrayList<>(); // fixed identities that recur in this area (authored + auto)
+		int regularCount; // how many stable regulars to auto-generate for this area (0 = none / authored only)
 		int regularChance = REGULAR_CHANCE_DEFAULT; // % chance a spawn uses a regular (only if regulars exist)
 		boolean active; // phantoms currently spawned (a real player is in range)
 		long emptySince; // when the last observer left this area (0 while a player is near)
@@ -630,6 +634,7 @@ public class PhantomManager implements IXmlReader
 			population.respawn = set.getBoolean("respawn", true);
 			population.role = BuddyRole.fromString(set.getString("role", ""));
 			population.regularChance = set.getInt("regularChance", REGULAR_CHANCE_DEFAULT);
+			population.regularCount = set.getInt("regularCount", 0);
 			forEach(populationNode, "point", pointNode ->
 			{
 				final StatSet p = new StatSet(parseAttributes(pointNode));
@@ -652,6 +657,7 @@ public class PhantomManager implements IXmlReader
 				regular.classId = r.getInt("classId", 0);
 				population.regulars.add(regular);
 			});
+			generateAutoRegulars(population);
 			_populations.add(population);
 		}));
 	}
@@ -874,6 +880,36 @@ public class PhantomManager implements IXmlReader
 			}
 		}
 		return inside;
+	}
+
+	/**
+	 * Auto-generates {@code population.regularCount} stable regular identities and appends them to the
+	 * population's roster (alongside any hand-authored ones). Each slot is built from a seed derived from the
+	 * population name + slot index, so the same slot yields the same name/appearance/class on every restart -
+	 * no manual authoring needed. Reuses the shared name pools and mage/fighter class pools so auto-regulars
+	 * blend in with the rest of the crowd. Buddies keep their role class at spawn; the generated classId is
+	 * simply ignored there.
+	 * @param population the group to populate (no-op if regularCount <= 0)
+	 */
+	private void generateAutoRegulars(Population population)
+	{
+		final int wanted = Math.min(population.regularCount, MAX_AUTO_REGULARS);
+		for (int i = 0; i < wanted; i++)
+		{
+			// Deterministic per (population, slot): a stable seed so the identity is identical across restarts.
+			final Random rng = new Random((((long) population.name.hashCode()) << 20) ^ ((i + 1) * 0x9E3779B97F4A7C15L));
+			final Regular regular = new Regular();
+			regular.name = FakePlayerAppearanceFactory.generateName(rng);
+			final boolean mage = rng.nextInt(100) < MAGE_CHANCE;
+			final int[] pool = mage ? MAGE_CLASS_POOL : FIGHTER_CLASS_POOL;
+			regular.classId = pool[rng.nextInt(pool.length)];
+			// Orc (44) / Dwarf (53) bodies skew male, like the appearance factory and the random spawn path.
+			regular.female = ((regular.classId == 44) || (regular.classId == 53)) ? (rng.nextInt(100) < 30) : rng.nextBoolean();
+			regular.face = (byte) rng.nextInt(3); // 0-2
+			regular.hairColor = (byte) rng.nextInt(4); // 0-3
+			regular.hairStyle = (byte) rng.nextInt(3); // 0-2
+			population.regulars.add(regular);
+		}
 	}
 
 	/**
