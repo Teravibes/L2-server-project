@@ -21,6 +21,9 @@
 package org.l2jmobius.gameserver.managers;
 
 import java.io.File;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -29,6 +32,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Predicate;
@@ -36,6 +40,7 @@ import java.util.logging.Logger;
 
 import org.w3c.dom.Document;
 
+import org.l2jmobius.commons.database.DatabaseFactory;
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
@@ -191,6 +196,12 @@ public class PhantomManager implements IXmlReader
 	private static final int REST_DANGER_RANGE = 700;
 	// Share of phantoms that roll a (DD) mage instead of a fighter.
 	private static final int MAGE_CHANCE = 30;
+	// Default chance a spawn uses one of a population's fixed "regular" identities (name/appearance) instead
+	// of a fresh random one, giving that zone a few recognizable recurring faces. Only applies when the
+	// population actually defines <regular> entries; overridable per-population via the regularChance attribute.
+	private static final int REGULAR_CHANCE_DEFAULT = 25;
+	// Safety ceiling on auto-generated regulars per population (regularCount), so a stray config can't flood one.
+	private static final int MAX_AUTO_REGULARS = 30;
 	// Mage combat: casters don't move under AutoPlay, so a faster tick positions them. They hold at
 	// CAST_RANGE to nuke; when MP drops below CAST_MP_PERCENT they melee the target until MP recovers
 	// (a pure caster is otherwise passive with no MP). TOLERANCE stops constant micro-repositioning.
@@ -510,6 +521,22 @@ public class PhantomManager implements IXmlReader
 		return false;
 	}
 
+	/**
+	 * A fixed "regular" identity for a population: a recurring, recognizable face rather than a fresh random
+	 * one each spawn. Name + appearance are stable, so the LLM brain (which hashes the name into a persistent
+	 * voice) gives the same personality every time and the player recognizes the character across sessions.
+	 * {@code classId <= 0} means "roll a class as usual" (only name/appearance are pinned).
+	 */
+	private static class Regular
+	{
+		String name;
+		boolean female;
+		byte face;
+		byte hairColor;
+		byte hairStyle;
+		int classId; // 0 = use the population's normal class roll; buddies always keep their role class
+	}
+
 	/** A deployment group: where/how many phantoms spawn, their level range, and whether to respawn. */
 	private static class Population
 	{
@@ -522,6 +549,9 @@ public class PhantomManager implements IXmlReader
 		boolean respawn = true;
 		BuddyRole role = BuddyRole.NONE; // NONE = ordinary field hunter; otherwise an idle support buddy
 		final List<Location> polygon = new ArrayList<>(); // optional area; spawn inside it instead of a circle
+		final List<Regular> regulars = new ArrayList<>(); // fixed identities that recur in this area (authored + auto)
+		int regularCount; // how many stable regulars to auto-generate for this area (0 = none / authored only)
+		int regularChance = REGULAR_CHANCE_DEFAULT; // % chance a spawn uses a regular (only if regulars exist)
 		boolean active; // phantoms currently spawned (a real player is in range)
 		long emptySince; // when the last observer left this area (0 while a player is near)
 	}
@@ -568,6 +598,15 @@ public class PhantomManager implements IXmlReader
 	@Override
 	public void load()
 	{
+		// Phantoms/buddies/party members are real `characters` rows (account_name='phantom') that are only
+		// deleted when despawn() runs deliberately (zone-empty timeout, //phantom clear, reload). An unclean
+		// shutdown (the usual "just kill the PC" case) never runs despawn(), so every such session leaves its
+		// active phantom rows orphaned forever - they bloat the DB, become permanent CharInfoTable RAM residents
+		// (the whole characters table is loaded at boot), and make name generation collide more. Sweep them here,
+		// once at boot, before anything spawns. load() runs exactly once per JVM (lazy singleton, not touched by
+		// //reloadfakeplayers), so this can never delete a live phantom's row.
+		sweepOrphanedPhantoms();
+
 		_populations.clear();
 		parseDatapackFile("data/PhantomPopulations.xml");
 		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _populations.size() + " phantom population(s).");
@@ -594,11 +633,31 @@ public class PhantomManager implements IXmlReader
 			population.maxLevel = set.getInt("maxLevel", population.minLevel);
 			population.respawn = set.getBoolean("respawn", true);
 			population.role = BuddyRole.fromString(set.getString("role", ""));
+			population.regularChance = set.getInt("regularChance", REGULAR_CHANCE_DEFAULT);
+			population.regularCount = set.getInt("regularCount", 0);
 			forEach(populationNode, "point", pointNode ->
 			{
 				final StatSet p = new StatSet(parseAttributes(pointNode));
 				population.polygon.add(new Location(p.getInt("x"), p.getInt("y"), p.getInt("z", population.center.getZ())));
 			});
+			forEach(populationNode, "regular", regularNode ->
+			{
+				final StatSet r = new StatSet(parseAttributes(regularNode));
+				final Regular regular = new Regular();
+				regular.name = r.getString("name", "").trim();
+				if (regular.name.isEmpty())
+				{
+					LOGGER.warning(getClass().getSimpleName() + ": Skipping a <regular> with no name in population '" + population.name + "'.");
+					return;
+				}
+				regular.female = r.getBoolean("female", false);
+				regular.face = (byte) r.getInt("face", 0);
+				regular.hairColor = (byte) r.getInt("hairColor", 0);
+				regular.hairStyle = (byte) r.getInt("hairStyle", 0);
+				regular.classId = r.getInt("classId", 0);
+				population.regulars.add(regular);
+			});
+			generateAutoRegulars(population);
 			_populations.add(population);
 		}));
 	}
@@ -824,6 +883,73 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
+	 * Auto-generates {@code population.regularCount} stable regular identities and appends them to the
+	 * population's roster (alongside any hand-authored ones). Each slot is built from a seed derived from the
+	 * population name + slot index, so the same slot yields the same name/appearance/class on every restart -
+	 * no manual authoring needed. Reuses the shared name pools and mage/fighter class pools so auto-regulars
+	 * blend in with the rest of the crowd. Buddies keep their role class at spawn; the generated classId is
+	 * simply ignored there.
+	 * @param population the group to populate (no-op if regularCount <= 0)
+	 */
+	private void generateAutoRegulars(Population population)
+	{
+		final int wanted = Math.min(population.regularCount, MAX_AUTO_REGULARS);
+		for (int i = 0; i < wanted; i++)
+		{
+			// Deterministic per (population, slot): a stable seed so the identity is identical across restarts.
+			final Random rng = new Random((((long) population.name.hashCode()) << 20) ^ ((i + 1) * 0x9E3779B97F4A7C15L));
+			final Regular regular = new Regular();
+			regular.name = FakePlayerAppearanceFactory.generateName(rng);
+			final boolean mage = rng.nextInt(100) < MAGE_CHANCE;
+			final int[] pool = mage ? MAGE_CLASS_POOL : FIGHTER_CLASS_POOL;
+			regular.classId = pool[rng.nextInt(pool.length)];
+			// Orc (44) / Dwarf (53) bodies skew male, like the appearance factory and the random spawn path.
+			regular.female = ((regular.classId == 44) || (regular.classId == 53)) ? (rng.nextInt(100) < 30) : rng.nextBoolean();
+			regular.face = (byte) rng.nextInt(3); // 0-2
+			regular.hairColor = (byte) rng.nextInt(4); // 0-3
+			regular.hairStyle = (byte) rng.nextInt(3); // 0-2
+			population.regulars.add(regular);
+		}
+	}
+
+	/**
+	 * Rolls whether this spawn should use one of the population's fixed regular identities, and if so picks one
+	 * that isn't already standing in the world (so the same regular never appears twice at once).
+	 * @param population the owning group (null for ad-hoc/admin/recruit spawns, which never use regulars)
+	 * @return a free regular to spawn as, or {@code null} to spawn a fresh random identity
+	 */
+	private Regular pickRegular(Population population)
+	{
+		if ((population == null) || population.regulars.isEmpty() || (Rnd.get(100) >= population.regularChance))
+		{
+			return null;
+		}
+
+		// Exclude regulars already spawned (a phantom carrying that exact name). Player.create would also reject a
+		// duplicate name, but filtering first lets us pick another free regular instead of failing the spawn.
+		final List<Regular> free = new ArrayList<>(population.regulars);
+		for (PhantomData data : _phantoms.values())
+		{
+			final String live = data.player.getName();
+			free.removeIf(regular -> regular.name.equalsIgnoreCase(live));
+		}
+		return free.isEmpty() ? null : free.get(Rnd.get(free.size()));
+	}
+
+	/** @return {@code true} if the class id belongs to the DD-mage pool (so the caster gear/combat tick applies). */
+	private static boolean isMageClass(int classId)
+	{
+		for (int mageClass : MAGE_CLASS_POOL)
+		{
+			if (mageClass == classId)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/**
 	 * Creates a brand-new clientless fighter phantom, levels/skills/gears it, spawns it, and hands it to
 	 * the native auto-hunt so it seeks and fights monsters on its own.
 	 * @param location where to spawn (also its home)
@@ -847,12 +973,32 @@ public class PhantomManager implements IXmlReader
 		final BuddyRole role = (population != null) ? population.role : BuddyRole.NONE;
 		try
 		{
+			// Maybe use one of this population's fixed "regular" identities so the zone has recurring, recognizable
+			// faces (stable name -> stable brain voice) instead of an all-random crowd. Null = spawn randomly.
+			final Regular regular = pickRegular(population);
+
 			// Buddies are a fixed support class (Elder/Prophet/Warcryer) and always cast, so they take the mage
 			// gear loadout. Ordinary phantoms roll a random race/body type: mostly melee fighters, a share DD
-			// mages. Either way fall back to Human Fighter if a template is missing.
-			final boolean mage = role.isBuddy() || (Rnd.get(100) < MAGE_CHANCE);
-			final int[] pool = mage ? MAGE_CLASS_POOL : FIGHTER_CLASS_POOL;
-			final int classId = role.isBuddy() ? role.classId : pool[Rnd.get(pool.length)];
+			// mages. A regular may pin its own class; otherwise roll. Either way fall back to Human Fighter if a
+			// template is missing.
+			final boolean mage;
+			final int classId;
+			if (role.isBuddy())
+			{
+				mage = true;
+				classId = role.classId;
+			}
+			else if ((regular != null) && (regular.classId > 0))
+			{
+				classId = regular.classId;
+				mage = isMageClass(classId);
+			}
+			else
+			{
+				mage = Rnd.get(100) < MAGE_CHANCE;
+				final int[] pool = mage ? MAGE_CLASS_POOL : FIGHTER_CLASS_POOL;
+				classId = pool[Rnd.get(pool.length)];
+			}
 			PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
 			PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
 			if (template == null)
@@ -866,10 +1012,14 @@ public class PhantomManager implements IXmlReader
 				return null;
 			}
 
-			// Orc (Warcryer) and dwarf bodies skew male, like the NPC appearance factory.
-			final boolean female = ((classId == 44) || (classId == 53) || (role == BuddyRole.WARCRYER)) ? (Rnd.get(100) < 30) : Rnd.nextBoolean();
-			final PlayerAppearance appearance = new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
-			final Player phantom = Player.create(template, ACCOUNT_NAME, nextName(), appearance);
+			// A regular pins its own name/appearance; otherwise roll. Orc (Warcryer) and dwarf bodies skew male,
+			// like the NPC appearance factory.
+			final boolean female = (regular != null) ? regular.female //
+				: (((classId == 44) || (classId == 53) || (role == BuddyRole.WARCRYER)) ? (Rnd.get(100) < 30) : Rnd.nextBoolean());
+			final PlayerAppearance appearance = (regular != null) //
+				? new PlayerAppearance(regular.face, regular.hairColor, regular.hairStyle, female) //
+				: new PlayerAppearance((byte) Rnd.get(0, 2), (byte) Rnd.get(0, 3), (byte) Rnd.get(0, 2), female);
+			final Player phantom = Player.create(template, ACCOUNT_NAME, (regular != null) ? regular.name : nextName(), appearance);
 			if (phantom == null)
 			{
 				LOGGER.warning(getClass().getSimpleName() + ": Player.create returned null (duplicate name / db error?).");
@@ -1790,6 +1940,51 @@ public class PhantomManager implements IXmlReader
 		catch (Exception e)
 		{
 			LOGGER.warning(getClass().getSimpleName() + ": Failed to delete phantom row " + objectId + ": " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Deletes every leftover {@code account_name='phantom'} character row (and its cascade of item/skill/quest/
+	 * etc. rows, via {@link GameClient#deleteCharByObjId(int)}) that a previous unclean shutdown left behind.
+	 * Runs once at boot from {@link #load()}, before any phantom is spawned, so it only ever removes orphans -
+	 * never a live phantom. Same net effect as despawn(), but for whatever survived a hard kill.
+	 */
+	private void sweepOrphanedPhantoms()
+	{
+		final List<Integer> orphanIds = new ArrayList<>();
+		try (Connection con = DatabaseFactory.getConnection();
+			PreparedStatement ps = con.prepareStatement("SELECT charId FROM characters WHERE account_name=?"))
+		{
+			ps.setString(1, ACCOUNT_NAME);
+			try (ResultSet rs = ps.executeQuery())
+			{
+				while (rs.next())
+				{
+					orphanIds.add(rs.getInt("charId"));
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to scan for orphaned phantom rows: " + e.getMessage());
+			return;
+		}
+
+		for (int objectId : orphanIds)
+		{
+			try
+			{
+				GameClient.deleteCharByObjId(objectId);
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Failed to delete orphaned phantom row " + objectId + ": " + e.getMessage());
+			}
+		}
+
+		if (!orphanIds.isEmpty())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": Swept " + orphanIds.size() + " orphaned phantom character row(s) left by a previous unclean shutdown.");
 		}
 	}
 

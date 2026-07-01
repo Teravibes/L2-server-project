@@ -84,6 +84,26 @@ not compiled here.** Be extra careful with imports/signatures/types; a build err
 is almost always a quick import or signature fix. Do not claim a Java change
 "builds" — say it's hand-verified.
 
+### Standing rule: after every change, tell the user exactly what to transfer
+
+The user runs a separate **live** server; this repo is just the dev copy. So at the
+end of **every** change that touches deployable files, spell out precisely what they
+must move to the live server — never leave them to figure it out. Follow this:
+
+- **Java files changed (`java/**`)** → just say: *"Build (`ant`) and move the new
+  `GameServer.jar` to the live server."* Don't list the individual `.java` files —
+  they're compiled into the jar.
+- **Any non-build file changed** (anything not compiled into the jar — datapack
+  scripts, XML, `.ini` config, `fpc_brain.py`, knowledge/memory files, the editor,
+  etc.) → give the **full repo path of each file** and **what it is / where it goes
+  on the live server**, one per line. These are copied as-is, not built.
+- If a change touches **both**, list the jar instruction *and* each non-build file.
+- If a change touches **no** deployable files (e.g. only `HANDOVER.md` / `PROGRESS.md`
+  / `CLAUDE.md`), say plainly that nothing needs to be transferred.
+
+Put this transfer list at the end of the change summary so it's the last thing the
+user sees. Use the deploy table above to classify each file.
+
 ## Running the Python brain
 
 ```bash

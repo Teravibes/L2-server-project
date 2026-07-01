@@ -20,6 +20,7 @@
  */
 package org.l2jmobius.gameserver.managers;
 
+import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -384,5 +385,24 @@ public class FakePlayerAppearanceFactory
 		}
 		while (!USED_NAMES.add(name.toLowerCase()));
 		return name;
+	}
+
+	/**
+	 * Deterministic name variant built from a caller-supplied seeded RNG, so the same seed always yields the
+	 * same name. Used for stable "regular" identities that must be identical across restarts (unlike the
+	 * random {@link #generateName()}). Does not touch {@code USED_NAMES}: the caller owns uniqueness/dedup.
+	 * @param rng a seeded random source (same seed -&gt; same name)
+	 * @return a syllable-built name (from the same pools as the random generator), capped at 16 chars
+	 */
+	public static String generateName(Random rng)
+	{
+		final StringBuilder sb = new StringBuilder(NAME_START[rng.nextInt(NAME_START.length)]);
+		if (rng.nextBoolean())
+		{
+			sb.append(NAME_MID[rng.nextInt(NAME_MID.length)]);
+		}
+		sb.append(NAME_END[rng.nextInt(NAME_END.length)]);
+		final String name = sb.toString();
+		return name.length() > 16 ? name.substring(0, 16) : name;
 	}
 }
