@@ -360,10 +360,12 @@ player-global memory
 bot-specific memory
 ```
 
-Status: **Phases 1-2 done (2026-07-01).** See §12b/§12c below. Phantom populations can now define fixed
-`<regular>` identities (stable name + appearance, optional class) that recur in a zone; a stable name
-already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name). Regulars also now
-persist across reboots with a stable `charId` (Phase 2). Phase 3 (friend tier) remains future — see §10b.
+Status: **Phases 1-2 + Phase 3a done (2026-07-01).** See §12b/§12c/§12d below. Phantom populations can
+define fixed `<regular>` identities (stable name + appearance, optional class) that recur in a zone; a stable
+name already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name). Regulars persist
+across reboots with a stable `charId` (Phase 2), and can now be befriended and privately chatted with over
+the friends list (Phase 3a). Phase 3b (always-online login lifecycle + brain friendship memory) remains
+future — see §10b / §12d.
 
 ---
 
@@ -811,11 +813,19 @@ code — **the three "High" items were already fixed**, so **do not re-implement
   - ✅ **Phase 2 (persistence) DONE (2026-07-01):** regulars now get a distinct account
     (`phantom_regular`) that the boot sweep (§10 fix, scoped to `phantom` only) skips, and their row is
     created once so `charId` is stable across reboots. See §12c for the full mechanism.
-  - ⬜ **Phase 3 (friend tier):** auto-accept friend invites for regulars (server-side, like the res
-    ConfirmDlg auto-accept — see `RequestAnswerFriendInvite`), spawn friend-regulars at the owner's
-    `EnterWorld` so they show "online" (`FriendList` checks `World.getPlayer` != null), route friend PMs
-    (`RequestSendFriendMsg`) into the brain, and flag "we're friends" in memory. Touches stock Mobius
-    packet handlers — get user approval before editing those.
+  - 🟡 **Phase 3 (friend tier) — Phase 3a DONE (2026-07-01), 3b pending.** See §12d for the full mechanism.
+    - ✅ **3a (befriend + friend chat):** friend-inviting a regular now auto-accepts server-side
+      (`RequestFriendInvite` hook → `PhantomManager.befriendRegular`, persists to `character_friends` both
+      ways; the Phase 2 stable `charId` is what makes the row durable across respawns). Friend PMs to a
+      regular route into the brain and reply over the friend channel (`RequestSendFriendMsg` hook →
+      `FakePlayerChatManager.handleFriendMessage` → `L2FriendSay`, in the regular's stable persona). Stock
+      handler edits are thin (guard + delegate); all logic is in the custom managers.
+    - ⬜ **3b (always-online lifecycle + memory flag):** spawn friend-regulars at the owner's `EnterWorld`
+      so they show "online" even away from their zone (`FriendList` checks `World.getPlayer` != null), and
+      persist a "we're friends" flag in the brain memory (a `fpc_brain.py` change + a `FRIEND` mode). This is
+      the invasive part (new login/logout spawn lifecycle, dedup vs population spawns) — deferred for its own
+      reviewed pass. Until then a regular shows online / is friend-PM-able only while it's spawned near its
+      zone (degrades gracefully to "friend offline").
   - ⬜ **Phase 3 add-on — player-crafted phantoms (user idea):** let a player create a persistent phantom
     to their own spec (name + appearance, maybe class/level) — e.g. recreate an old friend to "play
     together" — via an in-game UI/command, then befriend it. Builds directly on the Phase 2 persistent
@@ -958,5 +968,45 @@ Code touchpoints: `PhantomManager` — constant `ACCOUNT_NAME_REGULAR`; new `fin
 the load-vs-create branch (`existingId`, `loadedRegular`, `effectiveMage`, inventory wipe) in
 `createAndSpawn()`; the tier guard in `transferClass()`; the `persistent` branch in `despawn()`. No DB
 schema change (reuses the stock `characters` table); no XML/config change.
+
+Deploy: Java only (rebuild jar and move it to the live server) — no other files changed.
+
+---
+
+## 12d. Stable identity "regulars" — Phase 3a (friend tier: befriend + chat — 2026-07-01)
+
+Goal: let a player treat a regular like a real friend — add it to the friends list and hold a private
+conversation with it — building on the Phase 2 stable `charId`. Phase 3a lands the two lower-risk halves;
+the always-online login lifecycle + brain memory flag are Phase 3b (§10b), deferred.
+
+How it works (stock packet-handler edits are deliberately thin — a guard + one delegate call each; all
+logic lives in the custom managers):
+- **`PhantomManager.isRegular(Player)`**: `ACCOUNT_NAME_REGULAR.equals(getAccountName())`. The account is
+  server-internal, so a real player can never match — no world lookup needed.
+- **Auto-accept invite** — `RequestFriendInvite` hook: a regular is clientless and can't answer the
+  `FriendAddRequest` dialog, so when a player invites one we call `PhantomManager.befriendRegular(player,
+  regular)` and return. That mirrors `RequestAnswerFriendInvite`'s accept: `INSERT INTO character_friends`
+  both directions, add to both in-memory lists, send the "added to friends" system message + an
+  `L2Friend(regular, 1)` so it shows online immediately. Placed after the stock validations (self/olympiad/
+  block/already-friend), before the busy-check/dialog send.
+- **Friend PM → brain** — `RequestSendFriendMsg` hook: if the receiver `isRegular`, call
+  `FakePlayerChatManager.handleFriendMessage(player, regular, message)` and return. That calls the brain with
+  the regular's name (mode `WHISPER`, so it gets the same stable `_voice()` persona a whisper would) and
+  replies back as an `L2FriendSay` after the usual think + typing delay; falls back to a short canned line if
+  the brain is offline. Note the regular is a `Player` phantom, so it is *outside* the Npc-based whisper path
+  (`resolveBot` only finds Npc fake players) — this is a dedicated friend path, not the whisper one.
+
+Why respawn-safe: the friendship lives in `character_friends` keyed on the regular's stable `charId`; when a
+regular is reloaded (Phase 2 `Player.load`), `restore()` calls `restoreFriendList()`, so the reloaded
+phantom recognizes the player as a friend and `RequestSendFriendMsg`'s friend check passes again.
+
+Known limitation until Phase 3b: with no login-spawn, a regular only shows online / is friend-PM-able while
+it's actually spawned (near its zone). `RequestSendFriendMsg` requires `World.getPlayer(name) != null`, so
+when the regular is despawned the player just sees "friend offline" — correct, if incomplete.
+
+Code touchpoints: `PhantomManager` — `isRegular()`, `befriendRegular()` (+ imports `SystemMessageId`,
+`SystemMessage`, `L2Friend`); `FakePlayerChatManager` — `handleFriendMessage()` (+ import `L2FriendSay`);
+stock `RequestFriendInvite` and `RequestSendFriendMsg` — one guarded delegate call each. No DB schema change
+(reuses stock `character_friends`); no XML/config/brain change.
 
 Deploy: Java only (rebuild jar and move it to the live server) — no other files changed.

@@ -144,6 +144,25 @@ Use the strongest model where judgment matters and a faster one for the grind:
 Note: model choice is per-session and resets to the default in a new session —
 re-establish this rhythm each session.
 
+### When to delegate to Sonnet vs. do it on Opus
+
+Delegating to a Sonnet subagent is not free: the subagent starts cold and re-reads
+files the lead already read, and the lead still has to verify the diff on Opus. So the
+saving only materializes when the work is **mechanical and voluminous**. Rule of thumb:
+
+- **Delegate to Sonnet** when the task is high-volume, low-judgment: repetitive edits
+  across many files, boilerplate, mechanical refactors, bulk renames — where the token
+  bulk is reading/typing, not deciding.
+- **Do it yourself on Opus** when the task is small, or high-judgment even if small —
+  anything touching **stock Mobius core / packet handlers**, tricky concurrency, or a
+  design with real forks. There the subagent's cold-start re-reads cancel the saving and
+  the lead's verification pass is the real work anyway (and subtle bugs slip through — a
+  Sonnet cut of "regulars Phase 2" shipped three combat-breaking bugs caught only in
+  Opus verification). If delegating wouldn't change the outcome or cost, just do it.
+
+Whichever path, the Opus verification pass before commit is non-negotiable — never
+commit a subagent's diff unread.
+
 ## Cost / usage awareness
 
 Claude cannot see the user's plan usage or the 5-hour rate-limit state — there's no

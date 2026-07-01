@@ -19,6 +19,8 @@ package org.l2jmobius.gameserver.network.clientpackets;
 import java.util.logging.Logger;
 
 import org.l2jmobius.gameserver.config.GeneralConfig;
+import org.l2jmobius.gameserver.managers.FakePlayerChatManager;
+import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.network.SystemMessageId;
@@ -62,7 +64,15 @@ public class RequestSendFriendMsg extends ClientPacket
 			player.sendPacket(SystemMessageId.THAT_PLAYER_IS_NOT_ONLINE);
 			return;
 		}
-		
+
+		// A friend PM to a "regular" phantom is answered by the LLM brain in the regular's stable persona,
+		// replying back over this same friend channel - the regular is clientless, so nothing else would run.
+		if (PhantomManager.getInstance().isRegular(targetPlayer))
+		{
+			FakePlayerChatManager.getInstance().handleFriendMessage(player, targetPlayer, _message);
+			return;
+		}
+
 		if (GeneralConfig.LOG_CHAT)
 		{
 			final StringBuilder sb = new StringBuilder();

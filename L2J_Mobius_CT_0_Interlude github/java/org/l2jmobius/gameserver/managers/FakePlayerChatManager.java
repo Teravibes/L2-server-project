@@ -49,6 +49,7 @@ import org.l2jmobius.gameserver.model.item.ItemTemplate;
 import org.l2jmobius.gameserver.model.spawns.Spawn;
 import org.l2jmobius.gameserver.network.enums.ChatType;
 import org.l2jmobius.gameserver.network.serverpackets.CreatureSay;
+import org.l2jmobius.gameserver.network.serverpackets.L2FriendSay;
 
 /**
  * @author Mobius
@@ -1004,6 +1005,41 @@ public class FakePlayerChatManager implements IXmlReader
 				player.sendPacket(new CreatureSay(npc, ChatType.WHISPER, fpcName, message));
 			}
 		}, typingDelayMillis(message));
+	}
+
+	/**
+	 * Answers a friend private-message sent to a persistent "regular" phantom (Phase 3 friend tier). A regular
+	 * is a clientless Player, not an Npc, so it sits outside the normal whisper path ({@link #resolveBot} only
+	 * finds Npc fake players): we call the brain directly with the regular's name - which gives it the same
+	 * stable persona a whisper would (the brain's {@code _voice()} hashes the name) - and send the reply back
+	 * over the friend channel as an {@link L2FriendSay}, after the same think + typing delay a whisper uses.
+	 * Falls back to a short canned line if the brain is offline, so a friend PM is never met with silence.
+	 * @param player the real player who sent the friend PM
+	 * @param regular the regular phantom being messaged
+	 * @param message the player's message text
+	 */
+	public void handleFriendMessage(Player player, Player regular, String message)
+	{
+		if ((player == null) || (regular == null) || (message == null) || message.isEmpty())
+		{
+			return;
+		}
+		final String regularName = regular.getName();
+		final String playerName = player.getName();
+		ThreadPool.schedule(() ->
+		{
+			final String aiReply = callBridge(regularName, "WHISPER", playerName, "", message, "", "");
+			final String reply = ((aiReply != null) && !aiReply.isEmpty()) //
+				? aiReply //
+				: (Rnd.nextBoolean() ? "hey :)" : Rnd.nextBoolean() ? "sup" : "one sec, kinda busy");
+			ThreadPool.schedule(() ->
+			{
+				if (player.isOnline())
+				{
+					player.sendPacket(new L2FriendSay(regularName, playerName, reply));
+				}
+			}, typingDelayMillis(reply));
+		}, Rnd.get(MIN_DELAY, MAX_DELAY));
 	}
 
 	/**

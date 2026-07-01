@@ -80,6 +80,9 @@ import org.l2jmobius.gameserver.model.item.type.WeaponType;
 import org.l2jmobius.gameserver.model.skill.Skill;
 import org.l2jmobius.gameserver.model.skill.targets.TargetType;
 import org.l2jmobius.gameserver.network.GameClient;
+import org.l2jmobius.gameserver.network.SystemMessageId;
+import org.l2jmobius.gameserver.network.serverpackets.L2Friend;
+import org.l2jmobius.gameserver.network.serverpackets.SystemMessage;
 import org.l2jmobius.gameserver.taskmanagers.AutoPlayTaskManager;
 import org.l2jmobius.gameserver.taskmanagers.AutoUseTaskManager;
 
@@ -965,6 +968,59 @@ public class PhantomManager implements IXmlReader
 			LOGGER.warning(getClass().getSimpleName() + ": Failed to look up persisted regular '" + name + "': " + e.getMessage());
 		}
 		return 0;
+	}
+
+	/**
+	 * @return {@code true} if the given player is a persistent "regular" phantom (account
+	 *         {@link #ACCOUNT_NAME_REGULAR}). Real players and ephemeral phantoms return {@code false}. The
+	 *         account is server-internal, so a real player can never carry it - the check needs no world lookup.
+	 */
+	public boolean isRegular(Player player)
+	{
+		return (player != null) && ACCOUNT_NAME_REGULAR.equals(player.getAccountName());
+	}
+
+	/**
+	 * Completes a friendship between a real player and a regular phantom server-side. A regular is clientless,
+	 * so it can never answer the {@code FriendAddRequest} dialog the stock invite flow sends - instead, when a
+	 * player friend-invites a regular we accept immediately: persist the pair in {@code character_friends} both
+	 * directions (mirroring {@code RequestAnswerFriendInvite}) and update both in-memory lists, so the regular
+	 * shows in the player's friends window right away. The regular's charId is stable (Phase 2 persistence), so
+	 * the row stays valid across the phantom despawning and respawning.
+	 * @param player the inviting real player
+	 * @param regular the target regular phantom (assumed {@link #isRegular(Player)})
+	 */
+	public void befriendRegular(Player player, Player regular)
+	{
+		if ((player == null) || (regular == null))
+		{
+			return;
+		}
+		if (player.getFriendList().contains(regular.getObjectId()))
+		{
+			player.sendPacket(SystemMessageId.THIS_PLAYER_IS_ALREADY_REGISTERED_IN_YOUR_FRIENDS_LIST);
+			return;
+		}
+		try (Connection con = DatabaseFactory.getConnection();
+			PreparedStatement ps = con.prepareStatement("INSERT INTO character_friends (charId, friendId) VALUES (?, ?), (?, ?)"))
+		{
+			ps.setInt(1, player.getObjectId());
+			ps.setInt(2, regular.getObjectId());
+			ps.setInt(3, regular.getObjectId());
+			ps.setInt(4, player.getObjectId());
+			ps.execute();
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to persist friendship between " + player.getName() + " and regular " + regular.getName() + ": " + e.getMessage());
+			return;
+		}
+		player.getFriendList().add(regular.getObjectId());
+		regular.getFriendList().add(player.getObjectId());
+		final SystemMessage msg = new SystemMessage(SystemMessageId.S1_HAS_BEEN_ADDED_TO_YOUR_FRIENDS_LIST);
+		msg.addString(regular.getName());
+		player.sendPacket(msg);
+		player.sendPacket(new L2Friend(regular, 1)); // show the regular online in the friends window right away
 	}
 
 	/** @return {@code true} if the class id belongs to the DD-mage pool (so the caster gear/combat tick applies). */

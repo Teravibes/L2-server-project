@@ -20,6 +20,7 @@
  */
 package org.l2jmobius.gameserver.network.clientpackets;
 
+import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.model.World;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.model.actor.holders.player.BlockList;
@@ -93,7 +94,15 @@ public class RequestFriendInvite extends ClientPacket
 			player.sendPacket(SystemMessageId.THIS_PLAYER_IS_ALREADY_REGISTERED_IN_YOUR_FRIENDS_LIST);
 			return;
 		}
-		
+
+		// A "regular" phantom is clientless and can never answer the friend-request dialog, so accept the
+		// friendship server-side immediately instead of sending a dialog into the void.
+		if (PhantomManager.getInstance().isRegular(friend))
+		{
+			PhantomManager.getInstance().befriendRegular(player, friend);
+			return;
+		}
+
 		// Target is busy.
 		if (friend.isProcessingRequest())
 		{
