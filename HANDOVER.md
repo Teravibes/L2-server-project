@@ -30,6 +30,9 @@ for billions. First real game-code change on top of the repo-onboarding setup.
 - Nothing mid-change. Clamp band is a one-line tuning knob if it feels too
   tight/loose in play. Next candidates (PROGRESS.md §11): phantom tuning config,
   field-behavior tuning.
+- **New standing rule in CLAUDE.md:** after every change, end the summary with an
+  explicit "what to transfer to the live server" list (jar-only for Java changes;
+  full path + description for each non-build file). Honor it on every commit.
 
 ## Watch out for
 
