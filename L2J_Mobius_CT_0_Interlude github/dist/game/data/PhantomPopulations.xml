@@ -83,4 +83,27 @@
 	<population name="Giran Warcryer" x="83370" y="147560" z="-3400" radius="120" count="1" minLevel="70" maxLevel="70" role="BUDDY_WARCRYER" />
 -->
 <list>
+	<!-- ===== Support buddies (idle in town; whisper one to party up) ===== -->
+	<population name="Prophet" x="-14061" y="123384" z="-3000" radius="50" count="1" minLevel="56" maxLevel="56" role="BUDDY_PROPHET" />
+	<population name="Elder" x="-13958" y="123382" z="-3000" radius="50" count="1" minLevel="56" maxLevel="56" role="BUDDY_ELDER" />
+	<population name="WarCryer" x="-13856" y="123385" z="-3000" radius="50" count="1" minLevel="56" maxLevel="56" role="BUDDY_WARCRYER" />
+
+	<!-- ===== Ruins of Agony (your original lvl 20 farm spots) ===== -->
+	<population name="ROA 1" x="-45303" y="111139" z="-3000" radius="100" count="1" minLevel="20" maxLevel="20" />
+	<population name="ROA 2" x="-48567" y="109692" z="-3000" radius="800" count="2" minLevel="20" maxLevel="20" />
+	<population name="ROA 3" x="-43586" y="117477" z="-3000" radius="800" count="1" minLevel="20" maxLevel="20" />
+	<population name="ROA 4" x="-49475" y="113884" z="-3000" radius="300" count="1" minLevel="20" maxLevel="20" />
+
+	<!-- ===== Extra farm zones (a few phantoms each; centers taken from the server's own spawn
+	     territories in dist/game/data/spawns, so they sit inside the real hunting areas). Levels are
+	     set to each zone's mob tier. Tune count/level/radius to taste; delete any you don't want. ===== -->
+	<population name="Turek Orc Camp" x="-99500" y="102150" z="-3650" radius="700" count="2" minLevel="18" maxLevel="24" />
+	<population name="Plains of Dion" x="27800" y="135800" z="-3250" radius="800" count="2" minLevel="22" maxLevel="28" />
+	<population name="Bee Hive" x="19100" y="178700" z="-3750" radius="700" count="2" minLevel="24" maxLevel="30" />
+	<population name="Cruma Marshlands" x="13800" y="104900" z="-3800" radius="800" count="2" minLevel="26" maxLevel="33" />
+	<population name="Execution Grounds" x="39350" y="146400" z="-3820" radius="800" count="2" minLevel="32" maxLevel="40" />
+	<population name="Gorgon Flower Garden" x="118670" y="129000" z="-3600" radius="700" count="2" minLevel="32" maxLevel="40" />
+	<population name="Tanor Canyon" x="37800" y="162600" z="-3820" radius="800" count="2" minLevel="42" maxLevel="48" />
+	<population name="Death Pass" x="66600" y="105600" z="-3700" radius="700" count="2" minLevel="42" maxLevel="48" />
+	<population name="Breka's Stronghold" x="79000" y="121250" z="-2300" radius="600" count="2" minLevel="42" maxLevel="48" />
 </list>

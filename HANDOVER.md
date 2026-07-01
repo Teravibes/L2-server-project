@@ -36,11 +36,22 @@ CLAUDE.md "what to transfer" standing rule.
   plan + a new Phase 3 add-on: **player-crafted phantoms** ("recreate an old friend to
   play together") — user's idea, slotted with the friend tier.
 
+## Also just done
+
+- Populated `dist/game/data/PhantomPopulations.xml` with the user's real config
+  (3 town buddies + 4 ROA spots) **plus 9 low-count farm zones** (Turek Orcs →
+  Breka's Stronghold, lvl 18-48). Zone centers were pulled from the server's own
+  spawn territories (`dist/game/data/spawns/**`), so they sit inside real hunting
+  areas — not guessed. count=2 each; on-demand spawn keeps it unobtrusive. A clean
+  copy (no header comment) was sent to the user to drop on live.
+
 ## In flight / next up
 
 - **Regulars Phase 2 (persistence)** then **Phase 3 (friend tier + player-crafted
   phantoms)** — see PROGRESS.md §10b / §12b. Phase 3 touches stock Mobius packet
   handlers (`RequestAnswerFriendInvite` etc.), so get user approval before editing.
+- Farm-zone coords are spawn-territory centers; if any phantom spawns feel off,
+  nudge that population's x/y/z (all 9 are plain field zones, low risk).
 - Other open candidates (§10b / §11): ACTIVE_DEALS orphan-on-ignore TTL, phantom
   tuning config, verifying the still-unverified relayed findings.
 - Standing rules in play: update HANDOVER.md every commit; end every change with a
