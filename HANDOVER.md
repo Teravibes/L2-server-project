@@ -9,30 +9,34 @@
 
 ## Current state
 
-Landed the **haggle price clamp** (PROGRESS.md §11.3). Whisper-negotiated trade
-prices from the LLM are now bounded server-side in `FakePlayerStoreFactory` so a
-bot can no longer be talked into selling a rare item for 1 adena or buying junk
-for billions. First real game-code change on top of the repo-onboarding setup.
+Landed the **boot-time orphaned-phantom DB sweep** (PROGRESS.md §10). Phantom/
+buddy/party-member `characters` rows (`account_name='phantom'`) left behind by an
+unclean shutdown are now bulk-deleted once at boot before anything spawns, ending
+the DB-bloat / boot-RAM / name-collision growth. Also verified a prior session's
+code-review findings against live code: the three "High" items were **already
+fixed** — see the §10b audit so they aren't re-chased.
+
+Earlier this session: the **haggle price clamp** (§11.3) and the CLAUDE.md
+"what to transfer" standing rule.
 
 ## What was just done
 
-- Added `clampDealPrice(unitPrice, referencePrice, selling)` to
-  `FakePlayerStoreFactory.java` and wired it into `dealSellStock`/`dealBuyStock`
-  (the single choke point). Band (moderate): SELL floor 0.5× / ceiling 3×,
-  BUY floor 0.1× / ceiling 1.5× of the item reference price. Haggling still works
-  inside the band; only absurd values get pinned. Also neutralizes the `k`/`kk`
-  multiplier trick since the clamp applies to the final per-unit price.
-- Auto-priced initial quotes (price arg `0`) are unaffected — clamp only fires on
-  an explicit negotiated price.
+- Added `PhantomManager.sweepOrphanedPhantoms()`, called first thing in `load()`.
+  It queries every `account_name='phantom'` charId and deletes each via
+  `GameClient.deleteCharByObjId()` (same cascade cleanup as `despawn()`). `load()`
+  runs once per JVM (lazy singleton, not touched by `//reloadfakeplayers`), so it
+  can never delete a live phantom's row. New imports: `java.sql.*`, `DatabaseFactory`.
+- Recorded the finding audit in PROGRESS.md §10b: 3 High items already fixed;
+  still-open lower-priority items (ACTIVE_DEALS orphan-on-ignore, non-atomic trade
+  rate limiter) + unverified relayed items listed for a future pass.
 
 ## In flight / next up
 
-- Nothing mid-change. Clamp band is a one-line tuning knob if it feels too
-  tight/loose in play. Next candidates (PROGRESS.md §11): phantom tuning config,
-  field-behavior tuning.
-- **New standing rule in CLAUDE.md:** after every change, end the summary with an
-  explicit "what to transfer to the live server" list (jar-only for Java changes;
-  full path + description for each non-build file). Honor it on every commit.
+- Nothing mid-change. Next candidates (PROGRESS.md §10b / §11): ACTIVE_DEALS
+  orphan-on-ignore TTL, phantom tuning config, stable-identity "regulars" (design
+  idea in §1b), or verifying the still-unverified relayed findings.
+- Standing rules in play: update HANDOVER.md every commit; end every change with a
+  "what to transfer to the live server" list.
 
 ## Watch out for
 

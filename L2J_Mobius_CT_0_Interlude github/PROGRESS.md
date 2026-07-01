@@ -762,6 +762,8 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 
 - ✅ **[FIXED 2026-07-01] Malformed MEET tag leakage with Ollama** — `MEET_TAG` now tolerates a malformed close (`]]`/`])`/`]`/`)`) so `[[MEET:gk])` etc. are stripped, and the whisper prompt reinforces exact tags. See §1c.
 - ✅ **[FIXED 2026-07-01] Active deal context cleanup** — `ACTIVE_DEALS` is now cleared through `endMeet` (sold-out / hard-cap / grace-leave / cancel) via `clearDeal(player, bot)`. See §1c.
+- ✅ **[FIXED 2026-07-01] Orphaned phantom character rows after unclean shutdown** — phantoms/buddies/party members are real `characters` rows (`account_name='phantom'`) deleted only when `despawn()` runs deliberately (zone-empty timeout / `//phantom clear` / reload). A hard kill (the usual case) never runs despawn(), so every such session used to orphan its active phantom rows forever — DB bloat, permanent `CharInfoTable` RAM residents (whole table loads at boot), and worse name-collision pressure. Fixed with a boot-time sweep: `PhantomManager.sweepOrphanedPhantoms()` (called first in `load()`) bulk-deletes every `account_name='phantom'` row via `GameClient.deleteCharByObjId()` (same cascade as despawn). `load()` runs once per JVM (lazy singleton, untouched by `//reloadfakeplayers`), so it can never remove a live phantom.
+- **Haggle price clamp** — done 2026-07-01, see §11.3.
 - **Trade responder probability verification** — separate trade-offer cap and wider responder search need gameplay verification after rebuild.
 - **Orc Warcryer torso** — can render with no torso (separate magic tunics have no orc model); robe-only gearing attempt reverted, to be revisited.
 - **OOM-mage kite edge case** — if a same-speed mob never lets the mage break off, it keeps retreating and could die instead of resting.
@@ -770,6 +772,37 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 - **Buddy on disband** — despawns where it stands; could walk/TP back to town first (deferred).
 - **Shout LFM** — now actually recruits a party (System E). Remaining rough edges: combat roles below ~lvl 20 fall back to a base fighter/mage (no role class yet); archer/dagger soulshot auto-fire depends on the swapped weapon registering shots (archers now also carry grade-matched arrows so the bow actually fires); melee assist re-issues `ATTACK` so very fast target-swapping by the leader can look twitchy; recruits despawn where they stand on disband.
 - **Phantom/buddy tuning constants** — heal/MP/buff-refresh/roam/dispersal values are constants in the manager files; should be lifted into a config file for runtime tuning.
+
+### 10b. Prior-session code-review audit (verified against live code 2026-07-01)
+
+A previous session relayed a prioritized findings list. Re-verified each by reading the current
+code — **the three "High" items were already fixed**, so **do not re-implement them**:
+
+- ✅ *Already fixed* — "malformed action tags leak into buddy/party chat": `PhantomBuddyManager` and
+  `PhantomPartyManager` already use the tolerant `[\]\)]{1,2}` close on `ANY_TAG` and every per-tag
+  pattern (lines 116-122 / 156-163), same as the `MEET_TAG` fix.
+- ✅ *Already fixed* — `respawn="false"` populations revived anyway: `PhantomManager` death handling now
+  despawns-without-revive for `respawn="false"` and gates the ad-hoc revive on `population == null`
+  (lines ~2596-2622, with a comment documenting the fix).
+- ✅ *Already fixed* — permanent DPS lockout if the tank dies: `PhantomPartyManager` has a
+  `NO_TANK_FAILOPEN_MS` fail-open (~lines 1416-1429) that announces "no tank up, going in — say 'hold'
+  to stop" instead of freezing forever.
+- ✅ *Fixed this session* — orphaned phantom rows after unclean shutdown (the boot sweep above).
+
+**Still open (confirmed, lower priority) — candidates for a future pass:**
+- `ACTIVE_DEALS` orphan-on-ignore: entry is `put` on the offer PM and only removed via `clearDeal`/cancel;
+  a player who simply ignores a WTB/WTS PM leaves it indefinitely (no TTL/eviction). The 2026-07-01
+  "active deal cleanup" fix only covered the `endMeet` paths, not the ignore path.
+- Trade rate limiter (`MAX_TRADE_OFFERS_PER_MINUTE`) is check-then-increment, not atomic — a soft cap.
+- **Not yet verified** (relayed but not re-read this session): `_released`/`_releasedRaidTargets` not
+  cleared on disband; `fpc_brain.py` `sanitize()` gaps (bare domains / "dot com" / Discord invites);
+  archer lateral-spread geometry adding ~58 units past bow range; `FakePlayerStoreManager.sell()`
+  overflow clamp-vs-reject; buddy-despawn manager-drop ordering; inverted `RequestTrade.equals()`;
+  unconfirmed `[[TP]]`/`[[DISBAND]]` from brain output.
+- **Design idea (not a bug):** stable identity "regulars" — a %-chance to spawn NPC fake players / buddies
+  with fixed name+appearance+personality-seed instead of always random, so the brain's player-global
+  memory feels continuous. Pure config/generation-time work, no DB schema. See §1b "Future: stable
+  fake-player identities."
 
 ---
 

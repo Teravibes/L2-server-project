@@ -21,6 +21,9 @@
 package org.l2jmobius.gameserver.managers;
 
 import java.io.File;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.EnumMap;
@@ -36,6 +39,7 @@ import java.util.logging.Logger;
 
 import org.w3c.dom.Document;
 
+import org.l2jmobius.commons.database.DatabaseFactory;
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.commons.util.IXmlReader;
 import org.l2jmobius.commons.util.Rnd;
@@ -568,6 +572,15 @@ public class PhantomManager implements IXmlReader
 	@Override
 	public void load()
 	{
+		// Phantoms/buddies/party members are real `characters` rows (account_name='phantom') that are only
+		// deleted when despawn() runs deliberately (zone-empty timeout, //phantom clear, reload). An unclean
+		// shutdown (the usual "just kill the PC" case) never runs despawn(), so every such session leaves its
+		// active phantom rows orphaned forever - they bloat the DB, become permanent CharInfoTable RAM residents
+		// (the whole characters table is loaded at boot), and make name generation collide more. Sweep them here,
+		// once at boot, before anything spawns. load() runs exactly once per JVM (lazy singleton, not touched by
+		// //reloadfakeplayers), so this can never delete a live phantom's row.
+		sweepOrphanedPhantoms();
+
 		_populations.clear();
 		parseDatapackFile("data/PhantomPopulations.xml");
 		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _populations.size() + " phantom population(s).");
@@ -1790,6 +1803,51 @@ public class PhantomManager implements IXmlReader
 		catch (Exception e)
 		{
 			LOGGER.warning(getClass().getSimpleName() + ": Failed to delete phantom row " + objectId + ": " + e.getMessage());
+		}
+	}
+
+	/**
+	 * Deletes every leftover {@code account_name='phantom'} character row (and its cascade of item/skill/quest/
+	 * etc. rows, via {@link GameClient#deleteCharByObjId(int)}) that a previous unclean shutdown left behind.
+	 * Runs once at boot from {@link #load()}, before any phantom is spawned, so it only ever removes orphans -
+	 * never a live phantom. Same net effect as despawn(), but for whatever survived a hard kill.
+	 */
+	private void sweepOrphanedPhantoms()
+	{
+		final List<Integer> orphanIds = new ArrayList<>();
+		try (Connection con = DatabaseFactory.getConnection();
+			PreparedStatement ps = con.prepareStatement("SELECT charId FROM characters WHERE account_name=?"))
+		{
+			ps.setString(1, ACCOUNT_NAME);
+			try (ResultSet rs = ps.executeQuery())
+			{
+				while (rs.next())
+				{
+					orphanIds.add(rs.getInt("charId"));
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to scan for orphaned phantom rows: " + e.getMessage());
+			return;
+		}
+
+		for (int objectId : orphanIds)
+		{
+			try
+			{
+				GameClient.deleteCharByObjId(objectId);
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Failed to delete orphaned phantom row " + objectId + ": " + e.getMessage());
+			}
+		}
+
+		if (!orphanIds.isEmpty())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": Swept " + orphanIds.size() + " orphaned phantom character row(s) left by a previous unclean shutdown.");
 		}
 	}
 
