@@ -833,25 +833,40 @@ public class FakePlayerChatManager implements IXmlReader
 	private void sendTradeChat(Npc npc, String text)
 	{
 		final CreatureSay cs = new CreatureSay(npc, ChatType.TRADE, npc.getName(), text);
+		int sent = 0;
 		for (Player player : World.getInstance().getPlayers()) // GLOBAL
 		{
 			player.sendPacket(cs);
+			sent++;
 		}
+		LOGGER.info("CHAT-DEBUG: TRADE from '" + npc.getName() + "' (objId=" + npc.getObjectId() + ", spawned=" + (npc.getSpawn() != null) + ") -> " + sent + " player(s): " + text);
 	}
-	
+
 	private void sendSayChat(Npc npc, String text)
 	{
 		final CreatureSay cs = new CreatureSay(npc, ChatType.GENERAL, npc.getName(), text);
-		World.getInstance().forEachVisibleObjectInRange(npc, Player.class, SAY_RANGE, player -> player.sendPacket(cs)); // LOCAL
+		final int[] sent =
+		{
+			0
+		};
+		World.getInstance().forEachVisibleObjectInRange(npc, Player.class, SAY_RANGE, player -> // LOCAL
+		{
+			player.sendPacket(cs);
+			sent[0]++;
+		});
+		LOGGER.info("CHAT-DEBUG: SAY from '" + npc.getName() + "' (objId=" + npc.getObjectId() + ") -> " + sent[0] + " player(s) in range: " + text);
 	}
 
 	private void sendShoutChat(Npc npc, String text)
 	{
 		final CreatureSay cs = new CreatureSay(npc, ChatType.SHOUT, npc.getName(), text);
+		int sent = 0;
 		for (Player player : World.getInstance().getPlayers()) // GLOBAL world channel
 		{
 			player.sendPacket(cs);
+			sent++;
 		}
+		LOGGER.info("CHAT-DEBUG: SHOUT from '" + npc.getName() + "' (objId=" + npc.getObjectId() + ", spawned=" + (npc.getSpawn() != null) + ") -> " + sent + " player(s): " + text);
 	}
 	
 	private void ambientTradeChat()
@@ -1008,6 +1023,11 @@ public class FakePlayerChatManager implements IXmlReader
 			if (npc != null)
 			{
 				player.sendPacket(new CreatureSay(npc, ChatType.WHISPER, fpcName, message));
+				LOGGER.info("CHAT-DEBUG: WHISPER from '" + fpcName + "' (objId=" + npc.getObjectId() + ") -> " + player.getName() + ": " + message);
+			}
+			else
+			{
+				LOGGER.info("CHAT-DEBUG: WHISPER DROPPED - bot '" + fpcName + "' not resolvable at send time (despawned/out of world?), was for " + player.getName() + ": " + message);
 			}
 		}, typingDelayMillis(message));
 	}
@@ -1043,6 +1063,7 @@ public class FakePlayerChatManager implements IXmlReader
 				if (player.isOnline())
 				{
 					player.sendPacket(new L2FriendSay(regularName, playerName, reply));
+					LOGGER.info("CHAT-DEBUG: FRIEND-PM from '" + regularName + "' -> " + playerName + ": " + reply);
 				}
 			}, typingDelayMillis(reply));
 		}, Rnd.get(FRIEND_THINK_MIN, FRIEND_THINK_MAX));

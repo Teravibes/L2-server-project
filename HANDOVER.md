@@ -43,6 +43,23 @@ Earlier this session: Phase 2 (persistence — regulars get a stable `charId` un
   `L2FriendSay(...)`, `Player.load`/`restore()`→`restoreFriendList()`,
   `destroyAllItems(...)`, the `callBridge` 7-arg overload, `SystemMessageId` constants.
 
+## ⚠️ Temporary debug in tree (revert after diagnosis)
+
+Investigating a report that **bot chat replies never appear in-game** even though the
+`fpc_brain` terminal shows the replies being generated (200 OK). Added `CHAT-DEBUG:`
+`LOGGER.info` lines at every send site so the **game-server console** (not the brain
+terminal) reveals whether each reply is actually sent, to how many players, and whether
+anything drops it:
+- `FakePlayerChatManager`: `sendTradeChat` / `sendSayChat` / `sendShoutChat` (recipient
+  count + bot objId/spawned), `sendChat` (WHISPER: logs if `resolveBot` returns null =
+  dropped), `handleFriendMessage` (FRIEND-PM).
+- `PhantomPartyManager.askBrainAsync`: logs empty-after-`applyTags`, party-broadcast vs
+  whisper-fallback (bot not actually partied), and the not-sent case.
+
+Diagnosis plan: rebuild jar, chat in-game, read the game-server console. If a `CHAT-DEBUG`
+line appears but nothing shows in-game → client/render side. If it never appears → the send
+aborts upstream (the log narrows where). **Remove all `CHAT-DEBUG` lines once resolved.**
+
 ## In flight / next up
 
 - **Brain friendship memory (3b remainder):** persist a "we're friends" flag in
