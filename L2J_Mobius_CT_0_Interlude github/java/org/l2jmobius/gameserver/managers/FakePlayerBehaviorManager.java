@@ -1107,6 +1107,13 @@ public class FakePlayerBehaviorManager implements IXmlReader
 	/** Clears a meetup (and any deal store it opened) and un-pins the bot so its routine takes back over. */	
 	private void endMeet(Npc bot, BotState state)
 	{
+		// Drop any structured trade context for this pair before we forget who we were dealing with, so a
+		// finished/abandoned deal can't leak stale terms into a later whisper to this bot.
+		final Player dealPlayer = state.summonPlayer;
+		if (dealPlayer != null)
+		{
+			FakePlayerChatManager.getInstance().clearDeal(dealPlayer.getName(), bot.getName());
+		}
 		state.summonTarget = null;
 		state.summonPlayer = null;
 		state.summonArrived = false;
