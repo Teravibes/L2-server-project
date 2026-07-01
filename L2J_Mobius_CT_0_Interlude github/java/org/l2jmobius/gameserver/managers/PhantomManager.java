@@ -2607,10 +2607,17 @@ public class PhantomManager implements IXmlReader
 								}
 							}, RESPAWN_DELAY);
 						}
+						else if (data.population != null)
+						{
+							// Population explicitly configured respawn="false": the death is permanent - despawn
+							// and do not replace or revive it (previously fell through to the ad-hoc revive branch
+							// below and stood back up anyway, ignoring respawn="false").
+							despawn(data);
+						}
 					}
-					else if ((now - data.deadSince) >= RESPAWN_DELAY)
+					else if ((data.population == null) && ((now - data.deadSince) >= RESPAWN_DELAY))
 					{
-						// Ad-hoc (admin test) phantom: revive it in place so the test count stays stable.
+						// Ad-hoc (admin test) phantom only: revive it in place so the test count stays stable.
 						revive(data);
 					}
 					continue;

@@ -143,19 +143,24 @@ public class PhantomPartyManager
 	private static final int PURIFY_ID = 1018; // dispels poison / bleed / paralyze / petrify
 	private static final int CURE_POISON_ID = 1012;
 	private static final int CURE_BLEEDING_ID = 61;
+	// If a raid's tank corpse expires unraised (or the party simply has none), mayAttackRaid held every non-tank
+	// member forever with no visible way out but the player guessing "all attack". Fail open after this long instead.
+	private static final long NO_TANK_FAILOPEN_MS = 20000;
 
 	// LLM brain bridge (optional): a free-form whisper/party-chat line that isn't a recognised command is sent
 	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
 	private static final HttpClient BRAIN_HTTP = HttpClient.newHttpClient();
 	private static final String BRAIN_URL = "http://127.0.0.1:5000/chat";
-	private static final Pattern TAG_ASSIST = Pattern.compile("\\[\\[\\s*ASSIST\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_FREE = Pattern.compile("\\[\\[\\s*FREE\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_FOLLOW = Pattern.compile("\\[\\[\\s*(FOLLOW|GATHER)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_STAY = Pattern.compile("\\[\\[\\s*(STAY|HOLD)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_DISBAND = Pattern.compile("\\[\\[\\s*DISBAND\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_TP = Pattern.compile("\\[\\[\\s*TP\\s*:\\s*([^\\]]+?)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_GRACE = Pattern.compile("\\[\\[\\s*GRACE\\s*:\\s*(\\d+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*\\]\\]");
+	// Closing bracket is tolerant ([\]\)]{1,2}) because local Ollama models sometimes emit a malformed close
+	// (e.g. "[[TP:roa)"); a strict "\]\]" would neither act on the tag nor strip it, leaking it into player chat.
+	private static final Pattern TAG_ASSIST = Pattern.compile("\\[\\[\\s*ASSIST\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_FREE = Pattern.compile("\\[\\[\\s*FREE\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_FOLLOW = Pattern.compile("\\[\\[\\s*(FOLLOW|GATHER)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_STAY = Pattern.compile("\\[\\[\\s*(STAY|HOLD)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_DISBAND = Pattern.compile("\\[\\[\\s*DISBAND\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_TP = Pattern.compile("\\[\\[\\s*TP\\s*:\\s*([^\\]]+?)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_GRACE = Pattern.compile("\\[\\[\\s*GRACE\\s*:\\s*(\\d+)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*[\\]\\)]{1,2}");
 
 	// Heal skills a support member may know, strongest first (same table the buddy manager uses).
 	private static final int[] HEAL_PRIORITY =
@@ -234,6 +239,9 @@ public class PhantomPartyManager
 	private final Set<Integer> _released = ConcurrentHashMap.newKeySet();
 	private final Set<Long> _releasedRaidTargets = ConcurrentHashMap.newKeySet();
 	private final ConcurrentHashMap<Integer, Long> _resClaims = new ConcurrentHashMap<>();
+	// ownerId -> first tick a raid check found no living tank. Cleared once a tank exists again or the raid
+	// gate resets (clearRaidRelease); see NO_TANK_FAILOPEN_MS.
+	private final ConcurrentHashMap<Integer, Long> _noTankSince = new ConcurrentHashMap<>();
 	// Targets a support has already committed a heal to THIS tick. Cleared each tick. Stops two healers (processed in
 	// the same tick pass) both landing a big heal on the same target before either is flagged "casting" - the in-game
 	// double/triple overheal that burned the healers' MP twice as fast and ended raids in a mass-OOM wipe.
@@ -1407,8 +1415,21 @@ public class PhantomPartyManager
 		final Member tank = findTankState(state);
 		if ((tank == null) || tank.npc.isDead())
 		{
+			final long noTankNow = System.currentTimeMillis();
+			final Long since = _noTankSince.putIfAbsent(ownerId, noTankNow);
+			if ((since != null) && ((noTankNow - since) >= NO_TANK_FAILOPEN_MS))
+			{
+				// No living tank for a while now - the corpse grace window expired unraised, or the party never
+				// had one. Fail open instead of holding every non-tank member forever with no visible way out.
+				if (_released.add(ownerId))
+				{
+					deliver(state, "no tank up, going in - say 'hold' to stop");
+				}
+				return true;
+			}
 			return false;
 		}
+		_noTankSince.remove(ownerId);
 		final long now = System.currentTimeMillis();
 		if ((tank.recoveryUntil > now) && (tank.npc.getCurrentHpPercent() < POST_RES_TANK_READY_PERCENT))
 		{
@@ -1469,6 +1490,7 @@ public class PhantomPartyManager
 		final int ownerId = owner.getObjectId();
 		_released.remove(ownerId);
 		_releasedRaidTargets.removeIf(key -> raidOwnerId(key) == ownerId);
+		_noTankSince.remove(ownerId); // fresh countdown for the next pull, not whatever was left over from the last one
 	}
 
 	private static long raidKey(int ownerId, int raidObjectId)
