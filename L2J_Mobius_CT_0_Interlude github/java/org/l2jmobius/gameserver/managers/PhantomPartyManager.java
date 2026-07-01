@@ -151,6 +151,9 @@ public class PhantomPartyManager
 	// here for a natural reply that may carry an action tag, executed and stripped before the member speaks.
 	private static final HttpClient BRAIN_HTTP = HttpClient.newHttpClient();
 	private static final String BRAIN_URL = "http://127.0.0.1:5000/chat";
+	// Outlast a slow local Ollama model (~30s); the old 20s cap silently dropped every reply. See the same
+	// constant in FakePlayerChatManager.
+	private static final int BRAIN_TIMEOUT_SECONDS = 45;
 	// Closing bracket is tolerant ([\]\)]{1,2}) because local Ollama models sometimes emit a malformed close
 	// (e.g. "[[TP:roa)"); a strict "\]\]" would neither act on the tag nor strip it, leaking it into player chat.
 	private static final Pattern TAG_ASSIST = Pattern.compile("\\[\\[\\s*ASSIST\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
@@ -741,7 +744,7 @@ public class PhantomPartyManager
 		{
 			final HttpRequest request = HttpRequest.newBuilder() //
 				.uri(URI.create(BRAIN_URL)) //
-				.timeout(Duration.ofSeconds(20)) //
+				.timeout(Duration.ofSeconds(BRAIN_TIMEOUT_SECONDS)) //
 				.header("X-FPC", name) //
 				.header("X-Mode", "PARTY") //
 				.header("X-Player", ownerName) //

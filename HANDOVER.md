@@ -43,22 +43,21 @@ Earlier this session: Phase 2 (persistence — regulars get a stable `charId` un
   `L2FriendSay(...)`, `Player.load`/`restore()`→`restoreFriendList()`,
   `destroyAllItems(...)`, the `callBridge` 7-arg overload, `SystemMessageId` constants.
 
-## ⚠️ Temporary debug in tree (revert after diagnosis)
+## ⚠️ Bot-chat-not-in-game: ROOT CAUSE FOUND + temporary debug still in tree
 
-Investigating a report that **bot chat replies never appear in-game** even though the
-`fpc_brain` terminal shows the replies being generated (200 OK). Added `CHAT-DEBUG:`
-`LOGGER.info` lines at every send site so the **game-server console** (not the brain
-terminal) reveals whether each reply is actually sent, to how many players, and whether
-anything drops it:
-- `FakePlayerChatManager`: `sendTradeChat` / `sendSayChat` / `sendShoutChat` (recipient
-  count + bot objId/spawned), `sendChat` (WHISPER: logs if `resolveBot` returns null =
-  dropped), `handleFriendMessage` (FRIEND-PM).
-- `PhantomPartyManager.askBrainAsync`: logs empty-after-`applyTags`, party-broadcast vs
-  whisper-fallback (bot not actually partied), and the not-sent case.
+**Root cause:** the brain HTTP call had a **20s timeout**, but a local Ollama model takes
+~30s per reply. Java gave up at 20s ("Brain bridge unreachable: request timed out" in the
+*game-server* log), so no message was ever sent — while the brain finished ~30s later and
+logged its 200 to nobody. That's why the brain terminal showed replies but the game showed
+nothing. **Fix:** raised the timeout to a tunable `BRAIN_TIMEOUT_SECONDS = 45` in all three
+managers (`FakePlayerChatManager`, `PhantomPartyManager`, `PhantomBuddyManager`; 4 call
+sites). For snappy chat, use a faster/smaller Ollama model or `PROVIDER=deepseek` — 45s is
+just the ceiling before a genuinely-slow generation is dropped.
 
-Diagnosis plan: rebuild jar, chat in-game, read the game-server console. If a `CHAT-DEBUG`
-line appears but nothing shows in-game → client/render side. If it never appears → the send
-aborts upstream (the log narrows where). **Remove all `CHAT-DEBUG` lines once resolved.**
+**Still temporary — remove after confirming the fix:** `CHAT-DEBUG:` `LOGGER.info` lines at
+every send site (`sendTradeChat`/`sendSayChat`/`sendShoutChat`/`sendChat`/`handleFriendMessage`
+in `FakePlayerChatManager`; `askBrainAsync` in `PhantomPartyManager`). Keep them for one test
+to confirm replies now arrive (a `CHAT-DEBUG` line per reply), then strip all `CHAT-DEBUG`.
 
 ## In flight / next up
 

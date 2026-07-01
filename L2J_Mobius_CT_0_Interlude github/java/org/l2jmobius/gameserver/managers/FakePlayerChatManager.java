@@ -70,6 +70,11 @@ public class FakePlayerChatManager implements IXmlReader
 	// LLM bridge
 	private static final HttpClient BRAIN_HTTP = HttpClient.newHttpClient();
 	private static final String BRAIN_URL = "http://127.0.0.1:5000/chat";
+	// Per-request timeout waiting for the brain's reply. A local Ollama model can take ~30s per generation, and
+	// the old 20s cap silently dropped every reply (Java gave up, then the brain returned 200 to nobody), which
+	// looked like "bots never reply in-game". Sized to outlast a slow local model; a fast provider (DeepSeek) or
+	// a smaller Ollama model returns well under this, so it only ever bites when generation is genuinely slow.
+	private static final int BRAIN_TIMEOUT_SECONDS = 45;
 	
 	// ===== Social tuning knobs =====
 	private static final boolean SOCIAL_ENABLED = true;
@@ -953,7 +958,7 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			final HttpRequest.Builder builder = HttpRequest.newBuilder() //
 				.uri(URI.create(BRAIN_URL)) //
-				.timeout(Duration.ofSeconds(20)) //
+				.timeout(Duration.ofSeconds(BRAIN_TIMEOUT_SECONDS)) //
 				.header("X-FPC", fpcName) //
 				.header("X-Mode", mode) //
 				.header("X-Player", playerName) //
