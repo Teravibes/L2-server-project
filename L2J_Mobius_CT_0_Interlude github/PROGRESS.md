@@ -363,9 +363,10 @@ bot-specific memory
 Status: **Phases 1-2 + Phase 3a done (2026-07-01).** See §12b/§12c/§12d below. Phantom populations can
 define fixed `<regular>` identities (stable name + appearance, optional class) that recur in a zone; a stable
 name already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name). Regulars persist
-across reboots with a stable `charId` (Phase 2), and can now be befriended and privately chatted with over
-the friends list (Phase 3a). Phase 3b (always-online login lifecycle + brain friendship memory) remains
-future — see §10b / §12d.
+across reboots with a stable `charId` (Phase 2), can be befriended and privately chatted with over the
+friends list at a human cadence (Phase 3a), and now spawn at login / despawn at logout so they show "online"
+while their owner is on, anywhere in the world (Phase 3b). Only the brain "we're friends" memory flag remains
+— see §10b / §12d / §12e.
 
 ---
 
@@ -813,19 +814,20 @@ code — **the three "High" items were already fixed**, so **do not re-implement
   - ✅ **Phase 2 (persistence) DONE (2026-07-01):** regulars now get a distinct account
     (`phantom_regular`) that the boot sweep (§10 fix, scoped to `phantom` only) skips, and their row is
     created once so `charId` is stable across reboots. See §12c for the full mechanism.
-  - 🟡 **Phase 3 (friend tier) — Phase 3a DONE (2026-07-01), 3b pending.** See §12d for the full mechanism.
-    - ✅ **3a (befriend + friend chat):** friend-inviting a regular now auto-accepts server-side
+  - ✅ **Phase 3 (friend tier) — Phases 3a + 3b DONE (2026-07-01).** See §12d/§12e for the full mechanism.
+    - ✅ **3a (befriend + friend chat):** friend-inviting a regular auto-accepts server-side
       (`RequestFriendInvite` hook → `PhantomManager.befriendRegular`, persists to `character_friends` both
       ways; the Phase 2 stable `charId` is what makes the row durable across respawns). Friend PMs to a
       regular route into the brain and reply over the friend channel (`RequestSendFriendMsg` hook →
-      `FakePlayerChatManager.handleFriendMessage` → `L2FriendSay`, in the regular's stable persona). Stock
-      handler edits are thin (guard + delegate); all logic is in the custom managers.
-    - ⬜ **3b (always-online lifecycle + memory flag):** spawn friend-regulars at the owner's `EnterWorld`
-      so they show "online" even away from their zone (`FriendList` checks `World.getPlayer` != null), and
-      persist a "we're friends" flag in the brain memory (a `fpc_brain.py` change + a `FRIEND` mode). This is
-      the invasive part (new login/logout spawn lifecycle, dedup vs population spawns) — deferred for its own
-      reviewed pass. Until then a regular shows online / is friend-PM-able only while it's spawned near its
-      zone (degrades gracefully to "friend offline").
+      `FakePlayerChatManager.handleFriendMessage` → `L2FriendSay`, in the regular's stable persona, at a
+      human 1-4s cadence). Stock handler edits are thin (guard + delegate); logic is in the custom managers.
+    - ✅ **3b (always-online login lifecycle):** friend-regulars now spawn at their own stored location on
+      the owner's `EnterWorld` (so they show "online" even away from their zone — `FriendList` checks
+      `World.getPlayer` != null) and despawn on the owner's logout (`Disconnection`), handed over if another
+      online friend still wants them. See §12e.
+    - ⬜ **3b remainder — brain friendship memory:** persist a "we're friends" flag in `fpc_brain.py` memory
+      (a `FRIEND` brain mode) so the tone reflects the relationship. Not yet done — friend PMs currently use
+      `WHISPER` mode (correct persona, no explicit friend memory). Small Python-side follow-up.
   - ⬜ **Phase 3 add-on — player-crafted phantoms (user idea):** let a player create a persistent phantom
     to their own spec (name + appearance, maybe class/level) — e.g. recreate an old friend to "play
     together" — via an in-game UI/command, then befriend it. Builds directly on the Phase 2 persistent
@@ -992,7 +994,7 @@ logic lives in the custom managers):
 - **Friend PM → brain** — `RequestSendFriendMsg` hook: if the receiver `isRegular`, call
   `FakePlayerChatManager.handleFriendMessage(player, regular, message)` and return. That calls the brain with
   the regular's name (mode `WHISPER`, so it gets the same stable `_voice()` persona a whisper would) and
-  replies back as an `L2FriendSay` after the usual think + typing delay; falls back to a short canned line if
+  replies back as an `L2FriendSay` at a human 1-4s cadence (see below); falls back to a short canned line if
   the brain is offline. Note the regular is a `Player` phantom, so it is *outside* the Npc-based whisper path
   (`resolveBot` only finds Npc fake players) — this is a dedicated friend path, not the whisper one.
 
@@ -1000,13 +1002,58 @@ Why respawn-safe: the friendship lives in `character_friends` keyed on the regul
 regular is reloaded (Phase 2 `Player.load`), `restore()` calls `restoreFriendList()`, so the reloaded
 phantom recognizes the player as a friend and `RequestSendFriendMsg`'s friend check passes again.
 
-Known limitation until Phase 3b: with no login-spawn, a regular only shows online / is friend-PM-able while
-it's actually spawned (near its zone). `RequestSendFriendMsg` requires `World.getPlayer(name) != null`, so
-when the regular is despawned the player just sees "friend offline" — correct, if incomplete.
+Friend-PM cadence: `handleFriendMessage` uses a short human "read + react" pause (`FRIEND_THINK_MIN..MAX`,
+~0.8-2.6s) plus the length-scaled typing time, so a reply lands in roughly 1-4s — a direct 1:1 friend chat,
+not the slow 5-15s ambient-whisper delay.
+
+(Phase 3b, §12e, removes the earlier "only online near its zone" limitation by login-spawning friends.)
 
 Code touchpoints: `PhantomManager` — `isRegular()`, `befriendRegular()` (+ imports `SystemMessageId`,
 `SystemMessage`, `L2Friend`); `FakePlayerChatManager` — `handleFriendMessage()` (+ import `L2FriendSay`);
 stock `RequestFriendInvite` and `RequestSendFriendMsg` — one guarded delegate call each. No DB schema change
 (reuses stock `character_friends`); no XML/config/brain change.
+
+Deploy: Java only (rebuild jar and move it to the live server) — no other files changed.
+
+---
+
+## 12e. Stable identity "regulars" — Phase 3b (always-online friend lifecycle — 2026-07-01)
+
+Goal: a befriended regular shows "online" in the friends list whenever its owner is logged in — even far
+from that regular's home zone — instead of only while it happens to be spawned nearby. The online check is
+`World.getPlayer(charId) != null`, so "online" literally means "spawned in the world"; 3b spawns the friend
+at login and despawns it at logout.
+
+How it works:
+- **Login** — `EnterWorld` hook (after `onPlayerEnter()`) → `PhantomManager.onOwnerLogin(player)`. To keep
+  the login/packet thread free it schedules the work after `FRIEND_SPAWN_DELAY` (3s), re-resolves the player
+  by objectId, then for each befriended regular (`findFriendRegulars`: `character_friends` ⋈ `characters`
+  where `account_name='phantom_regular'`) calls `spawnFriendRegular(charId, ownerId)` and sends the owner an
+  `L2Friend(regular, 1)` to flip it online in the already-sent list. So a friend pops online a few seconds
+  after you do — like a real friend logging in behind you.
+- **`spawnFriendRegular(charId, ownerId)`**: `Player.load(charId)` (stable Phase 2 charId), spawn at the
+  regular's own stored `x/y/z` (Geo-snapped), then the shared `finishSpawn(...)` (extracted from
+  `createAndSpawn`) gears + world-drops it and starts the auto-hunt. No-op if it is already live (a population
+  or a prior login already spawned it — dedup by charId in `_phantoms`) or the phantom cap is hit. The
+  `PhantomData.friendOwnerId` field tags it with the owner for logout despawn.
+- **Logout** — `Disconnection.storeAndDelete` hook (before the player's `deleteMe()`) →
+  `PhantomManager.onOwnerLogout(player)`: despawns every `_phantoms` entry tagged with that `friendOwnerId`
+  (despawn = Phase 2 store + keep row). If another online player is also friends with that regular
+  (`otherOnlineFriendOf`), it is handed over (re-tag `friendOwnerId`) instead of despawned.
+
+Interactions/edge cases:
+- **Dedup vs population spawns:** a friend-regular and a population-spawned regular are the same charId;
+  whichever spawns first wins (`_phantoms.containsKey(charId)` / `pickRegular` excludes live names), so it is
+  never doubled. A population-spawned one has `friendOwnerId=0`, so the population owns its despawn; a
+  login-spawned one is despawned on logout.
+- **Death:** a friend-regular has `population==null`, so the supervisor's ad-hoc branch revives it in place
+  (stays online) rather than rotating its identity.
+- **Solo-server scope:** this is an offline/solo "Living World" (effectively one real player). The handover
+  guard covers a second online friend, but complex multi-owner sharing is not otherwise specially handled.
+
+Code touchpoints: `PhantomManager` — `onOwnerLogin()`, `onOwnerLogout()`, `spawnFriendRegular()`,
+`findFriendRegulars()`, `otherOnlineFriendOf()`, extracted `finishSpawn()`, `PhantomData.friendOwnerId`,
+constant `FRIEND_SPAWN_DELAY`; stock `EnterWorld` (login hook) and `Disconnection` (logout hook), one
+delegate call each. No DB schema change; no XML/config/brain change.
 
 Deploy: Java only (rebuild jar and move it to the live server) — no other files changed.

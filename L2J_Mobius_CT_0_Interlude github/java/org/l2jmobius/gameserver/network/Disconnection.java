@@ -24,6 +24,7 @@ import java.util.logging.Logger;
 
 import org.l2jmobius.commons.threads.ThreadPool;
 import org.l2jmobius.gameserver.managers.AntiFeedManager;
+import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.model.actor.Player;
 import org.l2jmobius.gameserver.network.serverpackets.ServerPacket;
 import org.l2jmobius.gameserver.taskmanagers.AttackStanceTaskManager;
@@ -117,8 +118,11 @@ public class Disconnection
 				
 				if (_player.isOnline())
 				{
+					// Living World: despawn any "regular" phantoms that were login-spawned to accompany this player.
+					PhantomManager.getInstance().onOwnerLogout(_player);
+
 					_player.deleteMe();
-					
+
 					LOGGER_ACCOUNTING.info("Logged out, " + _player);
 				}
 			}

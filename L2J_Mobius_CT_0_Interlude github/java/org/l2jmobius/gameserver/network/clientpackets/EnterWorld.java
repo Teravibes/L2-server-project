@@ -49,6 +49,7 @@ import org.l2jmobius.gameserver.managers.CursedWeaponsManager;
 import org.l2jmobius.gameserver.managers.DimensionalRiftManager;
 import org.l2jmobius.gameserver.managers.InstanceManager;
 import org.l2jmobius.gameserver.managers.PcCafePointsManager;
+import org.l2jmobius.gameserver.managers.PhantomManager;
 import org.l2jmobius.gameserver.managers.PunishmentManager;
 import org.l2jmobius.gameserver.managers.ServerRestartManager;
 import org.l2jmobius.gameserver.managers.SiegeManager;
@@ -456,7 +457,10 @@ public class EnterWorld extends ClientPacket
 		}
 		
 		player.onPlayerEnter();
-		
+
+		// Living World: bring this player's befriended "regular" phantoms online at their own locations.
+		PhantomManager.getInstance().onOwnerLogin(player);
+
 		// Apply item skills.
 		player.getInventory().applyItemSkills();
 		

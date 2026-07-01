@@ -61,6 +61,11 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final List<FakePlayerChatHolder> MESSAGES = new ArrayList<>();
 	private static final int MIN_DELAY = 5000;
 	private static final int MAX_DELAY = 15000;
+	// Friend PMs are a direct 1:1 chat, so they use a much shorter "read + react" pause than the ambient
+	// whisper delays above - a friend replies in a beat or two, then the length-scaled typing time is added
+	// on top (typingDelayMillis). This lands a reply in roughly 1-4s, the way a person actually messages back.
+	private static final int FRIEND_THINK_MIN = 800;
+	private static final int FRIEND_THINK_MAX = 2600;
 	
 	// LLM bridge
 	private static final HttpClient BRAIN_HTTP = HttpClient.newHttpClient();
@@ -1012,7 +1017,8 @@ public class FakePlayerChatManager implements IXmlReader
 	 * is a clientless Player, not an Npc, so it sits outside the normal whisper path ({@link #resolveBot} only
 	 * finds Npc fake players): we call the brain directly with the regular's name - which gives it the same
 	 * stable persona a whisper would (the brain's {@code _voice()} hashes the name) - and send the reply back
-	 * over the friend channel as an {@link L2FriendSay}, after the same think + typing delay a whisper uses.
+	 * over the friend channel as an {@link L2FriendSay}, after a short human "read + react" pause plus the
+	 * length-scaled typing time (so a friend replies in roughly 1-4s, not the slow ambient-whisper delay).
 	 * Falls back to a short canned line if the brain is offline, so a friend PM is never met with silence.
 	 * @param player the real player who sent the friend PM
 	 * @param regular the regular phantom being messaged
@@ -1039,7 +1045,7 @@ public class FakePlayerChatManager implements IXmlReader
 					player.sendPacket(new L2FriendSay(regularName, playerName, reply));
 				}
 			}, typingDelayMillis(reply));
-		}, Rnd.get(MIN_DELAY, MAX_DELAY));
+		}, Rnd.get(FRIEND_THINK_MIN, FRIEND_THINK_MAX));
 	}
 
 	/**

@@ -111,6 +111,9 @@ public class PhantomManager implements IXmlReader
 	// live under this distinct account so the boot sweep (which only targets ACCOUNT_NAME) never touches them
 	// and despawn() knows to keep their row instead of deleting it.
 	private static final String ACCOUNT_NAME_REGULAR = "phantom_regular";
+	// Short grace after a player's EnterWorld before we login-spawn their befriended regulars, so login itself
+	// finishes first and the spawn work runs off the login (packet) thread.
+	private static final long FRIEND_SPAWN_DELAY = 3000;
 	// Supervisor cadence: cleanup gone phantoms and revive/respawn dead ones. Combat runs on AutoPlay's
 	// own 700ms loop, so this can be lazy.
 	private static final long SUPERVISE_INTERVAL = 5000;
@@ -582,6 +585,7 @@ public class PhantomManager implements IXmlReader
 		int lastMobY;
 		volatile boolean buddyEngaged; // buddy is partied/claimed by a player: skip the proximity despawn (grace)
 		volatile boolean recruited; // recruited combat party member: PhantomPartyManager owns it; skip ALL hunter logic
+		int friendOwnerId; // objectId of the real player this regular was login-spawned to accompany (0 = not a friend spawn)
 
 		PhantomData(Player player, Location home, Population population, boolean mage, BuddyRole role)
 		{
@@ -1023,6 +1027,138 @@ public class PhantomManager implements IXmlReader
 		player.sendPacket(new L2Friend(regular, 1)); // show the regular online in the friends window right away
 	}
 
+	/**
+	 * "Always online" friend behaviour (Phase 3b): shortly after a player logs in, spawn each of their
+	 * befriended regulars at its own stored location and announce it online, so a friend shows up in the
+	 * friends list even when the player is nowhere near that regular's home zone. Runs off the login thread.
+	 * @param owner the player who just entered the world
+	 */
+	public void onOwnerLogin(Player owner)
+	{
+		if ((owner == null) || owner.getFriendList().isEmpty())
+		{
+			return;
+		}
+		final int ownerId = owner.getObjectId();
+		ThreadPool.schedule(() ->
+		{
+			final Player online = World.getInstance().getPlayer(ownerId);
+			if (online == null)
+			{
+				return; // logged back out before the delay elapsed
+			}
+			for (int regularId : findFriendRegulars(ownerId))
+			{
+				final Player regular = spawnFriendRegular(regularId, ownerId);
+				if (regular != null)
+				{
+					online.sendPacket(new L2Friend(regular, 1)); // flip it online in the already-sent friends list
+				}
+			}
+		}, FRIEND_SPAWN_DELAY);
+	}
+
+	/**
+	 * Despawns the friend-regulars that were login-spawned for a player who is logging out, so they do not
+	 * linger with nobody around. A regular that another still-online player is also friends with is handed over
+	 * to that player rather than despawned.
+	 * @param owner the player logging out
+	 */
+	public void onOwnerLogout(Player owner)
+	{
+		if (owner == null)
+		{
+			return;
+		}
+		final int ownerId = owner.getObjectId();
+		for (PhantomData data : new ArrayList<>(_phantoms.values()))
+		{
+			if (data.friendOwnerId != ownerId)
+			{
+				continue;
+			}
+			final int newOwner = otherOnlineFriendOf(data.player.getObjectId(), ownerId);
+			if (newOwner != 0)
+			{
+				data.friendOwnerId = newOwner; // still wanted by another online friend - keep it, hand it over
+			}
+			else
+			{
+				despawn(data);
+			}
+		}
+	}
+
+	/**
+	 * Spawns a specific persisted regular by charId at its own stored location because a friend (its owner) is
+	 * now online. No-op if it is already live (a population may have spawned it, or a prior login), the phantom
+	 * cap is reached, or the row cannot be loaded.
+	 * @param charId the regular's stable charId
+	 * @param ownerId the real player it accompanies (tagged on the phantom for logout despawn)
+	 * @return the spawned phantom, or {@code null} if nothing was spawned
+	 */
+	private Player spawnFriendRegular(int charId, int ownerId)
+	{
+		if (_phantoms.containsKey(charId) || (_phantoms.size() >= MAX_PHANTOMS))
+		{
+			return null;
+		}
+		Player phantom = null;
+		try
+		{
+			phantom = Player.load(charId);
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to load friend-regular " + charId + ": " + e.getMessage());
+		}
+		if (phantom == null)
+		{
+			return null;
+		}
+		final int groundZ = GeoEngine.getInstance().getHeight(phantom.getX(), phantom.getY(), phantom.getZ());
+		final Location spawnLocation = new Location(phantom.getX(), phantom.getY(), groundZ);
+		final boolean mage = isMageClass(phantom.getPlayerClass().getId());
+		return finishSpawn(phantom, spawnLocation, phantom.getLevel(), mage, BuddyRole.NONE, null, true, ownerId);
+	}
+
+	/** @return the charIds of the given player's befriended regulars (friends on the {@code phantom_regular} account). */
+	private List<Integer> findFriendRegulars(int ownerId)
+	{
+		final List<Integer> ids = new ArrayList<>();
+		try (Connection con = DatabaseFactory.getConnection();
+			PreparedStatement ps = con.prepareStatement("SELECT c.charId FROM characters c JOIN character_friends f ON c.charId=f.friendId WHERE f.charId=? AND c.account_name=?"))
+		{
+			ps.setInt(1, ownerId);
+			ps.setString(2, ACCOUNT_NAME_REGULAR);
+			try (ResultSet rs = ps.executeQuery())
+			{
+				while (rs.next())
+				{
+					ids.add(rs.getInt("charId"));
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to list friend-regulars for " + ownerId + ": " + e.getMessage());
+		}
+		return ids;
+	}
+
+	/** @return the objectId of an online real player (other than {@code excludeOwnerId}) friends with this regular, or 0. */
+	private int otherOnlineFriendOf(int regularId, int excludeOwnerId)
+	{
+		for (Player p : World.getInstance().getPlayers())
+		{
+			if ((p.getObjectId() != excludeOwnerId) && !isRegular(p) && p.getFriendList().contains(regularId))
+			{
+				return p.getObjectId();
+			}
+		}
+		return 0;
+	}
+
 	/** @return {@code true} if the class id belongs to the DD-mage pool (so the caster gear/combat tick applies). */
 	private static boolean isMageClass(int classId)
 	{
@@ -1138,59 +1274,75 @@ public class PhantomManager implements IXmlReader
 			// derive the caster flag from the ACTUAL restored class (the auto-hunt combat tick and gear pick both
 			// key off it, and a mismatched flag would gear/fight it as the wrong archetype).
 			final boolean effectiveMage = loadedRegular ? isMageClass(phantom.getPlayerClass().getId()) : mage;
-
-			// Ignore the weight penalty. Phantoms carry a large stack of healing potions (+ soulshots), which
-			// easily exceeds a non-Dwarf's max load - at >=100% load the engine applies Weight Penalty (skill
-			// 4270) level 4, whose runSpd multiplier is 0, so the phantom is fully immobilized. Dwarves have a
-			// far higher carry capacity, which is why only they moved before this. Diet mode zeroes the penalty
-			// regardless of load (set before items are added so the inventory weight never pins them).
-			phantom.setDietMode(true);
-
-			// Level, skill and gear the phantom BEFORE it enters the world, so the very first CharInfo nearby
-			// players receive already shows its full set. (A post-spawn equip update can be throttled or coalesced
-			// by broadcastCharInfo, leaving gear invisible even though it was equipped.) A loaded regular already
-			// has its level/class/skills persisted, so the exp/class/skill steps below are guarded no-ops for it -
-			// but its consumables were spent hunting and its auto-use/soulshot registrations are runtime-only, so
-			// it still needs re-gearing. Wipe its stale inventory first so the restock doesn't stack duplicates.
-			phantom.setOnlineStatus(true, false);
-			if (loadedRegular)
-			{
-				phantom.getInventory().destroyAllItems(ItemProcessType.DESTROY, phantom, null);
-			}
-			if (role.isBuddy())
-			{
-				outfitBuddy(phantom, level, role);
-			}
-			else
-			{
-				outfit(phantom, level, effectiveMage);
-			}
-			phantom.refreshOverloaded();
-			enterWorld(phantom, spawnLocation);
-
-			final PhantomData data = new PhantomData(phantom, spawnLocation, population, effectiveMage, role);
-			_phantoms.put(phantom.getObjectId(), data);
-			if (role.isBuddy())
-			{
-				// Buddies don't hunt - they stand where placed (and do nothing, not even self-buff) until a real
-				// player whispers/parties them. PhantomBuddyManager owns everything from there.
-				PhantomBuddyManager.getInstance().onBuddySpawned(data.player, role.name());
-			}
-			else
-			{
-				// Fan out first; the auto-hunt starts when dispersal ends (see supervise), so a freshly spawned
-				// group spreads over its area instead of all converging on the nearest mobs at once.
-				beginDisperse(phantom, data);
-			}
-			startSupervising();
-			LOGGER.info(getClass().getSimpleName() + ": Spawned " + (role.isBuddy() ? (role + " buddy") : "phantom") + " '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
-			return phantom;
+			return finishSpawn(phantom, spawnLocation, level, effectiveMage, role, population, loadedRegular, 0);
 		}
 		catch (Exception e)
 		{
 			LOGGER.warning(getClass().getSimpleName() + ": Failed to spawn phantom: " + e.getMessage());
 			return null;
 		}
+	}
+
+	/**
+	 * Finishes materializing an already created-or-loaded phantom {@link Player}: gears it, drops it into the
+	 * world at {@code spawnLocation}, registers it, and hands it to the buddy manager or the auto-hunt. Shared
+	 * by the population/admin path ({@link #createAndSpawn}) and the friend login-spawn path
+	 * ({@link #spawnFriendRegular}).
+	 * @param loadedRegular {@code true} if {@code phantom} came from {@link Player#load} (skip re-leveling, just
+	 *            refresh the consumable loadout on a clean inventory)
+	 * @param friendOwnerId objectId of the real player this phantom was spawned to accompany (0 = none), used to
+	 *            despawn it again when that owner logs out
+	 * @return the phantom, now live
+	 */
+	private Player finishSpawn(Player phantom, Location spawnLocation, int level, boolean mage, BuddyRole role, Population population, boolean loadedRegular, int friendOwnerId)
+	{
+		// Ignore the weight penalty. Phantoms carry a large stack of healing potions (+ soulshots), which
+		// easily exceeds a non-Dwarf's max load - at >=100% load the engine applies Weight Penalty (skill
+		// 4270) level 4, whose runSpd multiplier is 0, so the phantom is fully immobilized. Dwarves have a
+		// far higher carry capacity, which is why only they moved before this. Diet mode zeroes the penalty
+		// regardless of load (set before items are added so the inventory weight never pins them).
+		phantom.setDietMode(true);
+
+		// Level, skill and gear the phantom BEFORE it enters the world, so the very first CharInfo nearby
+		// players receive already shows its full set. (A post-spawn equip update can be throttled or coalesced
+		// by broadcastCharInfo, leaving gear invisible even though it was equipped.) A loaded regular already
+		// has its level/class/skills persisted, so the exp/class/skill steps below are guarded no-ops for it -
+		// but its consumables were spent hunting and its auto-use/soulshot registrations are runtime-only, so
+		// it still needs re-gearing. Wipe its stale inventory first so the restock doesn't stack duplicates.
+		phantom.setOnlineStatus(true, false);
+		if (loadedRegular)
+		{
+			phantom.getInventory().destroyAllItems(ItemProcessType.DESTROY, phantom, null);
+		}
+		if (role.isBuddy())
+		{
+			outfitBuddy(phantom, level, role);
+		}
+		else
+		{
+			outfit(phantom, level, mage);
+		}
+		phantom.refreshOverloaded();
+		enterWorld(phantom, spawnLocation);
+
+		final PhantomData data = new PhantomData(phantom, spawnLocation, population, mage, role);
+		data.friendOwnerId = friendOwnerId;
+		_phantoms.put(phantom.getObjectId(), data);
+		if (role.isBuddy())
+		{
+			// Buddies don't hunt - they stand where placed (and do nothing, not even self-buff) until a real
+			// player whispers/parties them. PhantomBuddyManager owns everything from there.
+			PhantomBuddyManager.getInstance().onBuddySpawned(data.player, role.name());
+		}
+		else
+		{
+			// Fan out first; the auto-hunt starts when dispersal ends (see supervise), so a freshly spawned
+			// group spreads over its area instead of all converging on the nearest mobs at once.
+			beginDisperse(phantom, data);
+		}
+		startSupervising();
+		LOGGER.info(getClass().getSimpleName() + ": Spawned " + (role.isBuddy() ? (role + " buddy") : (friendOwnerId != 0 ? "friend-regular" : "phantom")) + " '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
+		return phantom;
 	}
 
 	/**
