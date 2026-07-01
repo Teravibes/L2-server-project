@@ -5,30 +5,35 @@
 > For deep detail see `PROGRESS.md`; for static project/build info see `CLAUDE.md`.
 
 **Last updated:** 2026-07-01
-**Branch:** `claude/repo-setup-claude-md-95pbfs`
+**Branch:** `claude/handover-catchup-oo1wmt`
 
 ## Current state
 
-Repo-onboarding setup. Added `CLAUDE.md` (project overview, layout, build/deploy
-rules, Python-brain run steps, model workflow, cost-awareness) and this
-`HANDOVER.md`. No game code touched yet.
+Landed the **haggle price clamp** (PROGRESS.md §11.3). Whisper-negotiated trade
+prices from the LLM are now bounded server-side in `FakePlayerStoreFactory` so a
+bot can no longer be talked into selling a rare item for 1 adena or buying junk
+for billions. First real game-code change on top of the repo-onboarding setup.
 
 ## What was just done
 
-- Added `CLAUDE.md` at repo root — read automatically each session.
-- Documented the Opus-plan / Sonnet-implement / Opus-review model workflow.
-- Established this `HANDOVER.md` as the per-commit running snapshot.
-- Added an "Ask, don't guess" rule to CLAUDE.md: big changes get approval first;
-  when unsure, verify (read code / check online / ask) instead of guessing.
+- Added `clampDealPrice(unitPrice, referencePrice, selling)` to
+  `FakePlayerStoreFactory.java` and wired it into `dealSellStock`/`dealBuyStock`
+  (the single choke point). Band (moderate): SELL floor 0.5× / ceiling 3×,
+  BUY floor 0.1× / ceiling 1.5× of the item reference price. Haggling still works
+  inside the band; only absurd values get pinned. Also neutralizes the `k`/`kk`
+  multiplier trick since the clamp applies to the final per-unit price.
+- Auto-priced initial quotes (price arg `0`) are unaffected — clamp only fires on
+  an explicit negotiated price.
 
 ## In flight / next up
 
-- Nothing mid-change. First code candidate discussed: **haggle price clamp**
-  (PROGRESS.md §11.3) — bound the negotiated trade price server-side instead of
-  trusting the LLM prompt. Small, self-contained, Java-side; good workflow dry-run.
+- Nothing mid-change. Clamp band is a one-line tuning knob if it feels too
+  tight/loose in play. Next candidates (PROGRESS.md §11): phantom tuning config,
+  field-behavior tuning.
 
 ## Watch out for
 
 - Java build can't run here (needs JDK 25 + Ant; env has Java 21). Java changes are
-  hand-verified, not compiled — don't claim they "build."
+  hand-verified, not compiled — don't claim they "build." This clamp change is
+  hand-verified (isolated helper + two one-line call-site edits).
 - Project dir name has a space: `L2J_Mobius_CT_0_Interlude github` — quote paths.

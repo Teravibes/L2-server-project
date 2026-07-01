@@ -479,7 +479,7 @@ public class FakePlayerStoreFactory
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : 1;
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
-			final int price = unitPrice > 0 ? Math.max(1, unitPrice) : priced(item.getReferencePrice(), 1.0, 1.6);
+			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, item.getReferencePrice(), true) : priced(item.getReferencePrice(), 1.0, 1.6);
 			stock.add(line(item, 0, count, price));
 		}
 		return stock;
@@ -520,7 +520,7 @@ public class FakePlayerStoreFactory
 		{
 			final int fallbackCount = item.isStackable() ? bulkAmount(item.getReferencePrice()) : Rnd.get(1, 3);
 			final int count = normalizedDealCount(item, requestedCount, fallbackCount);
-			final int price = unitPrice > 0 ? Math.max(1, unitPrice) : priced(item.getReferencePrice(), 0.5, 0.85);
+			final int price = unitPrice > 0 ? clampDealPrice(unitPrice, item.getReferencePrice(), false) : priced(item.getReferencePrice(), 0.5, 0.85);
 			stock.add(line(item, 0, count, price));
 		}
 		return stock;
@@ -546,6 +546,30 @@ public class FakePlayerStoreFactory
 			return Rnd.get(3, 40);
 		}
 		return Rnd.get(1, 8); // pricey mats / scrolls
+	}
+
+	/**
+	 * Clamp a whisper-negotiated unit price into a sane band around the item reference price. The agreed
+	 * price is trust-based on the LLM, so without this a player (or a trade-chat prompt injection) could talk
+	 * a bot into selling a rare item for 1 adena or buying junk for billions. Haggling still works within the
+	 * band; only absurd values get pinned. When the bot is selling, the floor matters most (don't sell cheap);
+	 * when buying, the ceiling matters most (don't overpay).
+	 * @param unitPrice the agreed adena per unit (already {@code > 0})
+	 * @param referencePrice the item reference price
+	 * @param selling {@code true} if the bot sells to the player, {@code false} if it buys from the player
+	 * @return the clamped unit price, at least 1
+	 */
+	private static int clampDealPrice(int unitPrice, int referencePrice, boolean selling)
+	{
+		if (referencePrice <= 0)
+		{
+			return Math.max(1, unitPrice);
+		}
+		final double lowFactor = selling ? 0.5 : 0.1;
+		final double highFactor = selling ? 3.0 : 1.5;
+		final long low = Math.max(1L, Math.round(referencePrice * lowFactor));
+		final long high = Math.max(low, Math.round(referencePrice * highFactor));
+		return (int) Math.max(low, Math.min(high, unitPrice));
 	}
 
 	/** referencePrice * random factor in [lo, hi], clamped to a valid positive int. */

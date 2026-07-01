@@ -777,7 +777,7 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 
 1. **Phantom tuning config** — lift post-kill/dispersal/roam/rest/buddy thresholds into a config file so they're adjustable without a rebuild.
 2. **Field behavior tuning** — smarter hunting, polygon-bounded roaming, persistent respawn identity.
-3. **Haggle price clamp** — bound the negotiated price server-side (currently trust-based on LLM prompt).
+3. ✅ **[DONE 2026-07-01] Haggle price clamp** — the whisper-negotiated unit price is now bounded server-side in `FakePlayerStoreFactory.clampDealPrice(...)`, wired into `dealSellStock`/`dealBuyStock` (the single choke point where the LLM-agreed price enters). Band (moderate): when the bot **sells**, price is clamped to `0.5×–3×` reference (floor stops the "sell a rare for 1 adena" exploit); when it **buys**, to `0.1×–1.5×` reference (ceiling stops "buy junk for billions"). Haggling still works inside the band; only absurd values get pinned. Applies to the final per-unit price, so the `k`/`kk` multiplier trick in the `[[SHOP:...]]` tag is neutralized too. Auto-priced initial quotes (price arg `0`) are unaffected. Band factors are a one-line tuning knob.
 4. **Editor niceties** — 2-click map calibration; edit profiles/assigns in-tool. (Live reload via `//reloadfakeplayers` already done.)
 5. **Buddy role expansion** — add SE (Spirit Expert) and PP (Prophet variant) archetypes with their specific buff sets.
 6. **Population tuning pass** — review 26 field zones + town clusters + buddy spawn points with real play feedback.
