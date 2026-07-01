@@ -134,6 +134,15 @@ review pass, large refactor) so the user can decide before it starts, and prefer
 cheaper path (Sonnet subagent for mechanical work, batch edits, avoid needless
 re-reads).
 
+## Ask, don't guess
+
+- **Big changes: always ask first.** Before a large or far-reaching change (many
+  files, a refactor, anything touching architecture or stock Mobius core), present
+  the plan and get approval before editing.
+- **Not sure? No guessing.** If something is unclear, verify it — read the relevant
+  code, check online/docs, and/or ask the user. Don't invent behavior, APIs, or
+  signatures.
+
 ## Workflow expectations
 
 - Development happens on the designated feature branch. Commit with clear messages;

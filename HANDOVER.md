@@ -18,6 +18,8 @@ rules, Python-brain run steps, model workflow, cost-awareness) and this
 - Added `CLAUDE.md` at repo root — read automatically each session.
 - Documented the Opus-plan / Sonnet-implement / Opus-review model workflow.
 - Established this `HANDOVER.md` as the per-commit running snapshot.
+- Added an "Ask, don't guess" rule to CLAUDE.md: big changes get approval first;
+  when unsure, verify (read code / check online / ask) instead of guessing.
 
 ## In flight / next up
 
