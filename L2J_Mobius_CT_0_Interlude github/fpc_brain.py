@@ -17,7 +17,7 @@ if PROVIDER == "deepseek":
     MODEL = "deepseek-chat"
 elif PROVIDER == "ollama":
     client = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
-    MODEL = "llama3.1"
+    MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
 else:
     raise ValueError("PROVIDER must be 'deepseek' or 'ollama'")
 
