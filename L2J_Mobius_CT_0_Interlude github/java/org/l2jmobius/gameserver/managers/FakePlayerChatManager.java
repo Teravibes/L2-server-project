@@ -70,6 +70,13 @@ public class FakePlayerChatManager implements IXmlReader
 	private static final int REPLY_CHANCE_TO_PLAYER = 50; // % chance a nearby bot reacts to a player (throttle 1)
 	private static final int REPLY_CHANCE_TO_BOT = 15; // % chance bot-to-bot (throttle 2: damping)
 	private static final int MAX_REPLIERS = 2; // at most N bots answer one line
+	private static final int REPLY_STAGGER_MS = 4000; // each extra replier waits this much longer, so a 2nd bot
+	// clearly chimes in AFTER the first instead of a simultaneous chorus (the most bot-like tell on a channel).
+	// Rough human "typing" time for a chat line: a short pause that scales with length, so a one-word reply pops
+	// out fast and a long sentence takes a beat longer - bots no longer all answer at one fixed instant speed.
+	private static final long TYPE_BASE_MS = 400;
+	private static final long TYPE_PER_CHAR_MS = 45;
+	private static final long TYPE_MAX_MS = 4000;
 	private static final int SOCIAL_RANGE = 3000; // trade: how close a bot must be to react
 	private static final int SAY_RANGE = 1250; // say: local hearing/broadcast range
 	private static final int MAX_MESSAGES_PER_MINUTE = 8; // public/social rate cap: shout/trade/say/ambient banter
@@ -103,7 +110,10 @@ public class FakePlayerChatManager implements IXmlReader
 	}
 
 	// The brain appends [[MEET:spot]] to a whisper when it agrees to walk over; we act on it then strip it.
-	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
+	// The closing is deliberately tolerant: Ollama sometimes emits a malformed close ("[[MEET:gk])", "[[MEET:gk]",
+	// "[[MEET:gk)") and a strict "\]\]" would neither act on nor strip it, leaking the tag into visible chat. We
+	// accept one or two of "]" / ")" as the close so every variant is caught and removed.
+	private static final Pattern MEET_TAG = Pattern.compile("\\[\\[\\s*MEET\\s*:\\s*([a-zA-Z]+)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
 	// [[SHOP:SELL|BUY:<item>:<price>]] - the bot commits to actually trading a specific item at a price.
 	private static final Pattern SHOP_TAG = Pattern.compile("\\[\\[\\s*SHOP\\s*:\\s*(SELL|BUY)\\s*:\\s*([^:\\]]+?)\\s*:\\s*(\\d+)\\s*(kk|k)?\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
 
@@ -384,6 +394,22 @@ public class FakePlayerChatManager implements IXmlReader
 		}
 		final String name = reply.trim();
 		return (name.isEmpty() || name.equalsIgnoreCase("none")) ? null : name;
+	}
+
+	/**
+	 * Drops the stored structured trade context for a player/bot deal. Called when the deal lifecycle ends
+	 * (store sold out / closed, meet hard-cap, grace timeout, or cancel - all funnel through the behavior
+	 * manager's endMeet) so a finished deal's stale X-Deal-* terms never get injected into a later, unrelated
+	 * whisper to the same bot. Safe no-op when there is no active deal for that pair.
+	 * @param playerName the player the deal was with
+	 * @param fpcName the bot that held the deal
+	 */
+	public void clearDeal(String playerName, String fpcName)
+	{
+		if ((playerName != null) && (fpcName != null))
+		{
+			ACTIVE_DEALS.remove(dealKey(playerName, fpcName));
+		}
 	}
 
 	private static String dealKey(String playerName, String fpcName)
@@ -698,9 +724,10 @@ public class FakePlayerChatManager implements IXmlReader
 			{
 				continue;
 			}
-			repliers++;
+			final int slot = repliers++;
 			final Npc replier = bot;
-			ThreadPool.schedule(() -> botSpeaks(replier, speakerName, text, "SHOUT", true), Rnd.get(MIN_DELAY, MAX_DELAY));
+			// Stagger extra repliers so a 2nd bot answers a few seconds after the 1st, not in lockstep.
+			ThreadPool.schedule(() -> botSpeaks(replier, speakerName, text, "SHOUT", true), Rnd.get(MIN_DELAY, MAX_DELAY) + ((long) slot * REPLY_STAGGER_MS));
 		}
 	}
 	
@@ -741,9 +768,10 @@ public class FakePlayerChatManager implements IXmlReader
 			{
 				continue;
 			}
-			repliers++;
+			final int slot = repliers++;
 			final Npc replier = bot;
-			ThreadPool.schedule(() -> botSpeaks(replier, speakerName, text, channel, !speakerIsBot), Rnd.get(MIN_DELAY, MAX_DELAY));
+			// Stagger extra repliers so a 2nd bot answers a few seconds after the 1st, not in lockstep.
+			ThreadPool.schedule(() -> botSpeaks(replier, speakerName, text, channel, !speakerIsBot), Rnd.get(MIN_DELAY, MAX_DELAY) + ((long) slot * REPLY_STAGGER_MS));
 		}
 	}
 
@@ -763,22 +791,27 @@ public class FakePlayerChatManager implements IXmlReader
 		{
 			return;
 		}
-		if (channel.equals("SAY"))
+		// Defer the broadcast by a length-scaled "typing" time so the line doesn't appear the instant the brain
+		// returns, and follow-up bot banter only kicks off once the line is actually visible.
+		ThreadPool.schedule(() ->
 		{
-			sendSayChat(bot, line);
-		}
-		else if (channel.startsWith("SHOUT"))
-		{
-			sendShoutChat(bot, line); // SHOUT and SHOUTAMBIENT broadcast to the global shout channel
-		}
-		else
-		{
-			sendTradeChat(bot, line); // TRADE and AMBIENT both broadcast to global trade
-		}
-		MESSAGES_THIS_MINUTE.incrementAndGet();
+			if (channel.equals("SAY"))
+			{
+				sendSayChat(bot, line);
+			}
+			else if (channel.startsWith("SHOUT"))
+			{
+				sendShoutChat(bot, line); // SHOUT and SHOUTAMBIENT broadcast to the global shout channel
+			}
+			else
+			{
+				sendTradeChat(bot, line); // TRADE and AMBIENT both broadcast to global trade
+			}
+			MESSAGES_THIS_MINUTE.incrementAndGet();
 
-		// bot-to-bot banter (damped); ambient continues on the same channel.
-		reactToChat(bot, bot.getName(), line, true, channel.equals("SAY") ? "SAY" : channel.startsWith("SHOUT") ? "SHOUT" : "TRADE");
+			// bot-to-bot banter (damped); ambient continues on the same channel.
+			reactToChat(bot, bot.getName(), line, true, channel.equals("SAY") ? "SAY" : channel.startsWith("SHOUT") ? "SHOUT" : "TRADE");
+		}, typingDelayMillis(line));
 	}
 	
 	private boolean hasPlayerInRange(Npc npc, int range)
@@ -939,13 +972,38 @@ public class FakePlayerChatManager implements IXmlReader
 		return null;
 	}
 	
+	/**
+	 * @return a human-like "typing" delay in ms for {@code line}: a short base pause plus time proportional to
+	 *         length, capped, with +-25% jitter so two bots typing the same-length line don't fire in lockstep.
+	 */
+	private static long typingDelayMillis(String line)
+	{
+		final int len = (line == null) ? 0 : line.length();
+		long ms = TYPE_BASE_MS + (len * TYPE_PER_CHAR_MS);
+		if (ms > TYPE_MAX_MS)
+		{
+			ms = TYPE_MAX_MS;
+		}
+		final int jitter = (int) (ms * 0.25);
+		return Math.max(0, ms + Rnd.get(-jitter, jitter));
+	}
+
 	public void sendChat(Player player, String fpcName, String message)
 	{
-		final Npc npc = resolveBot(fpcName);
-		if (npc != null)
+		if ((player == null) || (message == null) || message.isEmpty())
 		{
-			player.sendPacket(new CreatureSay(npc, ChatType.WHISPER, fpcName, message));
+			return;
 		}
+		// Defer the whisper by a length-scaled "typing" time so a reply doesn't pop out instantly (the bot tell):
+		// a quick "np" lands fast, a longer sentence takes a beat. Bot is resolved at send time in case it despawns.
+		ThreadPool.schedule(() ->
+		{
+			final Npc npc = resolveBot(fpcName);
+			if (npc != null)
+			{
+				player.sendPacket(new CreatureSay(npc, ChatType.WHISPER, fpcName, message));
+			}
+		}, typingDelayMillis(message));
 	}
 
 	/**

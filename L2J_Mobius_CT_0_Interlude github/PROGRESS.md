@@ -364,6 +364,74 @@ Status: **Future phase.**
 
 ---
 
+## 1c. Latest Progress Update — Buff Kit Audit, Tag Hardening & Chat Realism (2026-07-01)
+
+Work in this pass focused on (a) fixing the support buff kit that felt "thin" after the earlier re-buff-loop
+fix, (b) closing the two open tag/deal-context rough edges, and (c) a first real step toward believable social
+timing. All Java is slot-collision-safe and free of `Set.of` duplicates; the build still needs the Ant/JDK25
+environment (hand-verified here).
+
+### Buffer kit — proper data-driven audit (`PhantomBuffs.java`)
+
+The curated auto-kit from the loop fix was correct in shape but had genuinely missing must-have buffs. Re-audited
+**slot-by-slot against the actual skill data** (the rule that matters: one buff per `abnormalType` = one slot;
+anything in its own slot is safe to auto-maintain and can't re-trigger the loop). Added, each in a distinct slot:
+
+- **Bless Shield** (`1243`, `SHIELD_PROB_UP`) — was missing from the melee auto-kit *and* pre-buff. Standard
+  Prophet buff, its own slot (distinct from Shield's `PD_UP`). Also added a `bless shield` / `blessed shield`
+  request alias.
+- **Shield** (`1040`, `PD_UP`) — was missing from the **caster** kit, so a mage main got no P.Def Shield. Casters
+  take Shield for survivability; added to the maintained caster kit and caster pre-buff.
+- **Regeneration** (`1044`, `HP_REGEN_UP`) → melee; **Mana Regeneration** (`1047`, `MP_REGEN_UP`) → caster.
+- **Resist Shock** (`1259`, `RESIST_SHOCK`, 1200s, no reagent) → both archetypes (anti-stun).
+
+`1044`/`1047`/`1259` only actually land if the buffer's class knows them (`wanted()` is gated by the buffer's own
+skill list), so a pure Prophet won't try to cast an Elder-only regen.
+
+**Deliberately still on-request** (not auto), because they are *not* slot-safe or are consumable:
+- **Greater Might / Greater Shield / War Chant / Earth Chant** — all share the single `PA_PD_UP` slot in the data,
+  so auto-maintaining two of them re-creates the flap/loop. Base Might (`PA_UP`) + base Shield (`PD_UP`) cover
+  both P.Atk and P.Def in two stable slots instead.
+- **Prophecy of Fire/Water/Wind** (`1355`–`1357`) — share one `MULTI_BUFF` slot, last only **300s**, and each eats
+  5 Spirit Ore. Auto = flap + reagent drain. Cast on request (aliases exist).
+
+### Malformed MEET tag leakage — fixed (`FakePlayerChatManager.java` + `fpc_brain.py`)
+
+`MEET_TAG` now tolerates a malformed close (`[[MEET:gk])`, `[[MEET:gk]`, `[[MEET:gk)`): the closing accepts one or
+two of `]` / `)` (`[\]\)]{1,2}`), so every Ollama variant is both acted on and stripped instead of leaking the raw
+tag into visible chat. The whisper prompt in `fpc_brain.py` also now tells the model to always close with `]]` and
+never use shorthand inside the tag (harden at the source).
+
+### Active deal-context cleanup — fixed (`FakePlayerChatManager.java` + `FakePlayerBehaviorManager.java`)
+
+`ACTIVE_DEALS` was only dropped on an explicit `[[MEET:cancel]]`, so a completed / timed-out deal's `X-Deal-*`
+terms lingered and could be injected into a later unrelated whisper to the same bot. `endMeet(...)` — the single
+chokepoint every deal ending funnels through (sold-out, meet hard-cap, grace-leave, cancel) — now calls the new
+`FakePlayerChatManager.clearDeal(player, bot)` before it forgets the player. The pre-meet cancel removal stays for
+the edge where a deal was offered but no meet ever started.
+
+### Chat realism — human-like timing (`FakePlayerChatManager.java`)
+
+First step toward believable social presence (timing, not wording):
+- **Length-scaled "typing" latency** — every bot→player whisper (`sendChat`) and every public-channel line
+  (`botSpeaks`) is deferred by `typingDelayMillis(...)`: a short base pause plus ~45ms/char (capped 4s, ±25%
+  jitter). A one-word "np" pops out fast; a long sentence takes a beat. Replies no longer appear the instant the
+  brain returns, at one fixed speed.
+- **Replier stagger** — when both allowed repliers answer the same line, the 2nd waits `REPLY_STAGGER_MS` (4s)
+  longer, so it reads as someone chiming in *after* the first, not a simultaneous bot chorus.
+
+> Tuning note: whisper replies now stack the existing 5–15s "thinking" delay + LLM time + typing time (~7–21s
+> total). If that feels sluggish, shrink `MIN_DELAY`/`MAX_DELAY` — the typing layer now carries the realism, so the
+> base thinking delay can safely drop.
+
+### Still open (next social-realism ideas, not yet built)
+- Memory surfaced into whisper *openings* (continuity: "still farming ssd?").
+- Per-bot ephemeral mood drift (tired after a long grind, hyped after a drop).
+- Emitted typos + self-corrections (`teh` → `*the`).
+- Allow disinterest — a bot that says "nah" and disengages reads more human than one that always helps.
+
+---
+
 ## 2. System A — LLM Chat Brain
 
 **`fpc_brain.py`** (repo root) — Flask sidecar the Java server calls over HTTP.
@@ -668,6 +736,9 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 - ✅ Quantity-aware WTB/WTS trade responder shops (`+WTB ssd 5k`, `+WTS ssd 5k`)
 - ✅ Structured trade context headers from Java to Python (`X-Deal-*`)
 - ✅ Meetup destinations offset beside gatekeeper/warehouse/merchant instead of inside the NPC model
+- ✅ Support buff kit audited slot-by-slot: melee + caster auto-kits carry the standard Interlude must-haves (incl. Bless Shield, caster Shield, Regen/Mana Regen, Resist Shock); greater/consumable buffs on-request (see §1c)
+- ✅ Malformed MEET tag stripping + active deal-context cleanup on deal end (see §1c)
+- ✅ Human-like chat timing: length-scaled "typing" latency + 2nd-replier stagger so bots don't answer instantly or in a chorus (see §1c)
 - ✅ WTB/WTS responder PMs planned/separated from public social spam cap
 - ✅ LLM chat: whisper / say / trade / shout, silence, reply dedup, distinct per-bot voices, guardrails
 - ✅ Trade negotiation: bot quotes price, you haggle + pick meet spot, deal vendor renders seated and stays talkable
@@ -689,8 +760,8 @@ Standard Mobius reloads plus a **Living World** section at the bottom:
 
 ## 10. Known issues / rough edges
 
-- **Malformed MEET tag leakage with Ollama** — Ollama can output malformed tags like `[[MEET:gk])`, which the current Java regex may not strip. Pending fix: tolerant `MEET_TAG` regex plus stricter Python prompt instructions.
-- **Active deal context cleanup** — structured trade context should be cleared on cancel, timeout, sold-out/complete store, or abandoned meetup.
+- ✅ **[FIXED 2026-07-01] Malformed MEET tag leakage with Ollama** — `MEET_TAG` now tolerates a malformed close (`]]`/`])`/`]`/`)`) so `[[MEET:gk])` etc. are stripped, and the whisper prompt reinforces exact tags. See §1c.
+- ✅ **[FIXED 2026-07-01] Active deal context cleanup** — `ACTIVE_DEALS` is now cleared through `endMeet` (sold-out / hard-cap / grace-leave / cancel) via `clearDeal(player, bot)`. See §1c.
 - **Trade responder probability verification** — separate trade-offer cap and wider responder search need gameplay verification after rebuild.
 - **Orc Warcryer torso** — can render with no torso (separate magic tunics have no orc model); robe-only gearing attempt reverted, to be revisited.
 - **OOM-mage kite edge case** — if a same-speed mob never lets the mage break off, it keeps retreating and could die instead of resting.
