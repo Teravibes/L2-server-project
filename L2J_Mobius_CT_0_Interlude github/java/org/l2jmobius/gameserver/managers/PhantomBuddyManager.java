@@ -111,13 +111,15 @@ public class PhantomBuddyManager implements IXmlReader
 	// [[DISBAND]]). If the brain is offline the buddy just falls back to a short canned line.
 	private static final HttpClient BRAIN_HTTP = HttpClient.newHttpClient();
 	private static final String BRAIN_URL = "http://127.0.0.1:5000/chat";
-	private static final Pattern TAG_FOLLOW = Pattern.compile("\\[\\[\\s*FOLLOW\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_STAY = Pattern.compile("\\[\\[\\s*STAY\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_BUFF = Pattern.compile("\\[\\[\\s*BUFF\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_DISBAND = Pattern.compile("\\[\\[\\s*DISBAND\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_TP = Pattern.compile("\\[\\[\\s*TP\\s*:\\s*([^\\]]+?)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern TAG_GRACE = Pattern.compile("\\[\\[\\s*GRACE\\s*:\\s*(\\d+)\\s*\\]\\]", Pattern.CASE_INSENSITIVE);
-	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*\\]\\]");
+	// Closing bracket is tolerant ([\]\)]{1,2}) because local Ollama models sometimes emit a malformed close
+	// (e.g. "[[TP:roa)"); a strict "\]\]" would neither act on the tag nor strip it, leaking it into player chat.
+	private static final Pattern TAG_FOLLOW = Pattern.compile("\\[\\[\\s*FOLLOW\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_STAY = Pattern.compile("\\[\\[\\s*STAY\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_BUFF = Pattern.compile("\\[\\[\\s*BUFF\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_DISBAND = Pattern.compile("\\[\\[\\s*DISBAND\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_TP = Pattern.compile("\\[\\[\\s*TP\\s*:\\s*([^\\]]+?)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern TAG_GRACE = Pattern.compile("\\[\\[\\s*GRACE\\s*:\\s*(\\d+)\\s*[\\]\\)]{1,2}", Pattern.CASE_INSENSITIVE);
+	private static final Pattern ANY_TAG = Pattern.compile("\\[\\[[^\\]]*[\\]\\)]{1,2}");
 	private static final Pattern HTML_TAG = Pattern.compile("</?\\s*[a-zA-Z][a-zA-Z0-9]*\\s*/?>");
 
 	// Heal skills a buddy may know, best (highest id here = strongest) first.

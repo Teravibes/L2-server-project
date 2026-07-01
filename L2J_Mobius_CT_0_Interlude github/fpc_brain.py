@@ -17,7 +17,7 @@ if PROVIDER == "deepseek":
     MODEL = "deepseek-chat"
 elif PROVIDER == "ollama":
     client = OpenAI(api_key="ollama", base_url="http://localhost:11434/v1")
-    MODEL = "llama3.1"
+    MODEL = os.getenv("OLLAMA_MODEL", "llama3.1")
 else:
     raise ValueError("PROVIDER must be 'deepseek' or 'ollama'")
 
@@ -143,7 +143,8 @@ def sanitize(text):
     if any(b in low for b in ("said publicly", "i wouldn't pm", "i would pm", "trade chat sees", "parentheses", "stage direction")):
         return ""
 
-    if re.search(r"\b\d+\s*g\b", low) or any(b in low for b in (" gold", " silver", " copper", " gp")):
+    # Word-bounded so "golden"/"silverware"/"coppermine"-type words in normal gear chat aren't false-flagged.
+    if re.search(r"\b\d+\s*g\b", low) or re.search(r"\b(gold|silver|copper|gp)\b", low):
         return ""
 
     if any(b in low for b in ("worn out", "durability", "low condition", "high condition", "needs repair", "repair cost")):
