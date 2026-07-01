@@ -17,13 +17,25 @@ Two halves work together:
   service the Java server calls over HTTP to generate in-character bot dialogue via
   an LLM (DeepSeek API or local Ollama).
 
-## READ THIS FIRST: PROGRESS.md is the source of truth
+## READ THIS FIRST: handover + progress docs
 
-`L2J_Mobius_CT_0_Interlude github/PROGRESS.md` is the living handoff doc. It records
-what's built, what works, known issues, next steps, the full file map, and admin
-commands. **Read it before starting any task**, and **update it when you land a
-change** (there's a dated "Latest Progress Update" section pattern near the top —
-follow it). `PROGRESS_old.md` is an archived earlier version; ignore unless asked.
+Three docs, distinct roles — read them in this order at session start:
+
+1. **`HANDOVER.md`** (repo root) — a short, always-current snapshot: what just
+   happened, current state, what's next, in-flight gotchas. Read this first to get
+   caught up fast without re-reading everything.
+2. **`L2J_Mobius_CT_0_Interlude github/PROGRESS.md`** — the full living handoff log:
+   what's built, what works, known issues, next steps, file map, admin commands.
+   Follow its dated "Latest Progress Update" pattern when you land a change.
+   (`PROGRESS_old.md` is archived — ignore unless asked.)
+3. **This `CLAUDE.md`** — static onboarding (architecture, build, conventions).
+
+### Standing rule: update HANDOVER.md on every commit
+
+**Every commit must also update `HANDOVER.md`** so the next session starts caught up.
+Keep it short (a snapshot, not a log — that's PROGRESS.md's job): refresh
+*Last updated*, *Branch*, *Current state*, *What was just done*, *In flight / next up*,
+and *Watch out for*. Land the HANDOVER.md edit in the **same commit** as the change.
 
 ## Repository layout
 
