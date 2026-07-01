@@ -360,7 +360,10 @@ player-global memory
 bot-specific memory
 ```
 
-Status: **Future phase.**
+Status: **Phase 1 done (2026-07-01).** See §12b below. Phantom populations can now define fixed
+`<regular>` identities (stable name + appearance, optional class) that recur in a zone; a stable name
+already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name). Phases 2-3
+(persistence + friend tier) remain future — see §10b.
 
 ---
 
@@ -799,10 +802,20 @@ code — **the three "High" items were already fixed**, so **do not re-implement
   archer lateral-spread geometry adding ~58 units past bow range; `FakePlayerStoreManager.sell()`
   overflow clamp-vs-reject; buddy-despawn manager-drop ordering; inverted `RequestTrade.equals()`;
   unconfirmed `[[TP]]`/`[[DISBAND]]` from brain output.
-- **Design idea (not a bug):** stable identity "regulars" — a %-chance to spawn NPC fake players / buddies
-  with fixed name+appearance+personality-seed instead of always random, so the brain's player-global
-  memory feels continuous. Pure config/generation-time work, no DB schema. See §1b "Future: stable
-  fake-player identities."
+- **Stable identity "regulars" — Phase 1 DONE (2026-07-01), Phases 2-3 pending.** See §12b for the full
+  three-phase plan.
+  - ✅ **Phase 1 (identity only):** phantom populations can define `<regular>` entries (fixed
+    name/appearance, optional class) with a `regularChance`. Stable name → stable brain voice; recurring
+    recognizable faces in a zone. Phantom is still ephemeral (not persisted, not a friend).
+  - ⬜ **Phase 2 (persistence):** give regulars a distinct account name (e.g. `phantom_regular`) that the
+    boot sweep (§10 fix) skips, and create their rows once so `charId` is stable. Prereq for the friend
+    tier (`character_friends` references `charId`; the current sweep would delete a `phantom`-account
+    friend's row every boot).
+  - ⬜ **Phase 3 (friend tier):** auto-accept friend invites for regulars (server-side, like the res
+    ConfirmDlg auto-accept — see `RequestAnswerFriendInvite`), spawn friend-regulars at the owner's
+    `EnterWorld` so they show "online" (`FriendList` checks `World.getPlayer` != null), route friend PMs
+    (`RequestSendFriendMsg`) into the brain, and flag "we're friends" in memory. Touches stock Mobius
+    packet handlers — get user approval before editing those.
 
 ---
 
@@ -859,3 +872,30 @@ Assessment: assist already targets a raid boss correctly (`RaidBoss`/`GrandBoss 
 | Visual editor | `tools/fpc-editor/index.html` + `README.md` |
 
 Development branch: `claude/progress-readme-review-bnpov2`
+
+---
+
+## 12b. Stable identity "regulars" (Phase 1 — 2026-07-01)
+
+Goal: give a zone a few recurring, recognizable faces instead of an all-random crowd every visit, so
+the LLM brain (which hashes the bot name into a persistent personality via `_voice()`) sounds the same
+each time and the player recognizes the character. Phase 1 is **identity only** — the phantom is still
+ephemeral (fresh DB row per spawn, swept at boot); persistence and the friend tier are Phases 2-3 (§10b).
+
+How it works:
+- `PhantomPopulations.xml` populations may now carry `<regular>` children (fixed `name`, `female`,
+  `face` 0-2, `hairColor` 0-3, `hairStyle` 0-2, optional `classId`) and a `regularChance` attribute
+  (default 25). See the file's header comment + commented example for the full attribute reference.
+- On each spawn, `PhantomManager.createAndSpawn()` calls `pickRegular(population)`: rolls `regularChance`,
+  and if it hits picks a regular whose name isn't already live (a regular never appears twice at once),
+  else returns null (spawn a random identity as before). A chosen regular pins name + appearance, and its
+  class if `classId > 0` (else the class still rolls). Buddies keep their role class regardless.
+- No brain changes were needed: `fpc_brain.py` `_voice()` already derives a stable persona from the name.
+  No DB schema change; nothing to persist in Phase 1.
+
+Code touchpoints (all in `PhantomManager.java`): `Regular` inner class; `Population.regulars` /
+`Population.regularChance`; `<regular>` parsing in `parseDocument`; `pickRegular()` + `isMageClass()`
+helpers; the identity block in `createAndSpawn()`. Constant `REGULAR_CHANCE_DEFAULT`.
+
+Deploy: Java (rebuild jar) **and** copy `dist/game/data/PhantomPopulations.xml` (only if you actually
+add regular entries to it — the code change is what ships in the jar).

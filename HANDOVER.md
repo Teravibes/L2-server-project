@@ -9,32 +9,35 @@
 
 ## Current state
 
-Landed the **boot-time orphaned-phantom DB sweep** (PROGRESS.md §10). Phantom/
-buddy/party-member `characters` rows (`account_name='phantom'`) left behind by an
-unclean shutdown are now bulk-deleted once at boot before anything spawns, ending
-the DB-bloat / boot-RAM / name-collision growth. Also verified a prior session's
-code-review findings against live code: the three "High" items were **already
-fixed** — see the §10b audit so they aren't re-chased.
+Landed **Phase 1 of stable-identity "regulars"** (PROGRESS.md §12b). Phantom
+populations can now define fixed `<regular>` identities (stable name + appearance,
+optional class) via a `regularChance`, so a zone gets a few recurring, recognizable
+faces instead of an all-random crowd. Stable name → stable brain personality (the
+brain's `_voice()` hashes the name), no brain changes needed. Identity only — the
+phantom is still ephemeral; persistence + friend tier are Phases 2-3.
 
-Earlier this session: the **haggle price clamp** (§11.3) and the CLAUDE.md
-"what to transfer" standing rule.
+Earlier this session: boot-time orphaned-phantom DB sweep (§10), haggle price clamp
+(§11.3), prior-findings audit (§10b — 3 "High" items already fixed), and the
+CLAUDE.md "what to transfer" standing rule.
 
 ## What was just done
 
-- Added `PhantomManager.sweepOrphanedPhantoms()`, called first thing in `load()`.
-  It queries every `account_name='phantom'` charId and deletes each via
-  `GameClient.deleteCharByObjId()` (same cascade cleanup as `despawn()`). `load()`
-  runs once per JVM (lazy singleton, not touched by `//reloadfakeplayers`), so it
-  can never delete a live phantom's row. New imports: `java.sql.*`, `DatabaseFactory`.
-- Recorded the finding audit in PROGRESS.md §10b: 3 High items already fixed;
-  still-open lower-priority items (ACTIVE_DEALS orphan-on-ignore, non-atomic trade
-  rate limiter) + unverified relayed items listed for a future pass.
+- `PhantomManager.java`: added `Regular` inner class, `Population.regulars` +
+  `regularChance`, `<regular>` XML parsing, `pickRegular()` + `isMageClass()`
+  helpers, and the identity override in `createAndSpawn()`. Constant
+  `REGULAR_CHANCE_DEFAULT = 25`. A regular is never spawned twice at once.
+- `dist/game/data/PhantomPopulations.xml`: documented `regularChance` + `<regular>`
+  attributes in the header comment and added a commented example.
+- PROGRESS.md: §12b (how Phase 1 works + code touchpoints), §1b marked Phase 1 done,
+  §10b bullet expanded into the full 3-phase plan.
 
 ## In flight / next up
 
-- Nothing mid-change. Next candidates (PROGRESS.md §10b / §11): ACTIVE_DEALS
-  orphan-on-ignore TTL, phantom tuning config, stable-identity "regulars" (design
-  idea in §1b), or verifying the still-unverified relayed findings.
+- **Regulars Phase 2 (persistence)** and **Phase 3 (friend tier)** are the planned
+  follow-ups — see PROGRESS.md §10b / §12b. Phase 3 touches stock Mobius packet
+  handlers (`RequestAnswerFriendInvite` etc.), so get user approval before editing.
+- Other open candidates (§10b / §11): ACTIVE_DEALS orphan-on-ignore TTL, phantom
+  tuning config, verifying the still-unverified relayed findings.
 - Standing rules in play: update HANDOVER.md every commit; end every change with a
   "what to transfer to the live server" list.
 
