@@ -1,30 +1,33 @@
 @echo off
 REM ===========================================================================
-REM  One-step setup + launch for the FPC brain - local LLM via Ollama.
+REM  One-step setup + launch for the FPC brain - local Ollama model or DeepSeek
+REM  cloud API, your choice.
 REM
 REM  What it does:
-REM    1. Installs Ollama if it is not already installed.
-REM       - Uses bundled OllamaSetup.exe if present.
-REM       - Else tries winget.
-REM       - Else downloads OllamaSetup.exe directly.
-REM    2. Makes sure the Ollama server is running.
-REM    3. Pulls the chat model, default llama3.1.
-REM    4. Creates a Python virtualenv and installs requirements.
-REM    5. Writes a local .env file if one does not exist.
-REM    6. Starts fpc_brain.py.
+REM    1. Asks which AI provider to use: Ollama (local/offline) or DeepSeek
+REM       (cloud, needs an API key). Asked every run - press Enter to keep
+REM       whatever you picked last time, or answer again to switch.
+REM    2. Ollama chosen: installs Ollama if missing, starts its server, pulls
+REM       the chosen chat model (default gemma3:12b).
+REM       DeepSeek chosen: asks for (or reuses the saved) API key. Ollama is
+REM       never installed/started/pulled on this path.
+REM    3. Creates a Python virtualenv and installs requirements.
+REM    4. Writes the local .env file with the resolved settings.
+REM    5. Starts fpc_brain.py.
 REM
 REM  Usage:
-REM    setup_brain.bat
-REM    set OLLAMA_MODEL=gemma3 & setup_brain.bat
+REM    setup_brain.bat                                - normal run, asks for provider
+REM    setup_brain.bat --reset                        - wipes the saved .env first, so
+REM                                                      everything is asked fresh again
+REM                                                      (including the DeepSeek key)
+REM    set OLLAMA_MODEL=llama3.1 & setup_brain.bat     - override the Ollama model
 REM ===========================================================================
 
 setlocal enabledelayedexpansion
 cd /d "%~dp0"
 
-if "%OLLAMA_MODEL%"=="" set "OLLAMA_MODEL=gemma3:12b"
-
 echo.
-echo ==^> FPC brain setup - model: %OLLAMA_MODEL%
+echo ==^> FPC brain setup
 echo ==^> Working folder:
 cd
 echo.
@@ -50,7 +53,101 @@ if not exist requirements.txt (
     exit /b 1
 )
 
-REM --- 1. Ollama -------------------------------------------------------------
+REM --- 0. --reset wipes the saved config so everything is asked fresh -------
+
+if /i "%~1"=="--reset" (
+    if exist .env (
+        echo ==^> --reset: removing existing .env - you will be asked to reconfigure.
+        del /f /q .env
+    )
+)
+
+REM --- Load any existing configuration as defaults for the prompts below ----
+
+set "EXIST_PROVIDER="
+set "EXIST_MODEL="
+set "EXIST_KEY="
+if exist .env (
+    for /f "usebackq tokens=1,* delims==" %%A in (".env") do (
+        if /i "%%A"=="PROVIDER" set "EXIST_PROVIDER=%%B"
+        if /i "%%A"=="OLLAMA_MODEL" set "EXIST_MODEL=%%B"
+        if /i "%%A"=="DEEPSEEK_API_KEY" set "EXIST_KEY=%%B"
+    )
+)
+
+REM --- 1. Ask which provider to use, every run --------------------------------
+
+echo Choose an AI provider for the FPC brain:
+echo   [O] Ollama   - local model, free, fully offline (needs a decent GPU/CPU)
+echo   [D] DeepSeek - cloud API, needs an API key, works on any PC
+echo.
+
+set "PROVIDER_CHOICE="
+if defined EXIST_PROVIDER (
+    set /p "PROVIDER_CHOICE=Use Ollama or DeepSeek? [O/D] (Enter = keep '!EXIST_PROVIDER!'): "
+) else (
+    set /p "PROVIDER_CHOICE=Use Ollama or DeepSeek? [O/D]: "
+)
+
+if "!PROVIDER_CHOICE!"=="" (
+    if defined EXIST_PROVIDER (
+        set "PROVIDER=!EXIST_PROVIDER!"
+    ) else (
+        echo ERROR: You must choose O or D on first setup.
+        pause
+        exit /b 1
+    )
+) else if /i "!PROVIDER_CHOICE:~0,1!"=="O" (
+    set "PROVIDER=ollama"
+) else if /i "!PROVIDER_CHOICE:~0,1!"=="D" (
+    set "PROVIDER=deepseek"
+) else (
+    echo ERROR: Please answer O or D.
+    pause
+    exit /b 1
+)
+
+echo ==^> Provider: !PROVIDER!
+echo.
+
+if /i "!PROVIDER!"=="deepseek" goto setup_deepseek
+goto setup_ollama
+
+:setup_deepseek
+REM --- 2a. DeepSeek: reuse or ask for the API key, skip Ollama entirely ------
+
+set "DEEPSEEK_API_KEY="
+if defined EXIST_KEY (
+    set /p "KEY_CHOICE=Use saved DeepSeek API key ending '...!EXIST_KEY:~-4!'? [Y/n]: "
+    if /i not "!KEY_CHOICE:~0,1!"=="N" set "DEEPSEEK_API_KEY=!EXIST_KEY!"
+)
+
+if not defined DEEPSEEK_API_KEY (
+    set /p "DEEPSEEK_API_KEY=Enter your DeepSeek API key: "
+)
+
+if "!DEEPSEEK_API_KEY!"=="" (
+    echo ERROR: A DeepSeek API key is required when using DeepSeek.
+    pause
+    exit /b 1
+)
+
+echo ==^> DeepSeek configured.
+goto after_provider_setup
+
+:setup_ollama
+REM --- 2b. Ollama: install if missing, start the server, pull the model ------
+
+if "%OLLAMA_MODEL%"=="" (
+    if defined EXIST_MODEL (
+        set "OLLAMA_MODEL=!EXIST_MODEL!"
+    ) else (
+        set "OLLAMA_MODEL=gemma3:12b"
+    )
+)
+
+echo ==^> Ollama model: !OLLAMA_MODEL!
+echo.
 
 REM Try common Ollama install paths first, in case PATH is not refreshed.
 if exist "%LOCALAPPDATA%\Programs\Ollama\ollama.exe" (
@@ -129,7 +226,7 @@ if errorlevel 1 (
     echo ==^> Ollama already installed.
 )
 
-REM --- 2. Make sure the Ollama server is up ---------------------------------
+REM --- Make sure the Ollama server is up --------------------------------------
 
 curl -fsS http://127.0.0.1:11434/api/tags >nul 2>&1
 if errorlevel 1 (
@@ -154,20 +251,28 @@ if errorlevel 1 (
 
 echo ==^> Ollama server is up.
 
-REM --- 3. Pull the model -----------------------------------------------------
+REM --- Pull the model ----------------------------------------------------------
 
-echo ==^> Pulling model "%OLLAMA_MODEL%". First run may download several GB.
-ollama pull %OLLAMA_MODEL%
+echo ==^> Pulling model "!OLLAMA_MODEL!". First run may download several GB.
+ollama pull !OLLAMA_MODEL!
 
 if errorlevel 1 (
-    echo ERROR: Failed to pull the model "%OLLAMA_MODEL%".
+    echo ERROR: Failed to pull the model "!OLLAMA_MODEL!".
     pause
     exit /b 1
 )
 
 echo ==^> Ollama model is ready.
 
-REM --- 4. Python env + deps --------------------------------------------------
+:after_provider_setup
+
+REM Preserve whichever DeepSeek key/model were on record when the OTHER
+REM provider was chosen this run, so switching back and forth later does not
+REM lose them.
+if not defined DEEPSEEK_API_KEY set "DEEPSEEK_API_KEY=!EXIST_KEY!"
+if not defined OLLAMA_MODEL set "OLLAMA_MODEL=!EXIST_MODEL!"
+
+REM --- 3. Python env + deps ----------------------------------------------------
 
 where python >nul 2>&1
 if errorlevel 1 (
@@ -224,20 +329,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-REM --- 5. Local .env ---------------------------------------------------------
+REM --- 4. Write the resolved .env (always overwritten with this run's choice) -
 
-if not exist .env (
-    echo ==^> Writing local .env file...
-    (
-        echo PROVIDER=ollama
-        echo OLLAMA_MODEL=%OLLAMA_MODEL%
-        echo DEEPSEEK_API_KEY=
-    ) > .env
-) else (
-    echo ==^> Keeping existing .env file.
-)
+echo ==^> Writing .env...
+(
+    echo PROVIDER=!PROVIDER!
+    echo OLLAMA_MODEL=!OLLAMA_MODEL!
+    echo DEEPSEEK_API_KEY=!DEEPSEEK_API_KEY!
+) > .env
 
-REM --- 6. Launch -------------------------------------------------------------
+REM --- 5. Launch ---------------------------------------------------------------
 
 echo.
 echo ==^> Starting the FPC brain on http://127.0.0.1:5000 ...
