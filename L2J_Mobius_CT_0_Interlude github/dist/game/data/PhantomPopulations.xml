@@ -43,8 +43,8 @@
 	  twice at once. Two ways to define them (mixable):
 	    - regularCount="N"  -> auto-generate N stable regulars (no authoring; recommended).
 	    - <regular .../>     -> hand-pick a specific name/look/class (below).
-	  (Identity only for now: the phantom is still ephemeral - not yet a persistent character or friend. Player-
-	  crafted phantoms and persistence/friends come in a later phase.)
+	  (Note: you rarely need authored regulars anymore - friend-inviting ANY phantom in game promotes it into
+	  a persistent regular on the spot, and <friend> entries below craft one from scratch.)
 	  <regular> attributes:
 	    name      - the fixed character name (required; must be a valid, unique character name).
 	    female    - true/false (default false).
@@ -60,6 +60,23 @@
 	    <point x="..." y="..." />
 	    <point x="..." y="..." />
 	  </population>
+
+	Crafted friends - <friend> entries (author them in the fpc-editor's Phantoms > Friends panel):
+	  A creation order for a permanent companion made to your own spec ("recreate an old friend"). The next
+	  time the owner is online, the server creates the character next to them, adds it to their friends list,
+	  and from then on it behaves like any befriended regular: always online while you are, chats over the
+	  friends window in its own stable persona, survives restarts. An entry whose name already exists in game
+	  is IGNORED (never duplicated, never re-added after you friend-delete it), so the entries are safe to
+	  leave in this file forever. Apply without a restart via //phantom reload.
+	  <friend> attributes:
+	    owner     - your character's name (required).
+	    name      - the friend's name (required; 1-16 letters/digits, must be free).
+	    class     - fighter | mage | elder | prophet | warcryer | a class id (default: random fighter).
+	                elder/prophet/warcryer craft an idle BUDDY friend (buffs on whisper) instead of a hunter.
+	    level     - target level (default 0 = match the owner's level at creation).
+	    sex       - m | f (default random).
+	    face      - 0-2 (default random).  hairStyle - 0-2 (default random).  hairColor - 0-3 (default random).
+	  Example: <friend owner="MyMain" name="Halvard" class="prophet" level="52" sex="m" />
 
 	NOTE: phantoms only hunt when EnableAutoPlay = True in config/Custom/AutoPlay.ini.
 	With no populations defined here, nothing auto-deploys (admin //phantom spawn still works).

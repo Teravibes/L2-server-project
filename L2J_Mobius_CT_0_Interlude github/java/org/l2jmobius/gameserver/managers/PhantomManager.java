@@ -30,6 +30,7 @@ import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
@@ -610,6 +611,23 @@ public class PhantomManager implements IXmlReader
 	private final ConcurrentHashMap<Integer, Set<Integer>> _friendRegularsByOwner = new ConcurrentHashMap<>();
 	// Last time the supervisor ran the friend-regular ensure pass (throttled; it self-heals, no need every tick).
 	private long _lastFriendEnsure = 0;
+	// <friend> creation orders authored in the fpc-editor (PhantomPopulations.xml): materialized once when the
+	// owner is online (create + befriend + spawn), then inert - an entry whose name already exists is skipped,
+	// so the file can stay in place and never duplicates or resurrects a friend the player later deleted.
+	private final List<CraftedFriend> _craftedFriends = new ArrayList<>();
+
+	/** A `<friend>` node from PhantomPopulations.xml: a friend to craft for a player, authored in the fpc-editor. */
+	private static class CraftedFriend
+	{
+		String owner; // the real player's character name
+		String name; // the friend's character name (also the "already created" marker)
+		String classSpec = ""; // fighter/mage/elder/prophet/warcryer or a class id; empty = random fighter
+		int level; // 0 = match the owner's level at creation
+		int sex = -1; // 0 male, 1 female, -1 random
+		int face = -1; // 0-2, -1 random
+		int hairStyle = -1; // 0-2, -1 random
+		int hairColor = -1; // 0-3, -1 random
+	}
 
 	protected PhantomManager()
 	{
@@ -629,14 +647,43 @@ public class PhantomManager implements IXmlReader
 		sweepOrphanedPhantoms();
 
 		_populations.clear();
+		synchronized (_craftedFriends)
+		{
+			_craftedFriends.clear();
+		}
 		parseDatapackFile("data/PhantomPopulations.xml");
-		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _populations.size() + " phantom population(s).");
-		if (!_populations.isEmpty())
+		LOGGER.info(getClass().getSimpleName() + ": Loaded " + _populations.size() + " phantom population(s), " + _craftedFriends.size() + " crafted-friend order(s).");
+		if (!_populations.isEmpty() || !_craftedFriends.isEmpty())
 		{
 			// Populations are spawned on demand (when a real player approaches), not at boot - the supervisor
-			// drives activation/deactivation, so nothing is created until someone is near.
+			// drives activation/deactivation, so nothing is created until someone is near. Crafted-friend
+			// orders also materialize from the supervisor (when their owner is online).
 			startSupervising();
 		}
+	}
+
+	/**
+	 * Re-reads {@code PhantomPopulations.xml} live ({@code //phantom reload}): despawns everything (persistent
+	 * regulars keep their rows and are respawned by the friend ensure pass), then re-parses populations and
+	 * crafted-friend orders. Unlike {@link #load()} this does NOT run the boot orphan sweeps - phantoms are
+	 * live, and the sweeps are only safe before anything has spawned.
+	 * @return a short result message for the invoking tooling
+	 */
+	public String reloadPopulations()
+	{
+		final int removed = clear();
+		_populations.clear();
+		synchronized (_craftedFriends)
+		{
+			_craftedFriends.clear();
+		}
+		parseDatapackFile("data/PhantomPopulations.xml");
+		if (!_populations.isEmpty() || !_craftedFriends.isEmpty())
+		{
+			startSupervising();
+		}
+		LOGGER.info(getClass().getSimpleName() + ": Reloaded PhantomPopulations.xml: " + _populations.size() + " population(s), " + _craftedFriends.size() + " crafted-friend order(s); " + removed + " phantom(s) despawned.");
+		return "Reloaded: " + _populations.size() + " population(s), " + _craftedFriends.size() + " friend order(s). " + removed + " phantom(s) despawned; zones redeploy on approach, friends rejoin in ~15s.";
 	}
 
 	@Override
@@ -680,6 +727,32 @@ public class PhantomManager implements IXmlReader
 			});
 			generateAutoRegulars(population);
 			_populations.add(population);
+		}));
+
+		// <friend> creation orders (authored in the fpc-editor's Phantoms > Friends panel): craft a persistent
+		// regular to the given spec for the given player, once, the next time that player is online.
+		forEach(document, "list", listNode -> forEach(listNode, "friend", friendNode ->
+		{
+			final StatSet set = new StatSet(parseAttributes(friendNode));
+			final CraftedFriend friend = new CraftedFriend();
+			friend.owner = set.getString("owner", "").trim();
+			friend.name = set.getString("name", "").trim();
+			if (friend.owner.isEmpty() || friend.name.isEmpty())
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Skipping a <friend> without both owner and name.");
+				return;
+			}
+			friend.classSpec = set.getString("class", "");
+			friend.level = set.getInt("level", 0);
+			final String sex = set.getString("sex", "").trim().toLowerCase();
+			friend.sex = sex.startsWith("f") ? 1 : sex.startsWith("m") ? 0 : -1;
+			friend.face = set.getInt("face", -1);
+			friend.hairStyle = set.getInt("hairStyle", -1);
+			friend.hairColor = set.getInt("hairColor", -1);
+			synchronized (_craftedFriends)
+			{
+				_craftedFriends.add(friend);
+			}
 		}));
 	}
 
@@ -1343,6 +1416,39 @@ public class PhantomManager implements IXmlReader
 		}
 		befriendPhantom(owner, phantom);
 		return "Created your friend '" + name + "' (" + playerClass + ", level " + targetLevel + (role.isBuddy() ? (", " + role + " buddy") : "") + ") - added to your friends list.";
+	}
+
+	/**
+	 * Attempts every pending editor-authored {@code <friend>} order belonging to this (online, real) player:
+	 * an order whose name already exists is inert (created on an earlier pass / an earlier boot - never
+	 * duplicated, never re-befriended after a friend-delete), anything else is crafted via
+	 * {@link #craftFriend}. Each order is attempted at most once per load - success or failure it is removed,
+	 * so a bad entry (invalid name/class) logs once instead of spamming every pass; a reload re-arms it.
+	 */
+	private void materializeCraftedFriends(Player owner)
+	{
+		if ((owner == null) || isPhantom(owner))
+		{
+			return;
+		}
+		synchronized (_craftedFriends)
+		{
+			for (Iterator<CraftedFriend> it = _craftedFriends.iterator(); it.hasNext();)
+			{
+				final CraftedFriend friend = it.next();
+				if (!friend.owner.equalsIgnoreCase(owner.getName()))
+				{
+					continue;
+				}
+				it.remove();
+				if (CharInfoTable.getInstance().doesCharNameExist(friend.name))
+				{
+					continue; // already created on an earlier boot - the order is permanently inert
+				}
+				final String result = craftFriend(owner, friend.name, friend.classSpec, friend.level, friend.sex, friend.face, friend.hairStyle, friend.hairColor);
+				LOGGER.info(getClass().getSimpleName() + ": <friend> order '" + friend.name + "' for " + owner.getName() + ": " + result);
+			}
+		}
 	}
 
 	/** @return the charIds of the given player's befriended regulars (friends on the {@code phantom_regular} account). */
@@ -3328,6 +3434,14 @@ public class PhantomManager implements IXmlReader
 				if (owner != null)
 				{
 					ensureFriendRegulars(entry.getKey(), owner);
+				}
+			}
+			// Materialize any editor-authored <friend> orders whose owner is online.
+			if (!_craftedFriends.isEmpty())
+			{
+				for (Player observer : observers)
+				{
+					materializeCraftedFriends(observer);
 				}
 			}
 		}

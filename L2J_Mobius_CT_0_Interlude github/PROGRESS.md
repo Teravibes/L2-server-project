@@ -833,13 +833,19 @@ code — **the three "High" items were already fixed**, so **do not re-implement
       <bot>")` — so whisper/party/shout chats pick the friendship up from memory too. Java side:
       `handleFriendMessage` sends mode `FRIEND` (was `WHISPER`). Conversation history is shared with
       whispers (same `(player, bot)` key).
-  - ✅ **Phase 3 add-on — player-crafted phantoms DONE (2026-07-01):** both halves. "Adopt anyone you meet"
-    via promotion-on-befriend (§12f), and "create from scratch to your own spec" via
-    **`//phantom friend <name> [class] [level] [m|f] [face 0-2] [hairstyle 0-2] [haircolor 0-3]`**
-    (`AdminPhantom.java` → `PhantomManager.craftFriend`). Class accepts
-    fighter/mage/elder/prophet/warcryer or a raw class id (default random fighter); level defaults to
-    yours; omitted looks roll random. The friend is created directly on the `phantom_regular` account,
-    spawned next to you (buddy classes come back as proper idle buddies), and befriended on the spot.
+  - ✅ **Phase 3 add-on — player-crafted phantoms DONE (2026-07-01, reworked same day):** both halves.
+    "Adopt anyone you meet" via promotion-on-befriend (§12f), and "create from scratch to your own spec"
+    authored in the **fpc-editor's Phantoms → Friends panel** (user choice; the interim `//phantom friend`
+    admin command was scrapped in favor of the tool). The editor writes **`<friend owner name [class]
+    [level] [sex] [face] [hairStyle] [hairColor]>`** entries into `PhantomPopulations.xml`;
+    `PhantomManager` parses them as *creation orders* and materializes each once its owner is online
+    (supervisor pass): `craftFriend()` creates the character directly on `phantom_regular`, spawns it
+    next to the owner (elder/prophet/warcryer specs come back as idle buddies), and befriends it. An
+    order whose name already exists is inert - safe to leave in the file forever, never duplicates,
+    never re-adds after a friend-delete. Orders are attempted once per load (bad entries log once).
+    **New `//phantom reload`** re-reads `PhantomPopulations.xml` live (populations + friend orders;
+    despawn-all, zones redeploy on approach, friends rejoin via the ensure pass) - phantom XML edits no
+    longer need a server restart.
 
 ---
 

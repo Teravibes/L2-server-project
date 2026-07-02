@@ -32,10 +32,8 @@ import org.l2jmobius.gameserver.model.actor.Player;
  * <ul>
  * <li>{@code //phantom spawn [count] [level]} - spawn N clientless phantom fighters at your position
  * (default 1) brought to the given level (default 1).</li>
- * <li>{@code //phantom friend <name> [class] [level] [m|f] [face 0-2] [hairstyle 0-2] [haircolor 0-3]} -
- * craft a persistent regular to your own spec, spawned next to you and befriended on the spot. Class:
- * fighter/mage/elder/prophet/warcryer or a class id (default random fighter); level defaults to yours;
- * omitted looks are random.</li>
+ * <li>{@code //phantom reload} - re-read PhantomPopulations.xml live (populations + editor-authored
+ * {@code <friend>} orders): everything despawns, zones redeploy on approach, friends rejoin in ~15s.</li>
  * <li>{@code //phantom clear} - despawn all phantoms.</li>
  * <li>{@code //phantom count} - report how many are active.</li>
  * <li>{@code //phantom debug [on|off]} - toggle the raid combat trace (logs to the gameserver console).</li>
@@ -55,7 +53,7 @@ public class AdminPhantom implements IAdminCommandHandler
 		final String[] words = command.split(" ");
 		if (words.length < 2)
 		{
-			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | friend <name> [class] [level] [m|f] | clear | count | debug [on|off]");
+			activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | reload | clear | count | debug [on|off]");
 			return false;
 		}
 
@@ -104,38 +102,10 @@ public class AdminPhantom implements IAdminCommandHandler
 				activeChar.sendSysMessage("Spawned " + spawned + "/" + count + " phantom(s) at level " + level + ". Active: " + PhantomManager.getInstance().getCount());
 				break;
 			}
-			case "friend":
+			case "reload":
 			{
-				// //phantom friend <name> [class] [level] [m|f] [face] [hairstyle] [haircolor]
-				if (words.length < 3)
-				{
-					activeChar.sendSysMessage("Usage: //phantom friend <name> [fighter|mage|elder|prophet|warcryer|classId] [level] [m|f] [face 0-2] [hairstyle 0-2] [haircolor 0-3]");
-					return false;
-				}
-				final String name = words[2];
-				final String classSpec = (words.length > 3) ? words[3] : "";
-				int level = 0; // 0 = match the admin's level
-				if (words.length > 4)
-				{
-					try
-					{
-						level = Integer.parseInt(words[4]);
-					}
-					catch (NumberFormatException e)
-					{
-						activeChar.sendSysMessage("Level must be a number (1-80), or omit it to match yours.");
-						return false;
-					}
-				}
-				int sex = -1; // random
-				if (words.length > 5)
-				{
-					sex = words[5].equalsIgnoreCase("f") ? 1 : words[5].equalsIgnoreCase("m") ? 0 : -1;
-				}
-				final int face = parseAppearance(words, 6, 2);
-				final int hairStyle = parseAppearance(words, 7, 2);
-				final int hairColor = parseAppearance(words, 8, 3);
-				activeChar.sendSysMessage(PhantomManager.getInstance().craftFriend(activeChar, name, classSpec, level, sex, face, hairStyle, hairColor));
+				// Re-read PhantomPopulations.xml live: populations + editor-authored <friend> orders.
+				activeChar.sendSysMessage(PhantomManager.getInstance().reloadPopulations());
 				break;
 			}
 			case "clear":
@@ -165,29 +135,12 @@ public class AdminPhantom implements IAdminCommandHandler
 			}
 			default:
 			{
-				activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | friend <name> [class] [level] [m|f] | clear | count | debug [on|off]");
+				activeChar.sendSysMessage("Usage: //phantom spawn [count] [level] | reload | clear | count | debug [on|off]");
 				return false;
 			}
 		}
 
 		return true;
-	}
-
-	/** @return the appearance value at {@code words[index]} clamped to 0-{@code max}, or -1 (random) if absent/invalid. */
-	private static int parseAppearance(String[] words, int index, int max)
-	{
-		if (words.length <= index)
-		{
-			return -1;
-		}
-		try
-		{
-			return Math.max(0, Math.min(max, Integer.parseInt(words[index])));
-		}
-		catch (NumberFormatException e)
-		{
-			return -1;
-		}
 	}
 
 	@Override

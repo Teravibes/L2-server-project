@@ -14,12 +14,15 @@ phantom (field hunter, recruit, buddy) → instant accept + permanent promotion 
 persistent regular; kept online with you (self-healing 15s ensure pass); spawns at login /
 despawns at logout at its last position; friend chat answered by the brain in **FRIEND
 mode** (knows you're friends — warm tone + friendship written to `fpc_memory.json` so every
-channel picks it up); **`//phantom friend <name> [class] [level] [m|f] [face] [hairstyle]
-[haircolor]`** crafts a brand-new friend to your own spec next to you (the "recreate an old
-friend" idea — done). Support-class friends re-gear correctly as casters
-(`PlayerClass.isMage()` instead of the DD-pool check); buddy classes come back as proper
-idle buddies. CHAT-DEBUG logging has been stripped (chat delivery confirmed working; root
-cause was the 20s brain timeout vs ~30s Ollama generation — now 45s).
+channel picks it up); and **crafted friends are authored in the fpc-editor** (Phantoms →
+Friends panel): it writes `<friend>` entries into `PhantomPopulations.xml`, which the
+server materializes once per order when the owner is online (create on `phantom_regular` +
+spawn next to owner + befriend; name-already-exists = inert). The interim `//phantom
+friend` admin command was **scrapped** (user choice) in favor of the tool; **new
+`//phantom reload`** applies phantom XML edits live (no restart). Support-class friends
+re-gear correctly as casters; buddy-class specs come back as proper idle buddies.
+CHAT-DEBUG logging has been stripped (root cause was the 20s brain timeout vs ~30s Ollama
+generation — now 45s).
 
 Earlier this session: promotion-on-befriend (§12f), buddy befriending, Phase 3a+3b (friend
 tier), Phase 2 (persistence), brain timeout fix.
@@ -36,14 +39,18 @@ tier), Phase 2 (persistence), brain timeout fix.
   whisper persona + explicit "you two are friends" note (warm, familiar tone) + a
   `remember_fact(player, "social", "Player is in-game friends with <bot>")` so whisper/
   party/shout chats see the friendship too. Conversation history shared with whispers.
-- **`//phantom friend` command**: `AdminPhantom.java` (datapack, runtime-compiled) →
-  `PhantomManager.craftFriend(owner, name, classSpec, level, sex, face, hairStyle,
-  hairColor)`. Validates name (1-16 alnum, free), resolves class
-  (fighter/mage/elder/prophet/warcryer keyword or class id, default random fighter), level
-  defaults to yours, random looks where omitted. Creates straight onto `phantom_regular`
-  (no promotion step), spawns geo-snapped next to you via `finishSpawn` (buddy role
-  restored for buddy classes; failed spawns delete the half-made row), then
-  `befriendPhantom`.
+- **Crafted friends via the fpc-editor** (replaces the scrapped `//phantom friend`):
+  editor Phantoms → Friends panel (form + list; `parsePhantomFriends`/`buildPhantomXml`
+  round-trip `<friend>` nodes). Server: `CraftedFriend` orders parsed from
+  `PhantomPopulations.xml`; `materializeCraftedFriends(owner)` runs in the supervisor's
+  15s pass for each online real player — each order attempted once per load (name exists →
+  permanently inert; failures log once), then `craftFriend()`: validates name (1-16
+  alnum, free), resolves class keyword/id, level 0 = owner's, random looks where omitted,
+  creates straight onto `phantom_regular`, spawns geo-snapped next to the owner (buddy
+  classes → idle buddies; failed spawn deletes the half-made row), `befriendPhantom`.
+  `AdminPhantom` gained `//phantom reload` → `PhantomManager.reloadPopulations()` (clear +
+  re-parse, NO boot sweeps — those are only safe pre-spawn). XML header documents
+  `<friend>`.
 
 ## In flight / next up
 

@@ -217,6 +217,36 @@
 		<div id="list" style="min-height:160px"></div>
 		</details>
 
+		<!-- ====== FRIENDS (phantom mode only) ====== -->
+		<details class="section" id="friendSection" style="display:none" open>
+		<summary>Friends (crafted companions)</summary>
+		<div class="muted" style="margin-bottom:6px">Craft a permanent friend to your own spec — e.g. recreate an old friend. Saved as
+		<b>&lt;friend&gt;</b> entries in PhantomPopulations.xml; the server creates it next to the owner the next time they're online
+		(then befriends it — always-online, chats in its own stable persona). An entry whose name already exists in game is ignored,
+		so this list is safe to leave in place. Apply live with <b>//phantom reload</b>.</div>
+		<label>owner (your character's name)</label><input id="fr_owner" placeholder="e.g. MyMain" />
+		<label>friend name</label><input id="fr_name" placeholder="e.g. Halvard (1-16 letters/digits)" />
+		<label>class</label>
+		<select id="fr_class">
+			<option value="">Fighter (random melee class)</option>
+			<option value="mage">Mage (random nuker class)</option>
+			<option value="elder">Buddy — Elven Elder (mage buffs, heals)</option>
+			<option value="prophet">Buddy — Prophet (fighter buffs)</option>
+			<option value="warcryer">Buddy — Warcryer (orc buffs)</option>
+		</select>
+		<div class="row">
+			<div><label>level (0 = match owner)</label><input id="fr_level" type="number" min="0" max="80" value="0" /></div>
+			<div><label>sex</label><select id="fr_sex"><option value="">random</option><option value="m">male</option><option value="f">female</option></select></div>
+		</div>
+		<div class="row">
+			<div><label>face</label><select id="fr_face"><option value="-1">random</option><option>0</option><option>1</option><option>2</option></select></div>
+			<div><label>hair style</label><select id="fr_hairStyle"><option value="-1">random</option><option>0</option><option>1</option><option>2</option></select></div>
+			<div><label>hair color</label><select id="fr_hairColor"><option value="-1">random</option><option>0</option><option>1</option><option>2</option><option>3</option></select></div>
+		</div>
+		<div class="row" style="margin-top:8px"><button id="fr_add" style="flex:1;background:#2e9d62">+ Add friend</button></div>
+		<div id="friendList" style="margin-top:8px"></div>
+		</details>
+
 		<details class="section" id="imgSection">
 			<summary>Map image layers</summary>
 			<label><input id="editImages" type="checkbox" style="width:auto;margin-right:6px" />edit images (drag / resize)</label>
@@ -270,6 +300,7 @@ function applyModeUi(){
 	document.getElementById('modePhantom').classList.toggle('sec', mode !== 'phantom');
 	document.getElementById('npcOnly').style.display = (mode === 'phantom') ? 'none' : '';
 	document.getElementById('phantomOnly').style.display = (mode === 'phantom') ? '' : 'none';
+	document.getElementById('friendSection').style.display = (mode === 'phantom') ? '' : 'none';
 	document.getElementById('respawnText').textContent = (mode === 'phantom') ? 'respawn (replace on death)' : 'respawn (field hunters)';
 	document.getElementById('popSectionTitle').textContent = (mode === 'phantom') ? 'Phantom populations' : 'Populations';
 }
@@ -658,6 +689,7 @@ async function loadWorkspace(entries, label){
 	renderImageLayerList();
 	stores.npc = { pops: [], preserved: { assigns: [], def: null }, fileName: 'FakePlayerBehavior.xml', handle: null, loaded: false };
 	stores.phantom = { pops: [], preserved: { assigns: [], def: null }, fileName: 'PhantomPopulations.xml', handle: null, loaded: false };
+	phantomFriends = []; renderFriendList();
 	activate('npc'); applyModeUi();
 	await loadRoutes(entries);
 	const geo = entries.filter(e => /(\d+)_(\d+)\.l2j$/i.test(e.name));
@@ -689,7 +721,10 @@ async function loadWorkspace(entries, label){
 	}
 	if (phantomE){
 		const pf = await entryFile(phantomE);
-		stores.phantom.pops = parsePhantomText(await pf.text());
+		const ptext = await pf.text();
+		stores.phantom.pops = parsePhantomText(ptext);
+		phantomFriends = parsePhantomFriends(ptext);
+		renderFriendList();
 		stores.phantom.handle = phantomE.handle || null;
 		stores.phantom.fileName = pf.name;
 		stores.phantom.loaded = true;
@@ -1467,6 +1502,57 @@ function parsePhantomText(text){
 	}
 	return arr;
 }
+// Crafted-friend orders (<friend> entries): kept alongside the populations and re-emitted on save.
+let phantomFriends = [];
+function parsePhantomFriends(text){
+	const doc = new DOMParser().parseFromString(text, 'application/xml');
+	const list = doc.querySelector('list'); if (!list) return [];
+	const arr = [];
+	for (const node of list.children){
+		if (node.tagName !== 'friend') continue;
+		const g = a => node.getAttribute(a);
+		arr.push({
+			owner: g('owner') || '', name: g('name') || '', cls: g('class') || '',
+			level: +(g('level') || 0), sex: g('sex') || '',
+			face: (g('face') != null) ? +g('face') : -1,
+			hairStyle: (g('hairStyle') != null) ? +g('hairStyle') : -1,
+			hairColor: (g('hairColor') != null) ? +g('hairColor') : -1
+		});
+	}
+	return arr;
+}
+function renderFriendList(){
+	const el = document.getElementById('friendList');
+	if (!phantomFriends.length){ el.innerHTML = '<div class="muted">No crafted friends yet.</div>'; return; }
+	el.innerHTML = phantomFriends.map((f, i) => {
+		const cls = f.cls || 'fighter';
+		const lvl = f.level > 0 ? ('lvl ' + f.level) : 'owner’s lvl';
+		return `<div class="row" style="align-items:center;margin-bottom:4px">
+			<div style="flex:1;font-size:12px"><b>${f.name}</b> → ${f.owner} <span class="muted">(${cls}, ${lvl}${f.sex ? ', ' + f.sex : ''})</span></div>
+			<button class="sec" style="padding:0 8px" onclick="removeFriend(${i})">✕</button>
+		</div>`;
+	}).join('');
+}
+function removeFriend(i){ phantomFriends.splice(i, 1); renderFriendList(); }
+document.getElementById('fr_add').onclick = () => {
+	const owner = document.getElementById('fr_owner').value.trim();
+	const name = document.getElementById('fr_name').value.trim();
+	if (!owner){ alert('Enter the owner: your in-game character name.'); return; }
+	if (!/^[A-Za-z0-9]{1,16}$/.test(name)){ alert('Friend name must be 1-16 letters/digits.'); return; }
+	if (phantomFriends.some(f => f.name.toLowerCase() === name.toLowerCase())){ alert('A friend with that name is already in the list.'); return; }
+	phantomFriends.push({
+		owner, name,
+		cls: document.getElementById('fr_class').value,
+		level: Math.max(0, Math.min(80, +document.getElementById('fr_level').value || 0)),
+		sex: document.getElementById('fr_sex').value,
+		face: +document.getElementById('fr_face').value,
+		hairStyle: +document.getElementById('fr_hairStyle').value,
+		hairColor: +document.getElementById('fr_hairColor').value
+	});
+	document.getElementById('fr_name').value = '';
+	renderFriendList();
+};
+renderFriendList(); // initial empty-state hint
 function buildPhantomXml(){
 	const esc = s => String(s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
 	let out = '<?xml version="1.0" encoding="UTF-8"?>\n<list>\n';
@@ -1482,6 +1568,16 @@ function buildPhantomXml(){
 			p.poly.forEach(v => out += `\t\t<point x="${v.x}" y="${v.y}" z="${p.z}" />\n`);
 			out += `\t</population>\n`;
 		} else out += `\t<population ${a} />\n`;
+	});
+	phantomFriends.forEach(f => {
+		let a = `owner="${esc(f.owner)}" name="${esc(f.name)}"`;
+		if (f.cls) a += ` class="${esc(f.cls)}"`;
+		if (f.level > 0) a += ` level="${f.level}"`;
+		if (f.sex) a += ` sex="${esc(f.sex)}"`;
+		if (f.face >= 0) a += ` face="${f.face}"`;
+		if (f.hairStyle >= 0) a += ` hairStyle="${f.hairStyle}"`;
+		if (f.hairColor >= 0) a += ` hairColor="${f.hairColor}"`;
+		out += `\t<friend ${a} />\n`;
 	});
 	out += '</list>\n';
 	return out;
