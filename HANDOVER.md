@@ -9,34 +9,36 @@
 
 ## Current state
 
-Landed **the full friend tier for stable-identity "regulars" — Phase 3a + 3b**
-(PROGRESS.md §12d/§12e). You can friend-invite a regular (auto-accepted server-side, since
-it's clientless), it shows **"online" whenever you're logged in** (spawned at its own
-location on your `EnterWorld`, despawned on your logout), and you can hold a private
-friends-list conversation with it — answered by the LLM brain in the regular's stable
-persona, over the friend channel, at a **human 1-4s cadence**. All built on the Phase 2
-stable `charId`, so `character_friends` rows survive despawn/respawn/reboot. Stock
-packet-handler edits (`RequestFriendInvite`, `RequestSendFriendMsg`, `EnterWorld`,
-`Disconnection`) are thin guard+delegate; logic lives in the custom managers. Only the
-brain "we're friends" **memory flag** remains (a `fpc_brain.py` follow-up).
+Landed **promotion-on-befriend** (PROGRESS.md §12f) on top of the full friend tier
+(§12d/§12e): **friend-inviting ANY live phantom auto-accepts and promotes it into a
+persistent regular on the spot** — no XML authoring needed at all (user decision after
+discovering the live config defines zero regulars). Its row flips to `phantom_regular`
+(durable: `storeMe()` never writes `account_name`), it's kept **online with you** by a
+self-healing 15s supervisor pass (respawns after death / zone despawn), shows online at
+login, despawns at your logout, and chats over the friend channel in its stable persona at
+a human 1-4s cadence. Buddies are politely declined (population-managed fixtures).
+Friend-deleting a regular prunes it live and its row is swept at next boot. Only the brain
+"we're friends" **memory flag** remains (a `fpc_brain.py` follow-up).
 
-Earlier this session: Phase 2 (persistence — regulars get a stable `charId` under the
-`phantom_regular` account, re-geared each spawn on load), and Phase 1 (identity only).
+Earlier this session: Phase 3a+3b (friend tier), Phase 2 (persistence), timeout fix
+(brain 20s→45s — was why bots never replied), temporary CHAT-DEBUG logging (still in).
 
-## What was just done
+## What was just done (promotion-on-befriend, §12f)
 
-- `PhantomManager.java`: 3a — `isRegular()` + `befriendRegular()` (server-side friend accept:
-  `INSERT INTO character_friends` both ways + both in-memory lists + `L2Friend` online packet).
-  3b — `onOwnerLogin()`/`onOwnerLogout()` (login-spawn / logout-despawn of a player's
-  friend-regulars), `spawnFriendRegular()` (loads by charId, spawns at its stored location),
-  `findFriendRegulars()`, `otherOnlineFriendOf()` (hand-over guard), extracted shared
-  `finishSpawn()`, new `PhantomData.friendOwnerId`, constant `FRIEND_SPAWN_DELAY`.
-- `FakePlayerChatManager.java`: `handleFriendMessage()` — brain call (mode `WHISPER` → stable
-  `_voice()` persona) replying as `L2FriendSay` at a human cadence (`FRIEND_THINK_MIN..MAX` +
-  typing time, ~1-4s); canned fallback if the brain is offline. A regular is a `Player`
-  phantom, so it's outside the Npc whisper path (`resolveBot`) — dedicated path.
-- Stock hooks (all one guarded delegate call): `RequestFriendInvite`, `RequestSendFriendMsg`,
-  `EnterWorld` (login), `Disconnection.storeAndDelete` (logout).
+- `PhantomManager.java`: `_promoted` set (in-memory bridge — `Player._accountName` is
+  final, so a live promoted instance can't change account until reloaded), `isPhantom()`,
+  `befriendPhantom()` (replaces `befriendRegular`: buddy decline → promote via
+  `UPDATE characters SET account_name` → friendship insert → cache register),
+  `_friendRegularsByOwner` cache + `ensureFriendRegulars()` + supervise ensure pass
+  (15s, prunes friend-deleted ids via the owner's in-memory list), `despawn()` persistence
+  now via `isRegular()` (protects live-promoted phantoms incl. recruits — `despawnRecruit`
+  routes through `despawn`), boot-sweep second pass (friendless `phantom_regular` rows),
+  spawn log now says `regular`/`friend-regular`/`phantom`/buddy.
+- Stock `RequestFriendInvite`: hook now fires for **any** phantom (`isPhantom || isRegular`).
+- Verified: `UPDATE_CHARACTER` has no `account_name` column (promotion can't be reverted by
+  store); stock `RequestFriendDel` deletes both directions + updates in-memory lists.
+- Known rough edge: a promoted support-class recruit re-spawns geared as melee
+  (`isMageClass` only knows the DD pool) — functional, cosmetic follow-up.
 - `CLAUDE.md`: added "When to delegate to Sonnet vs. do it on Opus" guidance.
 - **Not compiled here** (JDK 21, no Ant) — hand-verified. Confirmed against source:
   `World.getPlayer(int)`/`getPlayers()`, `getFriendList()`, `L2Friend(Player,int)`,
@@ -64,8 +66,11 @@ to confirm replies now arrive (a `CHAT-DEBUG` line per reply), then strip all `C
 - **Brain friendship memory (3b remainder):** persist a "we're friends" flag in
   `fpc_brain.py` (a `FRIEND` mode) so tone reflects the relationship — a Python-only
   follow-up (friend PMs currently use `WHISPER` mode: right persona, no explicit memory).
-- **Phase 3 add-on — player-crafted phantoms** (author a persistent phantom to spec, then
-  befriend it): builds on all of the above.
+- **Player-crafted phantoms — authoring front-end only:** the "adopt anyone you meet" half
+  is DONE (promotion-on-befriend, §12f). Remaining: an in-game UI/command to create one
+  from scratch (name/appearance/class), which then funnels into the same promotion path.
+- **Buddy befriending** (currently declined) and **promoted support-class recruits gear as
+  melee** — both flagged in §12f as follow-ups.
 - Other open candidates (§10b / §11): ACTIVE_DEALS orphan-on-ignore TTL, phantom tuning
   config, verifying the still-unverified relayed findings.
 - Standing rules in play: update HANDOVER.md every commit; end every change with a

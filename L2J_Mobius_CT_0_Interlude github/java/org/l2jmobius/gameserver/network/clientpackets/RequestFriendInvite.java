@@ -95,11 +95,12 @@ public class RequestFriendInvite extends ClientPacket
 			return;
 		}
 
-		// A "regular" phantom is clientless and can never answer the friend-request dialog, so accept the
-		// friendship server-side immediately instead of sending a dialog into the void.
-		if (PhantomManager.getInstance().isRegular(friend))
+		// A phantom is clientless and can never answer the friend-request dialog, so accept the friendship
+		// server-side immediately instead of sending a dialog into the void. Befriending also PROMOTES an
+		// ephemeral phantom into a persistent "regular" (stable identity, kept online with its owner).
+		if (PhantomManager.getInstance().isPhantom(friend) || PhantomManager.getInstance().isRegular(friend))
 		{
-			PhantomManager.getInstance().befriendRegular(player, friend);
+			PhantomManager.getInstance().befriendPhantom(player, friend);
 			return;
 		}
 

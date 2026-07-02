@@ -600,6 +600,16 @@ public class PhantomManager implements IXmlReader
 	private final ConcurrentHashMap<Integer, PhantomData> _phantoms = new ConcurrentHashMap<>();
 	private final List<Population> _populations = new ArrayList<>();
 	private boolean _supervising = false;
+	// Live phantoms promoted to regular THIS session (befriended while spawned under the ephemeral 'phantom'
+	// account). Player._accountName is final, so the in-memory instance keeps the old account until it is next
+	// reloaded from DB (where the promotion is already written) - this set bridges that gap for isRegular().
+	private final Set<Integer> _promoted = ConcurrentHashMap.newKeySet();
+	// Cached friend-regular charIds per online real player (ownerObjectId -> regular charIds), so the supervisor
+	// can keep them spawned without re-querying the DB every tick. Loaded at login, extended on befriend,
+	// dropped at logout.
+	private final ConcurrentHashMap<Integer, Set<Integer>> _friendRegularsByOwner = new ConcurrentHashMap<>();
+	// Last time the supervisor ran the friend-regular ensure pass (throttled; it self-heals, no need every tick).
+	private long _lastFriendEnsure = 0;
 
 	protected PhantomManager()
 	{
@@ -975,62 +985,105 @@ public class PhantomManager implements IXmlReader
 	}
 
 	/**
-	 * @return {@code true} if the given player is a persistent "regular" phantom (account
-	 *         {@link #ACCOUNT_NAME_REGULAR}). Real players and ephemeral phantoms return {@code false}. The
-	 *         account is server-internal, so a real player can never carry it - the check needs no world lookup.
+	 * @return {@code true} if the given player is a persistent "regular" phantom - either loaded from the
+	 *         {@link #ACCOUNT_NAME_REGULAR} account, or promoted to it this session by being befriended
+	 *         ({@link #_promoted}; the final in-memory account name lags the DB until the next reload). Real
+	 *         players and ordinary ephemeral phantoms return {@code false}.
 	 */
 	public boolean isRegular(Player player)
 	{
-		return (player != null) && ACCOUNT_NAME_REGULAR.equals(player.getAccountName());
+		return (player != null) && (ACCOUNT_NAME_REGULAR.equals(player.getAccountName()) || _promoted.contains(player.getObjectId()));
+	}
+
+	/** @return {@code true} if the given player is any live phantom this manager owns (regular or ephemeral). */
+	public boolean isPhantom(Player player)
+	{
+		return (player != null) && _phantoms.containsKey(player.getObjectId());
 	}
 
 	/**
-	 * Completes a friendship between a real player and a regular phantom server-side. A regular is clientless,
-	 * so it can never answer the {@code FriendAddRequest} dialog the stock invite flow sends - instead, when a
-	 * player friend-invites a regular we accept immediately: persist the pair in {@code character_friends} both
-	 * directions (mirroring {@code RequestAnswerFriendInvite}) and update both in-memory lists, so the regular
-	 * shows in the player's friends window right away. The regular's charId is stable (Phase 2 persistence), so
-	 * the row stays valid across the phantom despawning and respawning.
+	 * Completes a friendship between a real player and ANY live phantom server-side, promoting the phantom to a
+	 * persistent regular in the process. A phantom is clientless, so it can never answer the
+	 * {@code FriendAddRequest} dialog the stock invite flow sends - instead, when a player friend-invites one we
+	 * accept immediately: promote it to the {@link #ACCOUNT_NAME_REGULAR} account (so its row, name, look and
+	 * class become permanent - "you liked this one, it's a character now"), persist the pair in
+	 * {@code character_friends} both directions (mirroring {@code RequestAnswerFriendInvite}) and update both
+	 * in-memory lists, so it shows in the player's friends window right away. No XML authoring is needed;
+	 * befriending IS what makes a phantom a regular. Buddies are declined: they are population-managed fixtures
+	 * (a befriended one would login-spawn as a hunter next to its own replacement at the post).
 	 * @param player the inviting real player
-	 * @param regular the target regular phantom (assumed {@link #isRegular(Player)})
+	 * @param phantom the target phantom (assumed {@link #isPhantom(Player)})
 	 */
-	public void befriendRegular(Player player, Player regular)
+	public void befriendPhantom(Player player, Player phantom)
 	{
-		if ((player == null) || (regular == null))
+		if ((player == null) || (phantom == null))
 		{
 			return;
 		}
-		if (player.getFriendList().contains(regular.getObjectId()))
+		final PhantomData data = _phantoms.get(phantom.getObjectId());
+		if ((data != null) && data.role.isBuddy())
+		{
+			player.sendMessage(phantom.getName() + " is too busy working to add friends.");
+			return;
+		}
+		if (player.getFriendList().contains(phantom.getObjectId()))
 		{
 			player.sendPacket(SystemMessageId.THIS_PLAYER_IS_ALREADY_REGISTERED_IN_YOUR_FRIENDS_LIST);
 			return;
 		}
+
+		// Promote an ephemeral phantom to a persistent regular: flip its DB row to the regular account so the
+		// boot sweep skips it, despawn keeps it, and the friend login-spawn can find it. The in-memory account
+		// can't change (final), so _promoted covers the live instance until it is next reloaded from DB. The
+		// UPDATE is durable: Player.storeMe() never writes account_name, so nothing can revert it.
+		if (!isRegular(phantom))
+		{
+			try (Connection con = DatabaseFactory.getConnection();
+				PreparedStatement ps = con.prepareStatement("UPDATE characters SET account_name=? WHERE charId=?"))
+			{
+				ps.setString(1, ACCOUNT_NAME_REGULAR);
+				ps.setInt(2, phantom.getObjectId());
+				ps.executeUpdate();
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Failed to promote phantom " + phantom.getName() + " to regular: " + e.getMessage());
+				return; // without the promotion the friendship row would dangle once the phantom's row is deleted
+			}
+			_promoted.add(phantom.getObjectId());
+			LOGGER.info(getClass().getSimpleName() + ": Promoted phantom '" + phantom.getName() + "' (charId=" + phantom.getObjectId() + ") to a persistent regular (befriended by " + player.getName() + ").");
+		}
+
 		try (Connection con = DatabaseFactory.getConnection();
 			PreparedStatement ps = con.prepareStatement("INSERT INTO character_friends (charId, friendId) VALUES (?, ?), (?, ?)"))
 		{
 			ps.setInt(1, player.getObjectId());
-			ps.setInt(2, regular.getObjectId());
-			ps.setInt(3, regular.getObjectId());
+			ps.setInt(2, phantom.getObjectId());
+			ps.setInt(3, phantom.getObjectId());
 			ps.setInt(4, player.getObjectId());
 			ps.execute();
 		}
 		catch (Exception e)
 		{
-			LOGGER.warning(getClass().getSimpleName() + ": Failed to persist friendship between " + player.getName() + " and regular " + regular.getName() + ": " + e.getMessage());
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to persist friendship between " + player.getName() + " and regular " + phantom.getName() + ": " + e.getMessage());
 			return;
 		}
-		player.getFriendList().add(regular.getObjectId());
-		regular.getFriendList().add(player.getObjectId());
+		player.getFriendList().add(phantom.getObjectId());
+		phantom.getFriendList().add(player.getObjectId());
+		// Track it for the supervisor's ensure pass, so from this moment it is kept online with its owner.
+		_friendRegularsByOwner.computeIfAbsent(player.getObjectId(), k -> ConcurrentHashMap.newKeySet()).add(phantom.getObjectId());
 		final SystemMessage msg = new SystemMessage(SystemMessageId.S1_HAS_BEEN_ADDED_TO_YOUR_FRIENDS_LIST);
-		msg.addString(regular.getName());
+		msg.addString(phantom.getName());
 		player.sendPacket(msg);
-		player.sendPacket(new L2Friend(regular, 1)); // show the regular online in the friends window right away
+		player.sendPacket(new L2Friend(phantom, 1)); // show it online in the friends window right away
 	}
 
 	/**
 	 * "Always online" friend behaviour (Phase 3b): shortly after a player logs in, spawn each of their
 	 * befriended regulars at its own stored location and announce it online, so a friend shows up in the
-	 * friends list even when the player is nowhere near that regular's home zone. Runs off the login thread.
+	 * friends list even when the player is nowhere near that regular's home zone. Also primes the
+	 * {@link #_friendRegularsByOwner} cache the supervisor uses to KEEP them online (respawn after death,
+	 * zone deactivation, etc.) for as long as the owner is. Runs off the login thread.
 	 * @param owner the player who just entered the world
 	 */
 	public void onOwnerLogin(Player owner)
@@ -1047,15 +1100,44 @@ public class PhantomManager implements IXmlReader
 			{
 				return; // logged back out before the delay elapsed
 			}
-			for (int regularId : findFriendRegulars(ownerId))
-			{
-				final Player regular = spawnFriendRegular(regularId, ownerId);
-				if (regular != null)
-				{
-					online.sendPacket(new L2Friend(regular, 1)); // flip it online in the already-sent friends list
-				}
-			}
+			final Set<Integer> ids = ConcurrentHashMap.newKeySet();
+			ids.addAll(findFriendRegulars(ownerId));
+			_friendRegularsByOwner.put(ownerId, ids);
+			ensureFriendRegulars(ownerId, online);
 		}, FRIEND_SPAWN_DELAY);
+	}
+
+	/**
+	 * Spawns any of this owner's friend-regulars that are not currently live, announcing each to the owner.
+	 * Called at login and periodically from the supervisor, so a friend that died, was despawned with a
+	 * deactivating population, or failed to spawn earlier comes back on its own while the owner is online.
+	 */
+	private void ensureFriendRegulars(int ownerId, Player owner)
+	{
+		final Set<Integer> ids = _friendRegularsByOwner.get(ownerId);
+		if ((ids == null) || ids.isEmpty())
+		{
+			return;
+		}
+		for (int regularId : ids)
+		{
+			// The player may have friend-deleted it since the cache was primed (stock RequestFriendDel updates
+			// the owner's in-memory list) - prune instead of resurrecting an ex-friend.
+			if (!owner.getFriendList().contains(regularId))
+			{
+				ids.remove(regularId);
+				continue;
+			}
+			if (_phantoms.containsKey(regularId))
+			{
+				continue; // already live (population spawn, a prior ensure, or promoted while spawned)
+			}
+			final Player regular = spawnFriendRegular(regularId, ownerId);
+			if (regular != null)
+			{
+				owner.sendPacket(new L2Friend(regular, 1)); // flip it online in the friends window
+			}
+		}
 	}
 
 	/**
@@ -1071,6 +1153,7 @@ public class PhantomManager implements IXmlReader
 			return;
 		}
 		final int ownerId = owner.getObjectId();
+		_friendRegularsByOwner.remove(ownerId); // stop the supervisor keeping them online
 		for (PhantomData data : new ArrayList<>(_phantoms.values()))
 		{
 			if (data.friendOwnerId != ownerId)
@@ -1341,7 +1424,10 @@ public class PhantomManager implements IXmlReader
 			beginDisperse(phantom, data);
 		}
 		startSupervising();
-		LOGGER.info(getClass().getSimpleName() + ": Spawned " + (role.isBuddy() ? (role + " buddy") : (friendOwnerId != 0 ? "friend-regular" : "phantom")) + " '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
+		final String kind = role.isBuddy() ? (role + " buddy") //
+			: (friendOwnerId != 0) ? "friend-regular" //
+				: ACCOUNT_NAME_REGULAR.equals(phantom.getAccountName()) ? "regular" : "phantom";
+		LOGGER.info(getClass().getSimpleName() + ": Spawned " + kind + " '" + phantom.getName() + "' (objId=" + phantom.getObjectId() + ", level " + level + ").");
 		return phantom;
 	}
 
@@ -2205,7 +2291,9 @@ public class PhantomManager implements IXmlReader
 	private void despawn(PhantomData data)
 	{
 		final int objectId = data.player.getObjectId();
-		final boolean persistent = ACCOUNT_NAME_REGULAR.equals(data.player.getAccountName());
+		// isRegular (not a raw account check) so a phantom promoted THIS session - whose final in-memory
+		// account still reads 'phantom' - is recognized and its row kept too.
+		final boolean persistent = isRegular(data.player);
 		try
 		{
 			AutoPlayTaskManager.getInstance().stopAutoPlay(data.player);
@@ -2221,6 +2309,7 @@ public class PhantomManager implements IXmlReader
 			LOGGER.warning(getClass().getSimpleName() + ": Failed to despawn phantom " + objectId + ": " + e.getMessage());
 		}
 		_phantoms.remove(objectId);
+		_promoted.remove(objectId); // the DB row now carries the regular account; the live-instance bridge is done
 		if (persistent)
 		{
 			return; // keep the row - this regular respawns into the same character next time
@@ -2277,6 +2366,45 @@ public class PhantomManager implements IXmlReader
 		if (!orphanIds.isEmpty())
 		{
 			LOGGER.info(getClass().getSimpleName() + ": Swept " + orphanIds.size() + " orphaned phantom character row(s) left by a previous unclean shutdown.");
+		}
+
+		// Second pass: regulars nobody is friends with anymore. A phantom is promoted to the regular account
+		// the moment it is befriended; if the player later friend-deletes it (stock RequestFriendDel removes
+		// both character_friends directions), its row would otherwise linger forever. XML/auto regulars are
+		// recreated deterministically from their seed on next spawn, so sweeping an unbefriended row loses
+		// nothing but a stale charId nobody references.
+		final List<Integer> friendless = new ArrayList<>();
+		try (Connection con = DatabaseFactory.getConnection();
+			PreparedStatement ps = con.prepareStatement("SELECT charId FROM characters WHERE account_name=? AND NOT EXISTS (SELECT 1 FROM character_friends WHERE friendId = characters.charId)"))
+		{
+			ps.setString(1, ACCOUNT_NAME_REGULAR);
+			try (ResultSet rs = ps.executeQuery())
+			{
+				while (rs.next())
+				{
+					friendless.add(rs.getInt("charId"));
+				}
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to scan for friendless regular rows: " + e.getMessage());
+			return;
+		}
+		for (int objectId : friendless)
+		{
+			try
+			{
+				GameClient.deleteCharByObjId(objectId);
+			}
+			catch (Exception e)
+			{
+				LOGGER.warning(getClass().getSimpleName() + ": Failed to delete friendless regular row " + objectId + ": " + e.getMessage());
+			}
+		}
+		if (!friendless.isEmpty())
+		{
+			LOGGER.info(getClass().getSimpleName() + ": Swept " + friendless.size() + " regular row(s) no longer referenced by any friendship.");
 		}
 	}
 
@@ -3045,6 +3173,22 @@ public class PhantomManager implements IXmlReader
 		final List<Player> observers = onlineObservers();
 		// Spawn populations a player has approached; despawn ones everyone has left (after a grace delay).
 		updatePopulations(observers, now);
+
+		// Keep befriended regulars online with their owners (self-healing: respawns one that died, was
+		// despawned with a deactivating population, or failed an earlier spawn). Throttled - it's a cheap
+		// in-memory check, but there is no need to run it every tick.
+		if ((now - _lastFriendEnsure) >= 15000)
+		{
+			_lastFriendEnsure = now;
+			for (Map.Entry<Integer, Set<Integer>> entry : _friendRegularsByOwner.entrySet())
+			{
+				final Player owner = World.getInstance().getPlayer(entry.getKey());
+				if (owner != null)
+				{
+					ensureFriendRegulars(entry.getKey(), owner);
+				}
+			}
+		}
 		for (PhantomData data : new ArrayList<>(_phantoms.values()))
 		{
 			final Player phantom = data.player;

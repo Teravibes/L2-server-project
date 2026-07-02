@@ -360,13 +360,14 @@ player-global memory
 bot-specific memory
 ```
 
-Status: **Phases 1-2 + Phase 3a done (2026-07-01).** See §12b/§12c/§12d below. Phantom populations can
-define fixed `<regular>` identities (stable name + appearance, optional class) that recur in a zone; a stable
-name already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name). Regulars persist
-across reboots with a stable `charId` (Phase 2), can be befriended and privately chatted with over the
-friends list at a human cadence (Phase 3a), and now spawn at login / despawn at logout so they show "online"
-while their owner is on, anywhere in the world (Phase 3b). Only the brain "we're friends" memory flag remains
-— see §10b / §12d / §12e.
+Status: **Phases 1-3 done (2026-07-01), incl. promotion-on-befriend.** See §12b-§12f below. Phantom
+populations can define fixed `<regular>` identities (stable name + appearance, optional class) that recur in
+a zone; a stable name already yields a stable brain personality (`fpc_brain.py` `_voice()` hashes the name).
+Regulars persist across reboots with a stable `charId` (Phase 2), can be befriended and privately chatted
+with over the friends list at a human cadence (Phase 3a), and spawn at login / despawn at logout so they show
+"online" while their owner is on, anywhere in the world (Phase 3b). **No XML authoring needed: friend-inviting
+ANY phantom auto-promotes it into a persistent regular on the spot (§12f).** Only the brain "we're friends"
+memory flag remains — see §10b / §12d / §12e / §12f.
 
 ---
 
@@ -828,12 +829,11 @@ code — **the three "High" items were already fixed**, so **do not re-implement
     - ⬜ **3b remainder — brain friendship memory:** persist a "we're friends" flag in `fpc_brain.py` memory
       (a `FRIEND` brain mode) so the tone reflects the relationship. Not yet done — friend PMs currently use
       `WHISPER` mode (correct persona, no explicit friend memory). Small Python-side follow-up.
-  - ⬜ **Phase 3 add-on — player-crafted phantoms (user idea):** let a player create a persistent phantom
-    to their own spec (name + appearance, maybe class/level) — e.g. recreate an old friend to "play
-    together" — via an in-game UI/command, then befriend it. Builds directly on the Phase 2 persistent
-    `phantom_regular` character + the Phase 3 friend/spawn-on-login machinery; the only new part is the
-    authoring UI and persisting a user-authored identity (vs. config/auto-generated). Design/approve with
-    the friend tier.
+  - 🟡 **Phase 3 add-on — player-crafted phantoms (user idea):** the "adopt anyone you meet" half is DONE
+    via promotion-on-befriend (§12f — friend-invite any phantom and it becomes a persistent regular, no
+    authoring). Still open: the "create from scratch to your own spec" half (name + appearance, maybe
+    class/level — e.g. recreate an old friend) via an in-game UI/command, which then just funnels into the
+    same promotion machinery. Only the authoring front-end is missing now.
 
 ---
 
@@ -1057,3 +1057,43 @@ constant `FRIEND_SPAWN_DELAY`; stock `EnterWorld` (login hook) and `Disconnectio
 delegate call each. No DB schema change; no XML/config/brain change.
 
 Deploy: Java only (rebuild jar and move it to the live server) — no other files changed.
+
+---
+
+## 12f. Promotion-on-befriend: ANY phantom becomes a regular when friended (2026-07-01)
+
+Goal (user decision): **no XML authoring needed for regulars at all.** Friend-inviting *any* live phantom
+(field hunter, recruited party member) auto-accepts AND **promotes it on the spot** into a persistent
+regular — its row flips to the `phantom_regular` account (`UPDATE characters SET account_name`), so its
+name/look/class/charId become permanent, the boot sweep skips it, despawn keeps it, and the Phase 3b
+always-online lifecycle picks it up immediately. "You liked this one — now it's a character."
+
+Key mechanics / safeguards (all verified against source):
+- `Player._accountName` is **final** — a live instance can't change accounts in memory. The `_promoted` set
+  (objectIds) bridges that: `isRegular()` = account check OR `_promoted`. After any reload the DB account
+  covers it; `despawn()` clears the set entry.
+- **Durable**: `Player.storeMe()`'s `UPDATE_CHARACTER` does NOT include `account_name`, so nothing ever
+  reverts a promotion; and since the DB flip happens at invite time, even a hard kill can't let the boot
+  sweep eat a befriended friend.
+- **Kept online with you**: `befriendPhantom` registers the charId in `_friendRegularsByOwner`; a throttled
+  (15s) supervisor pass (`ensureFriendRegulars`) respawns any missing friend-regular while its owner is
+  online (covers death, population despawn, failed spawns). It also **prunes** ids the owner has since
+  friend-deleted (stock `RequestFriendDel` updates the in-memory list), so an ex-friend isn't resurrected.
+- **Friend-deleted regulars are cleaned at boot**: second sweep pass removes `phantom_regular` rows with no
+  `character_friends` reference. (Unbefriended XML/auto regular rows get swept too — harmless: their
+  identity is deterministic from seed; only the unreferenced charId changes.)
+- **Buddies are declined** ("too busy working to add friends"): a befriended buddy would login-spawn as a
+  hunter next to its own replacement at the post. Proper buddy-befriending is a follow-up.
+- **Recruited party members are the prime use case** — `despawnRecruit` routes through `despawn()`, whose
+  persistence check now uses `isRegular()`, so a promoted recruit's row survives party disband.
+- Spawn log now distinguishes `regular` / `friend-regular` / `phantom` / buddy, so testing is readable.
+
+Known rough edge: a promoted **support-class** recruit (Bishop/PP/etc.) re-spawns geared as a melee fighter
+(`isMageClass` only knows the DD-mage pool) — functional, looks off. Follow-up if it matters.
+
+Code touchpoints: `PhantomManager` — `_promoted`, `_friendRegularsByOwner`, `_lastFriendEnsure`;
+`isPhantom()`, `befriendPhantom()` (replaces `befriendRegular`), `ensureFriendRegulars()`, supervise ensure
+pass, `despawn()` persistence via `isRegular()`, boot-sweep second pass, spawn-log kind. Stock
+`RequestFriendInvite` — hook now fires for any phantom. No DB schema change.
+
+Deploy: Java only (rebuild jar and move it to the live server) — no XML changes needed anymore.
