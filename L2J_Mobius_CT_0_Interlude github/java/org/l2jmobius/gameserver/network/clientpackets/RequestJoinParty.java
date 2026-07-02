@@ -94,6 +94,21 @@ public class RequestJoinParty extends ClientPacket
 			return;
 		}
 
+		// Befriended regular phantom (friend tier): invite it like a person - it accepts server-side and is
+		// adopted with the full recruited-member party AI, returning to idle friend life when the party ends.
+		// Gated on the requester's friend list, so a stranger's phantom stays "offline" to everyone else.
+		if (PhantomManager.getInstance().isPhantom(target) && requestor.getFriendList().contains(target.getObjectId()))
+		{
+			final SystemMessage invited = new SystemMessage(SystemMessageId.YOU_HAVE_INVITED_S1_TO_YOUR_PARTY);
+			invited.addString(target.getName());
+			requestor.sendPacket(invited);
+			if (!PhantomPartyManager.getInstance().onInvitedFriend(requestor, target))
+			{
+				requestor.sendMessage(target.getName() + " could not join your party right now.");
+			}
+			return;
+		}
+
 		if ((target.getClient() == null) || target.getClient().isDetached())
 		{
 			requestor.sendMessage("Player is in offline mode.");

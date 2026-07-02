@@ -223,7 +223,8 @@
 		<div class="muted" style="margin-bottom:6px">Craft a permanent friend to your own spec — e.g. recreate an old friend. Saved as
 		<b>&lt;friend&gt;</b> entries in PhantomPopulations.xml; the server creates it next to the owner the next time they're online
 		(then befriends it — always-online, chats in its own stable persona). An entry whose name already exists in game is ignored,
-		so this list is safe to leave in place. Apply live with <b>//phantom reload</b>.</div>
+		so this list is safe to leave in place. <b>Adding or removing a friend saves the file immediately</b> — no separate Save
+		click. Apply live with <b>//phantom reload</b>.</div>
 		<label>owner (your character's name)</label><input id="fr_owner" placeholder="e.g. MyMain" />
 		<label>friend name</label><input id="fr_name" placeholder="e.g. Halvard (1-16 letters/digits)" />
 		<label>race / class</label>
@@ -1562,7 +1563,7 @@ function renderFriendList(){
 		</div>`;
 	}).join('');
 }
-function removeFriend(i){ phantomFriends.splice(i, 1); renderFriendList(); }
+function removeFriend(i){ phantomFriends.splice(i, 1); renderFriendList(); saveXml(); } // persists immediately, like add
 document.getElementById('fr_add').onclick = () => {
 	const owner = document.getElementById('fr_owner').value.trim();
 	const name = document.getElementById('fr_name').value.trim();
@@ -1580,6 +1581,7 @@ document.getElementById('fr_add').onclick = () => {
 	});
 	document.getElementById('fr_name').value = '';
 	renderFriendList();
+	saveXml(); // write PhantomPopulations.xml right away - no separate Save click needed for friends
 };
 renderFriendList(); // initial empty-state hint
 function buildPhantomXml(){

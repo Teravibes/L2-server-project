@@ -406,6 +406,34 @@ public class PhantomPartyManager
 		return true;
 	}
 
+	/**
+	 * Adopts a live befriended regular into the inviter's party with the full recruited-member AI (follow,
+	 * assist, heals/buffs/res for supports, raid logic, chat commands). Called by {@code RequestJoinParty}
+	 * when a player party-invites one of their phantom friends. When the party ends the normal release path
+	 * stores the friend's row and PhantomManager's ensure pass respawns it idle next to its owner.
+	 * @return {@code true} if the friend joined
+	 */
+	public boolean onInvitedFriend(Player owner, Player friend)
+	{
+		if ((owner == null) || (friend == null) || friend.isDead() || friend.isInParty())
+		{
+			return false;
+		}
+		if (!_members.containsKey(friend.getObjectId()))
+		{
+			final PartyRole role = PhantomManager.getInstance().adoptFriendForParty(friend);
+			if (role == null)
+			{
+				return false;
+			}
+			final Member member = new Member(friend, role);
+			member.owner = owner;
+			member.pendingSince = System.currentTimeMillis();
+			_members.put(friend.getObjectId(), member);
+		}
+		return onInvited(owner, friend);
+	}
+
 	// ===== Commands (whisper + party chat, called from chat handlers) =====
 
 	/** Handles a whisper to a recruited member; a deterministic command, else a natural brain reply. */

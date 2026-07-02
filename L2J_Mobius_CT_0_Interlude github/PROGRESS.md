@@ -1143,3 +1143,37 @@ the fpc-editor" commit), plus the requested editor upgrade:
 
 Deploy: rebuild jar (PhantomManager) + copy `dist/game/data/PhantomPopulations.xml` (header docs) — the
 editor (`tools/fpc-editor/index.html`) is opened locally in a browser, not deployed.
+
+## 12h. Friends: editor auto-save, whisper + party invite, real gear (2026-07-02)
+
+Three user-reported gaps after the first live test of a crafted friend:
+
+- **Editor auto-save**: "+ Add friend" (and the ✕ delete) now writes `PhantomPopulations.xml`
+  immediately via the normal `saveXml()` path — the user had added a friend but never clicked Save,
+  so the file (and therefore the server) never saw it. The panel text says so explicitly now.
+- **PMs to a friend said "Player is in offline mode"**: friends only answered on the *friends window*
+  channel (`RequestSendFriendMsg` hook). A whisper (`ChatWhisper`) fell through to the stock
+  clientless-target guard. New hook (after the buddy/recruit hooks, gated on the sender's friend
+  list): routes the PM to `FakePlayerChatManager.handleFriendWhisper` — same FRIEND-mode brain call
+  as the friend channel, reply returned as a whisper. Strangers still see the phantom as offline.
+- **Party-inviting a friend said "offline" too**: same stock guard in `RequestJoinParty`. New hook
+  (after buddy/recruit, gated on the requester's friend list): `PhantomPartyManager.onInvitedFriend`
+  registers the live friend as a recruited member (`PhantomManager.adoptFriendForParty` flips its
+  PhantomData to `recruited`, stops the self-hunt scanner, mirrors `spawnPartyMember`'s AutoUse
+  state: assist-mode for combat roles, hand-driven for supports) and reuses `onInvited`. The friend
+  then has the FULL recruited-member AI — follow, assist, raid logic, heals/res for supports, chat
+  commands. When the party ends, the normal release path (`despawnRecruit` → `despawn`) keeps its
+  row and the 15s friend ensure pass respawns it idle next to its owner.
+- **Friends now gear like party members, not ambient extras**: new `outfitFriend` in `finishSpawn`
+  (taken when `friendOwnerId != 0`, i.e. crafted friends + every friend-regular login/ensure respawn):
+  same level/class/skill pipeline as `outfit`, but gear via `gearParty` — best-in-grade role weapon,
+  full armor set (no random gaps), all five jewelry slots, shield for tank classes, enchant chance —
+  plus `PhantomBuffs.applyFullBuffs`. Buddy-class friends keep the buddy kit. Since a loaded regular's
+  inventory is wiped and re-geared each spawn, existing friends upgrade automatically on next login.
+
+Watch out: a friend adopted into a party that turns out to be full is registered but unpartied; the
+recruit pending-timeout releases it and the ensure pass restores it — self-healing, no action needed.
+
+Deploy: rebuild jar (PhantomManager, PhantomPartyManager, FakePlayerChatManager, RequestJoinParty) +
+copy `dist/game/data/scripts/handlers/chat/channels/ChatWhisper.java` (runtime-compiled datapack) —
+the editor is local-only.

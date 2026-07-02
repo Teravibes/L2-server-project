@@ -18,26 +18,27 @@ supervisor when the owner is online. `//phantom reload` applies phantom XML edit
 The editor's class dropdown now offers **every Interlude race/class** (grouped, real class
 ids; buddy classes labeled; summoners omitted).
 
-## What was just done (review pass + editor race/class picker)
+## What was just done (friend usability batch — PROGRESS §12h)
 
-- Reviewed the whole editor-crafted-friend implementation; verified the editor↔server
-  round-trip, save path, reload idempotence, and all called signatures. Then fixed findings:
-- `_populations` → `CopyOnWriteArrayList` (reload-vs-supervisor race, CME risk).
-- Phantom-cap no longer consumes a `<friend>` order (checked before removal; retried later).
-- Diagnosability: every parsed `<friend>` order logs at load; the name-already-exists inert
-  skip logs too (was silent). "Nothing happened" is now answerable from the gameserver log.
-- `//phantom reload` message warns recruited parties/buddies don't respawn.
-- Editor: full race/class picker (grouped per race, `PlayerClass` ids), class names in the
-  friend list, legacy keyword values still render. XML header docs updated.
+Root cause of "my crafted friend never appeared": the user added the friend in the editor
+but never clicked Save, so `PhantomPopulations.xml` was never written. Fixed + two more gaps:
+
+- **Editor auto-saves**: add/delete friend writes the XML immediately (no Save click).
+- **PM to a friend works**: new `ChatWhisper` hook (friend-list-gated) → brain FRIEND mode,
+  reply as a whisper. Previously fell through to "Player is in offline mode."
+- **Party invite works**: new `RequestJoinParty` hook (friend-list-gated) →
+  `onInvitedFriend` adopts the live friend as a recruited member (full party AI: follow/
+  assist/raid/support). Party ends → row stored → ensure pass respawns it idle in ~15s.
+- **Friends gear properly**: `outfitFriend` (friend spawns) uses `gearParty` — best-in-grade
+  weapon, full armor, jewelry, tank shield, enchant chance + full buffs. Existing friends
+  upgrade automatically on next spawn (loaded regulars are re-geared each spawn).
+- Earlier this session: review-pass fixes (`_populations` COW list, cap doesn't consume
+  orders, order logging) + full race/class picker in the editor.
 
 ## In flight / next up
 
-- **USER-REPORTED**: a crafted friend for owner `BeregotGR` did not appear at login. Code
-  path verified correct — most likely operational: live server not running a jar with the
-  feature, XML not on live + no `//phantom reload`/restart, friend name already taken
-  (was silent, now logged), or owner set to account name instead of character name. The new
-  load/inert logging pinpoints it — check the gameserver log for "crafted-friend order(s)"
-  and "<friend> order queued".
+- Live-verify the whole friend loop: author in editor (auto-saves) → copy XML + new jar +
+  ChatWhisper.java to live → `//phantom reload` → friend spawns, PM it, party it.
 - Other open candidates (§10b / §11): ACTIVE_DEALS orphan-on-ignore TTL, phantom tuning
   config, verifying the still-unverified relayed findings.
 - Standing rules in play: update HANDOVER.md every commit; end every change with a
@@ -47,9 +48,10 @@ ids; buddy classes labeled; summoners omitted).
 
 - Java build can't run here (needs JDK 25 + Ant; env has Java 21). Java changes are
   hand-verified, not compiled — don't claim they "build."
-- Phase 3 edits four **stock** files (`RequestFriendInvite`, `RequestSendFriendMsg`,
-  `EnterWorld`, `Disconnection`) — minimal hooks, but re-check them if you ever rebase onto
-  a newer Mobius core.
+- The friend tier now hooks five **stock** java files (`RequestFriendInvite`,
+  `RequestSendFriendMsg`, `EnterWorld`, `Disconnection`, `RequestJoinParty`) plus the
+  datapack `ChatWhisper` — minimal guard+delegate hooks, but re-check them if you ever
+  rebase onto a newer Mobius core.
 - Crafted-friend orders are once-per-load except the phantom-cap case (retried). A spawn
   failure still consumes the order until the next `//phantom reload`.
 - Friend-regulars auto-hunt from their spawn location (population==null: revive in place,

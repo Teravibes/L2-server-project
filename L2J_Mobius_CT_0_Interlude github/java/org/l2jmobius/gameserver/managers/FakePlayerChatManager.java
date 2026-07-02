@@ -1057,6 +1057,38 @@ public class FakePlayerChatManager implements IXmlReader
 	}
 
 	/**
+	 * Answers a whisper (PM) sent to a befriended regular phantom - the same FRIEND-mode brain call as
+	 * {@link #handleFriendMessage}, but the reply returns over the whisper channel the player used (before
+	 * this hook a PM to a friend hit the clientless-target guard and reported "Player is in offline mode").
+	 * @param player the real player who whispered
+	 * @param regular the befriended regular being messaged
+	 * @param message the player's message text
+	 */
+	public void handleFriendWhisper(Player player, Player regular, String message)
+	{
+		if ((player == null) || (regular == null) || (message == null) || message.isEmpty())
+		{
+			return;
+		}
+		final String regularName = regular.getName();
+		final String playerName = player.getName();
+		ThreadPool.schedule(() ->
+		{
+			final String aiReply = callBridge(regularName, "FRIEND", playerName, "", message, "", "");
+			final String reply = ((aiReply != null) && !aiReply.isEmpty()) //
+				? aiReply //
+				: (Rnd.nextBoolean() ? "hey :)" : Rnd.nextBoolean() ? "sup" : "one sec, kinda busy");
+			ThreadPool.schedule(() ->
+			{
+				if (player.isOnline())
+				{
+					player.sendPacket(new CreatureSay(regular, ChatType.WHISPER, regularName, reply));
+				}
+			}, typingDelayMillis(reply));
+		}, Rnd.get(FRIEND_THINK_MIN, FRIEND_THINK_MAX));
+	}
+
+	/**
 	 * @return the proper-cased name of a whisper-able roaming bot, or {@code null} if the name is not a
 	 *         live fake player or it is an AFK store vendor (those are treated as offline shops)
 	 */

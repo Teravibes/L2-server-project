@@ -1663,6 +1663,12 @@ public class PhantomManager implements IXmlReader
 		{
 			outfitBuddy(phantom, level, role);
 		}
+		else if (friendOwnerId != 0)
+		{
+			// A friend parties with its owner and pulls real weight in content: full best-in-grade kit
+			// (the recruited-member loadout), not the deliberately cheap ambient look.
+			outfitFriend(phantom, level, mage);
+		}
 		else
 		{
 			outfit(phantom, level, mage);
@@ -1752,6 +1758,33 @@ public class PhantomManager implements IXmlReader
 		transferClass(phantom, level, mage);
 		learnAllSkills(phantom);
 		gear(phantom, level, mage);
+		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
+		phantom.setCurrentCp(phantom.getMaxCp());
+		registerAutoSkills(phantom);
+	}
+
+	/**
+	 * Outfits a befriended/crafted friend-regular: same leveling/class/skill pipeline as {@link #outfit}, but
+	 * geared through {@link #gearParty} - best-in-grade role weapon, full armor set (no random gaps), all five
+	 * jewelry slots, a shield for a tank class, an enchant chance - and it arrives fully buffed. A friend is
+	 * meant to party with its owner and do real content, not blend in as a cheaply-dressed ambient extra.
+	 */
+	private void outfitFriend(Player phantom, int level, boolean mage)
+	{
+		if (level > 1)
+		{
+			final long currentExp = phantom.getExp();
+			final long targetExp = ExperienceData.getInstance().getExpForLevel(level);
+			if (targetExp > currentExp)
+			{
+				phantom.addExpAndSp(targetExp - currentExp, 0);
+			}
+		}
+		transferClass(phantom, level, mage);
+		learnAllSkills(phantom);
+		buildGear();
+		gearParty(phantom, level, mage, roleForClass(phantom.getPlayerClass()));
+		PhantomBuffs.applyFullBuffs(phantom);
 		phantom.setCurrentHpMp(phantom.getMaxHp(), phantom.getMaxMp());
 		phantom.setCurrentCp(phantom.getMaxCp());
 		registerAutoSkills(phantom);
@@ -2849,6 +2882,54 @@ public class PhantomManager implements IXmlReader
 			AutoPlayTaskManager.getInstance().stopAutoPlay(member);
 			member.setAutoPlaying(true);
 		}
+	}
+
+	/**
+	 * Hands a live befriended regular to {@link PhantomPartyManager} so a party invite can adopt it: stops its
+	 * self-directed hunt and mirrors the {@link #spawnPartyMember} runtime state (assist-mode AutoUse for combat
+	 * roles, hand-driven casting for supports; {@code recruited} so the supervisor skips every hunter path).
+	 * Level and gear are untouched - a friend already spawns with the full party kit. When the party ends the
+	 * normal recruit release stores its row and the friend ensure pass respawns it idle within ~15s.
+	 * @return the party role derived from its class, or {@code null} if it is not a live phantom
+	 */
+	public PartyRole adoptFriendForParty(Player friend)
+	{
+		final PhantomData data = (friend == null) ? null : _phantoms.get(friend.getObjectId());
+		if (data == null)
+		{
+			return null;
+		}
+		final PartyRole role = roleForClass(friend.getPlayerClass());
+		if (data.recruited)
+		{
+			return role; // already adopted (re-invite within the same party session)
+		}
+		AutoPlayTaskManager.getInstance().stopAutoPlay(friend);
+		if (friend.isSitting())
+		{
+			friend.standUp();
+		}
+		data.dormant = false;
+		data.resting = false;
+		data.dispersing = false;
+		if (role.isSupport())
+		{
+			// Supports are cast by hand from the party tick (heal/buff/res), exactly like recruited healers.
+			AutoUseTaskManager.getInstance().stopAutoUseTask(friend);
+		}
+		else
+		{
+			if (!data.mage && !friend.getAutoUseSettings().getAutoActions().contains(AUTO_ATTACK_ACTION))
+			{
+				friend.getAutoUseSettings().getAutoActions().add(AUTO_ATTACK_ACTION);
+			}
+			// Assist mode: the party manager picks the target; AutoUse casts skills/shots on it (no scanner).
+			friend.setAutoPlaying(true);
+			AutoUseTaskManager.getInstance().startAutoUseTask(friend);
+		}
+		data.recruited = true;
+		LOGGER.info(getClass().getSimpleName() + ": Friend-regular '" + friend.getName() + "' adopted into a party as " + role + ".");
+		return role;
 	}
 
 	/** Despawns a recruited member (party disbanded / owner gone / grace elapsed / member dead). */

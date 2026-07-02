@@ -127,6 +127,16 @@ public class ChatWhisper implements IChatHandler
 			return;
 		}
 
+		// Befriended regular phantom (friend tier): PM it like a person - the brain answers in FRIEND mode
+		// over this same whisper channel. Without this hook the clientless-target guard below reported a
+		// friend as "in offline mode". Gated on the sender's friend list, so strangers still see it offline.
+		if ((receiver != null) && PhantomManager.getInstance().isPhantom(receiver) && activeChar.getFriendList().contains(receiver.getObjectId()))
+		{
+			activeChar.sendPacket(new CreatureSay(activeChar, type, "->" + receiver.getName(), text));
+			FakePlayerChatManager.getInstance().handleFriendWhisper(activeChar, receiver, text);
+			return;
+		}
+
 		if ((receiver != null) && !receiver.isSilenceMode(activeChar.getObjectId()))
 		{
 			if (GeneralConfig.JAIL_DISABLE_CHAT && receiver.isJailed() && !activeChar.isGM())
