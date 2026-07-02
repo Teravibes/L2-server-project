@@ -9,72 +9,44 @@
 
 ## Current state
 
-Landed **promotion-on-befriend** (PROGRESS.md §12f) on top of the full friend tier
-(§12d/§12e): **friend-inviting ANY live phantom auto-accepts and promotes it into a
-persistent regular on the spot** — no XML authoring needed at all (user decision after
-discovering the live config defines zero regulars). Its row flips to `phantom_regular`
-(durable: `storeMe()` never writes `account_name`), it's kept **online with you** by a
-self-healing 15s supervisor pass (respawns after death / zone despawn), shows online at
-login, despawns at your logout, and chats over the friend channel in its stable persona at
-a human 1-4s cadence. **Buddies can be befriended too** (second pass, after the user hit
-the original decline): the persisted support class maps back to its `BuddyRole` at
-friend-spawn (`buddyRoleForClass`), so a befriended buffer comes back as a proper idle
-buddy — whisperable for buffs/party — not a hunter. Friend-deleting a regular prunes it
-live and its row is swept at next boot. Only the brain "we're friends" **memory flag**
-remains (a `fpc_brain.py` follow-up).
+**The friend system is feature-complete** (PROGRESS.md §12d-§12f): friend-invite ANY live
+phantom (field hunter, recruit, buddy) → instant accept + permanent promotion to a
+persistent regular; kept online with you (self-healing 15s ensure pass); spawns at login /
+despawns at logout at its last position; friend chat answered by the brain in **FRIEND
+mode** (knows you're friends — warm tone + friendship written to `fpc_memory.json` so every
+channel picks it up); **`//phantom friend <name> [class] [level] [m|f] [face] [hairstyle]
+[haircolor]`** crafts a brand-new friend to your own spec next to you (the "recreate an old
+friend" idea — done). Support-class friends re-gear correctly as casters
+(`PlayerClass.isMage()` instead of the DD-pool check); buddy classes come back as proper
+idle buddies. CHAT-DEBUG logging has been stripped (chat delivery confirmed working; root
+cause was the 20s brain timeout vs ~30s Ollama generation — now 45s).
 
-Earlier this session: Phase 3a+3b (friend tier), Phase 2 (persistence), timeout fix
-(brain 20s→45s — was why bots never replied), temporary CHAT-DEBUG logging (still in).
+Earlier this session: promotion-on-befriend (§12f), buddy befriending, Phase 3a+3b (friend
+tier), Phase 2 (persistence), brain timeout fix.
 
-## What was just done (promotion-on-befriend, §12f)
+## What was just done (batch: polish + friend features)
 
-- `PhantomManager.java`: `_promoted` set (in-memory bridge — `Player._accountName` is
-  final, so a live promoted instance can't change account until reloaded), `isPhantom()`,
-  `befriendPhantom()` (replaces `befriendRegular`: buddy decline → promote via
-  `UPDATE characters SET account_name` → friendship insert → cache register),
-  `_friendRegularsByOwner` cache + `ensureFriendRegulars()` + supervise ensure pass
-  (15s, prunes friend-deleted ids via the owner's in-memory list), `despawn()` persistence
-  now via `isRegular()` (protects live-promoted phantoms incl. recruits — `despawnRecruit`
-  routes through `despawn`), boot-sweep second pass (friendless `phantom_regular` rows),
-  spawn log now says `regular`/`friend-regular`/`phantom`/buddy.
-- Stock `RequestFriendInvite`: hook now fires for **any** phantom (`isPhantom || isRegular`).
-- Verified: `UPDATE_CHARACTER` has no `account_name` column (promotion can't be reverted by
-  store); stock `RequestFriendDel` deletes both directions + updates in-memory lists.
-- Known rough edge: a promoted support-class recruit re-spawns geared as melee
-  (`isMageClass` only knows the DD pool) — functional, cosmetic follow-up.
-- `CLAUDE.md`: added "When to delegate to Sonnet vs. do it on Opus" guidance.
-- **Not compiled here** (JDK 21, no Ant) — hand-verified. Confirmed against source:
-  `World.getPlayer(int)`/`getPlayers()`, `getFriendList()`, `L2Friend(Player,int)`,
-  `L2FriendSay(...)`, `Player.load`/`restore()`→`restoreFriendList()`,
-  `destroyAllItems(...)`, the `callBridge` 7-arg overload, `SystemMessageId` constants.
-
-## ⚠️ Bot-chat-not-in-game: ROOT CAUSE FOUND + temporary debug still in tree
-
-**Root cause:** the brain HTTP call had a **20s timeout**, but a local Ollama model takes
-~30s per reply. Java gave up at 20s ("Brain bridge unreachable: request timed out" in the
-*game-server* log), so no message was ever sent — while the brain finished ~30s later and
-logged its 200 to nobody. That's why the brain terminal showed replies but the game showed
-nothing. **Fix:** raised the timeout to a tunable `BRAIN_TIMEOUT_SECONDS = 45` in all three
-managers (`FakePlayerChatManager`, `PhantomPartyManager`, `PhantomBuddyManager`; 4 call
-sites). For snappy chat, use a faster/smaller Ollama model or `PROVIDER=deepseek` — 45s is
-just the ceiling before a genuinely-slow generation is dropped.
-
-**Still temporary — remove after confirming the fix:** `CHAT-DEBUG:` `LOGGER.info` lines at
-every send site (`sendTradeChat`/`sendSayChat`/`sendShoutChat`/`sendChat`/`handleFriendMessage`
-in `FakePlayerChatManager`; `askBrainAsync` in `PhantomPartyManager`). Keep them for one test
-to confirm replies now arrive (a `CHAT-DEBUG` line per reply), then strip all `CHAT-DEBUG`.
+- **CHAT-DEBUG stripped** from `FakePlayerChatManager` and `PhantomPartyManager` (senders
+  restored to their clean pre-debug form).
+- **Support-class gear fix**: loaded/crafted regulars derive the caster flag from
+  `PlayerClass.isMage()` (covers Bishop etc.), not the DD pool — in `spawnFriendRegular`,
+  `createAndSpawn` (loaded branch) and `craftFriend`. Buddy classes still map to their
+  `BuddyRole` first.
+- **Brain FRIEND mode** (`fpc_brain.py` + `handleFriendMessage` now sends mode `FRIEND`):
+  whisper persona + explicit "you two are friends" note (warm, familiar tone) + a
+  `remember_fact(player, "social", "Player is in-game friends with <bot>")` so whisper/
+  party/shout chats see the friendship too. Conversation history shared with whispers.
+- **`//phantom friend` command**: `AdminPhantom.java` (datapack, runtime-compiled) →
+  `PhantomManager.craftFriend(owner, name, classSpec, level, sex, face, hairStyle,
+  hairColor)`. Validates name (1-16 alnum, free), resolves class
+  (fighter/mage/elder/prophet/warcryer keyword or class id, default random fighter), level
+  defaults to yours, random looks where omitted. Creates straight onto `phantom_regular`
+  (no promotion step), spawns geo-snapped next to you via `finishSpawn` (buddy role
+  restored for buddy classes; failed spawns delete the half-made row), then
+  `befriendPhantom`.
 
 ## In flight / next up
 
-- **Brain friendship memory (3b remainder):** persist a "we're friends" flag in
-  `fpc_brain.py` (a `FRIEND` mode) so tone reflects the relationship — a Python-only
-  follow-up (friend PMs currently use `WHISPER` mode: right persona, no explicit memory).
-- **Player-crafted phantoms — authoring front-end only:** the "adopt anyone you meet" half
-  is DONE (promotion-on-befriend, §12f). Remaining: an in-game UI/command to create one
-  from scratch (name/appearance/class), which then funnels into the same promotion path.
-- **Promoted support-class recruits whose class is NOT a buddy class** (e.g. Bishop) still
-  gear as melee on friend-spawn (`isMageClass` only knows the DD pool) — flagged in §12f.
-  Buddy classes (17/30/52) are handled properly now.
 - Other open candidates (§10b / §11): ACTIVE_DEALS orphan-on-ignore TTL, phantom tuning
   config, verifying the still-unverified relayed findings.
 - Standing rules in play: update HANDOVER.md every commit; end every change with a

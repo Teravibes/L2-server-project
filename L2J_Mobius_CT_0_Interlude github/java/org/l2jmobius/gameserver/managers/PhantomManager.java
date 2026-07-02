@@ -1199,9 +1199,11 @@ public class PhantomManager implements IXmlReader
 		// A befriended buddy's support class maps back to its BuddyRole, so it comes back as a proper idle
 		// buddy (buddy gear/reagents, registered with PhantomBuddyManager, whisperable for buffs/party)
 		// instead of a sword-swinging hunter. The buddy class ids (17/30/52) are never in the hunter pools,
-		// so an ordinary promoted hunter can't be misread as one.
+		// so an ordinary promoted hunter can't be misread as one. For everything else the caster flag comes
+		// from the class itself (isMage), not the DD pool - so a promoted support-class recruit (Bishop etc.)
+		// re-gears as a robe caster rather than a melee fighter.
 		final BuddyRole role = buddyRoleForClass(phantom.getPlayerClass().getId());
-		final boolean mage = role.isBuddy() || isMageClass(phantom.getPlayerClass().getId());
+		final boolean mage = role.isBuddy() || phantom.getPlayerClass().isMage();
 		return finishSpawn(phantom, spawnLocation, phantom.getLevel(), mage, role, null, true, ownerId);
 	}
 
@@ -1216,6 +1218,131 @@ public class PhantomManager implements IXmlReader
 			}
 		}
 		return BuddyRole.NONE;
+	}
+
+	/**
+	 * Creates a brand-new persistent regular to the player's own spec - name, class, level, sex, looks - spawns
+	 * it next to them, and befriends it on the spot ("recreate an old friend to play together"). It is created
+	 * straight onto the {@link #ACCOUNT_NAME_REGULAR} account, so it is permanent from birth and flows into the
+	 * whole friend tier (always-online, friend chat, stable brain persona keyed to the chosen name).
+	 * @param owner the real player crafting the friend (also its friend + spawn anchor)
+	 * @param name the character name (1-16 letters/digits, must be free)
+	 * @param classSpec {@code fighter}/{@code mage}/{@code elder}/{@code prophet}/{@code warcryer}, a raw class
+	 *            id, or empty for a random fighter
+	 * @param level target level, or 0 to match the owner's level (clamped 1-80)
+	 * @param sex 0 = male, 1 = female, -1 = random
+	 * @param face 0-2 or -1 = random
+	 * @param hairStyle 0-2 or -1 = random
+	 * @param hairColor 0-3 or -1 = random
+	 * @return a human-readable result message for the invoking tooling
+	 */
+	public String craftFriend(Player owner, String name, String classSpec, int level, int sex, int face, int hairStyle, int hairColor)
+	{
+		if ((owner == null) || (name == null) || name.isEmpty())
+		{
+			return "No name given.";
+		}
+		if (!name.matches("[A-Za-z0-9]{1,16}"))
+		{
+			return "Invalid name '" + name + "' (1-16 letters/digits).";
+		}
+		if (CharInfoTable.getInstance().doesCharNameExist(name))
+		{
+			return "The name '" + name + "' is already taken.";
+		}
+		if (_phantoms.size() >= MAX_PHANTOMS)
+		{
+			return "Phantom cap reached (" + MAX_PHANTOMS + ").";
+		}
+
+		// Resolve the class: an archetype keyword, a buddy role, or a raw class id.
+		final int classId;
+		final String spec = (classSpec == null) ? "" : classSpec.trim().toLowerCase();
+		switch (spec)
+		{
+			case "":
+			case "fighter":
+			{
+				classId = FIGHTER_CLASS_POOL[Rnd.get(FIGHTER_CLASS_POOL.length)];
+				break;
+			}
+			case "mage":
+			{
+				classId = MAGE_CLASS_POOL[Rnd.get(MAGE_CLASS_POOL.length)];
+				break;
+			}
+			case "elder":
+			case "healer":
+			{
+				classId = BuddyRole.ELDER.classId;
+				break;
+			}
+			case "prophet":
+			case "buffer":
+			{
+				classId = BuddyRole.PROPHET.classId;
+				break;
+			}
+			case "warcryer":
+			{
+				classId = BuddyRole.WARCRYER.classId;
+				break;
+			}
+			default:
+			{
+				int parsed;
+				try
+				{
+					parsed = Integer.parseInt(spec);
+				}
+				catch (NumberFormatException e)
+				{
+					return "Unknown class '" + classSpec + "' (use fighter/mage/elder/prophet/warcryer or a class id).";
+				}
+				classId = parsed;
+				break;
+			}
+		}
+		final PlayerClass playerClass = PlayerClass.getPlayerClass(classId);
+		final PlayerTemplate template = (playerClass == null) ? null : PlayerTemplateData.getInstance().getTemplate(playerClass);
+		if (template == null)
+		{
+			return "No player template for class id " + classId + ".";
+		}
+
+		final boolean female = (sex == 1) || ((sex < 0) && Rnd.nextBoolean());
+		final PlayerAppearance appearance = new PlayerAppearance( //
+			(byte) ((face >= 0) ? Math.min(face, 2) : Rnd.get(0, 2)), //
+			(byte) ((hairColor >= 0) ? Math.min(hairColor, 3) : Rnd.get(0, 3)), //
+			(byte) ((hairStyle >= 0) ? Math.min(hairStyle, 2) : Rnd.get(0, 2)), female);
+
+		// Persistent from birth: created straight onto the regular account (no promotion step needed).
+		final Player phantom = Player.create(template, ACCOUNT_NAME_REGULAR, name, appearance);
+		if (phantom == null)
+		{
+			return "Creation failed (duplicate name / db error?).";
+		}
+
+		final int targetLevel = Math.max(1, Math.min(80, (level > 0) ? level : owner.getLevel()));
+		final int groundZ = GeoEngine.getInstance().getHeight(owner.getX() + 50, owner.getY() + 50, owner.getZ());
+		final Location spawnLocation = new Location(owner.getX() + 50, owner.getY() + 50, groundZ);
+		final BuddyRole role = buddyRoleForClass(classId);
+		final boolean mage = role.isBuddy() || playerClass.isMage();
+		try
+		{
+			if (finishSpawn(phantom, spawnLocation, targetLevel, mage, role, null, false, owner.getObjectId()) == null)
+			{
+				return "Spawn failed - check the gameserver log.";
+			}
+		}
+		catch (Exception e)
+		{
+			LOGGER.warning(getClass().getSimpleName() + ": Failed to craft friend '" + name + "': " + e.getMessage());
+			GameClient.deleteCharByObjId(phantom.getObjectId()); // don't leave a half-made row behind
+			return "Spawn failed: " + e.getMessage();
+		}
+		befriendPhantom(owner, phantom);
+		return "Created your friend '" + name + "' (" + playerClass + ", level " + targetLevel + (role.isBuddy() ? (", " + role + " buddy") : "") + ") - added to your friends list.";
 	}
 
 	/** @return the charIds of the given player's befriended regulars (friends on the {@code phantom_regular} account). */
@@ -1368,8 +1495,10 @@ public class PhantomManager implements IXmlReader
 
 			// A loaded regular's class/appearance came back from its DB row, so the pre-load roll above is moot -
 			// derive the caster flag from the ACTUAL restored class (the auto-hunt combat tick and gear pick both
-			// key off it, and a mismatched flag would gear/fight it as the wrong archetype).
-			final boolean effectiveMage = loadedRegular ? isMageClass(phantom.getPlayerClass().getId()) : mage;
+			// key off it, and a mismatched flag would gear/fight it as the wrong archetype). isMage() rather than
+			// the DD-pool check, so a support-class char (possible via promotion or an authored classId) re-gears
+			// as a robe caster, not a melee fighter.
+			final boolean effectiveMage = loadedRegular ? phantom.getPlayerClass().isMage() : mage;
 			return finishSpawn(phantom, spawnLocation, level, effectiveMage, role, population, loadedRegular, 0);
 		}
 		catch (Exception e)

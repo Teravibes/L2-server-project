@@ -838,40 +838,25 @@ public class FakePlayerChatManager implements IXmlReader
 	private void sendTradeChat(Npc npc, String text)
 	{
 		final CreatureSay cs = new CreatureSay(npc, ChatType.TRADE, npc.getName(), text);
-		int sent = 0;
 		for (Player player : World.getInstance().getPlayers()) // GLOBAL
 		{
 			player.sendPacket(cs);
-			sent++;
 		}
-		LOGGER.info("CHAT-DEBUG: TRADE from '" + npc.getName() + "' (objId=" + npc.getObjectId() + ", spawned=" + (npc.getSpawn() != null) + ") -> " + sent + " player(s): " + text);
 	}
 
 	private void sendSayChat(Npc npc, String text)
 	{
 		final CreatureSay cs = new CreatureSay(npc, ChatType.GENERAL, npc.getName(), text);
-		final int[] sent =
-		{
-			0
-		};
-		World.getInstance().forEachVisibleObjectInRange(npc, Player.class, SAY_RANGE, player -> // LOCAL
-		{
-			player.sendPacket(cs);
-			sent[0]++;
-		});
-		LOGGER.info("CHAT-DEBUG: SAY from '" + npc.getName() + "' (objId=" + npc.getObjectId() + ") -> " + sent[0] + " player(s) in range: " + text);
+		World.getInstance().forEachVisibleObjectInRange(npc, Player.class, SAY_RANGE, player -> player.sendPacket(cs)); // LOCAL
 	}
 
 	private void sendShoutChat(Npc npc, String text)
 	{
 		final CreatureSay cs = new CreatureSay(npc, ChatType.SHOUT, npc.getName(), text);
-		int sent = 0;
 		for (Player player : World.getInstance().getPlayers()) // GLOBAL world channel
 		{
 			player.sendPacket(cs);
-			sent++;
 		}
-		LOGGER.info("CHAT-DEBUG: SHOUT from '" + npc.getName() + "' (objId=" + npc.getObjectId() + ", spawned=" + (npc.getSpawn() != null) + ") -> " + sent + " player(s): " + text);
 	}
 	
 	private void ambientTradeChat()
@@ -1028,11 +1013,6 @@ public class FakePlayerChatManager implements IXmlReader
 			if (npc != null)
 			{
 				player.sendPacket(new CreatureSay(npc, ChatType.WHISPER, fpcName, message));
-				LOGGER.info("CHAT-DEBUG: WHISPER from '" + fpcName + "' (objId=" + npc.getObjectId() + ") -> " + player.getName() + ": " + message);
-			}
-			else
-			{
-				LOGGER.info("CHAT-DEBUG: WHISPER DROPPED - bot '" + fpcName + "' not resolvable at send time (despawned/out of world?), was for " + player.getName() + ": " + message);
 			}
 		}, typingDelayMillis(message));
 	}
@@ -1040,8 +1020,9 @@ public class FakePlayerChatManager implements IXmlReader
 	/**
 	 * Answers a friend private-message sent to a persistent "regular" phantom (Phase 3 friend tier). A regular
 	 * is a clientless Player, not an Npc, so it sits outside the normal whisper path ({@link #resolveBot} only
-	 * finds Npc fake players): we call the brain directly with the regular's name - which gives it the same
-	 * stable persona a whisper would (the brain's {@code _voice()} hashes the name) - and send the reply back
+	 * finds Npc fake players): we call the brain in FRIEND mode with the regular's name - the same stable
+	 * persona a whisper would get (the brain's {@code _voice()} hashes the name), but with explicit friendship
+	 * awareness (warmer tone, remembered in the brain's memory) - and send the reply back
 	 * over the friend channel as an {@link L2FriendSay}, after a short human "read + react" pause plus the
 	 * length-scaled typing time (so a friend replies in roughly 1-4s, not the slow ambient-whisper delay).
 	 * Falls back to a short canned line if the brain is offline, so a friend PM is never met with silence.
@@ -1059,7 +1040,9 @@ public class FakePlayerChatManager implements IXmlReader
 		final String playerName = player.getName();
 		ThreadPool.schedule(() ->
 		{
-			final String aiReply = callBridge(regularName, "WHISPER", playerName, "", message, "", "");
+			// FRIEND mode: same stable persona as a whisper, but the brain knows you two are friends (warmer
+			// tone) and writes the friendship into its memory so other channels pick it up too.
+			final String aiReply = callBridge(regularName, "FRIEND", playerName, "", message, "", "");
 			final String reply = ((aiReply != null) && !aiReply.isEmpty()) //
 				? aiReply //
 				: (Rnd.nextBoolean() ? "hey :)" : Rnd.nextBoolean() ? "sup" : "one sec, kinda busy");
@@ -1068,7 +1051,6 @@ public class FakePlayerChatManager implements IXmlReader
 				if (player.isOnline())
 				{
 					player.sendPacket(new L2FriendSay(regularName, playerName, reply));
-					LOGGER.info("CHAT-DEBUG: FRIEND-PM from '" + regularName + "' -> " + playerName + ": " + reply);
 				}
 			}, typingDelayMillis(reply));
 		}, Rnd.get(FRIEND_THINK_MIN, FRIEND_THINK_MAX));

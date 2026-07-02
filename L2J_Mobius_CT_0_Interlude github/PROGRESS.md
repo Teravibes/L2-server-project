@@ -366,8 +366,9 @@ a zone; a stable name already yields a stable brain personality (`fpc_brain.py` 
 Regulars persist across reboots with a stable `charId` (Phase 2), can be befriended and privately chatted
 with over the friends list at a human cadence (Phase 3a), and spawn at login / despawn at logout so they show
 "online" while their owner is on, anywhere in the world (Phase 3b). **No XML authoring needed: friend-inviting
-ANY phantom auto-promotes it into a persistent regular on the spot (§12f).** Only the brain "we're friends"
-memory flag remains — see §10b / §12d / §12e / §12f.
+ANY phantom auto-promotes it into a persistent regular on the spot (§12f), friend chat runs in a dedicated
+FRIEND brain mode (friendship-aware tone + memory), and `//phantom friend <name> ...` crafts a brand-new
+friend to your own spec.** The regulars/friends feature set is complete — see §10b / §12d-§12f.
 
 ---
 
@@ -826,14 +827,19 @@ code — **the three "High" items were already fixed**, so **do not re-implement
       the owner's `EnterWorld` (so they show "online" even away from their zone — `FriendList` checks
       `World.getPlayer` != null) and despawn on the owner's logout (`Disconnection`), handed over if another
       online friend still wants them. See §12e.
-    - ⬜ **3b remainder — brain friendship memory:** persist a "we're friends" flag in `fpc_brain.py` memory
-      (a `FRIEND` brain mode) so the tone reflects the relationship. Not yet done — friend PMs currently use
-      `WHISPER` mode (correct persona, no explicit friend memory). Small Python-side follow-up.
-  - 🟡 **Phase 3 add-on — player-crafted phantoms (user idea):** the "adopt anyone you meet" half is DONE
-    via promotion-on-befriend (§12f — friend-invite any phantom and it becomes a persistent regular, no
-    authoring). Still open: the "create from scratch to your own spec" half (name + appearance, maybe
-    class/level — e.g. recreate an old friend) via an in-game UI/command, which then just funnels into the
-    same promotion machinery. Only the authoring front-end is missing now.
+    - ✅ **3b remainder — brain friendship memory DONE (2026-07-01):** friend PMs now use a dedicated
+      `FRIEND` brain mode (`fpc_brain.py`): whisper persona + an explicit "you two are friends, talk like
+      you know them well" note, plus `remember_fact(player, "social", "Player is in-game friends with
+      <bot>")` — so whisper/party/shout chats pick the friendship up from memory too. Java side:
+      `handleFriendMessage` sends mode `FRIEND` (was `WHISPER`). Conversation history is shared with
+      whispers (same `(player, bot)` key).
+  - ✅ **Phase 3 add-on — player-crafted phantoms DONE (2026-07-01):** both halves. "Adopt anyone you meet"
+    via promotion-on-befriend (§12f), and "create from scratch to your own spec" via
+    **`//phantom friend <name> [class] [level] [m|f] [face 0-2] [hairstyle 0-2] [haircolor 0-3]`**
+    (`AdminPhantom.java` → `PhantomManager.craftFriend`). Class accepts
+    fighter/mage/elder/prophet/warcryer or a raw class id (default random fighter); level defaults to
+    yours; omitted looks roll random. The friend is created directly on the `phantom_regular` account,
+    spawned next to you (buddy classes come back as proper idle buddies), and befriended on the spot.
 
 ---
 
@@ -1092,9 +1098,10 @@ Key mechanics / safeguards (all verified against source):
   persistence check now uses `isRegular()`, so a promoted recruit's row survives party disband.
 - Spawn log now distinguishes `regular` / `friend-regular` / `phantom` / buddy, so testing is readable.
 
-Known rough edge: a promoted support-class recruit whose class is NOT a buddy class (e.g. Bishop 16)
-re-spawns geared as a melee fighter (`isMageClass` only knows the DD-mage pool). Buddy classes (Prophet 17,
-Elder 30, Warcryer 52) are mapped back to their role and handled properly. Follow-up if it matters.
+~~Known rough edge~~ **FIXED (2026-07-01):** loaded/crafted regulars now derive the caster flag from
+`PlayerClass.isMage()` instead of the DD-pool check, so a promoted support-class recruit (e.g. Bishop 16)
+re-gears as a robe caster. Buddy classes (Prophet 17, Elder 30, Warcryer 52) still map back to their
+`BuddyRole` first and return as proper idle buddies.
 
 Code touchpoints: `PhantomManager` — `_promoted`, `_friendRegularsByOwner`, `_lastFriendEnsure`;
 `isPhantom()`, `befriendPhantom()` (replaces `befriendRegular`), `ensureFriendRegulars()`, supervise ensure

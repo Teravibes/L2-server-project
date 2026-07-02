@@ -716,23 +716,16 @@ public class PhantomPartyManager
 			}
 			if (reply.isEmpty())
 			{
-				LOGGER.info("CHAT-DEBUG: PARTY reply empty after applyTags (whole line stripped as tags?) for '" + s.npc.getName() + "'");
 				return;
 			}
 			final Player npc = s.npc;
 			if (npc.isInParty())
 			{
 				npc.getParty().broadcastCreatureSay(new CreatureSay(npc, ChatType.PARTY, npc.getName(), reply), npc);
-				LOGGER.info("CHAT-DEBUG: PARTY from '" + npc.getName() + "' -> party of " + npc.getParty().getMemberCount() + ": " + reply);
 			}
 			else if (o.isOnline())
 			{
 				o.sendPacket(new CreatureSay(npc, ChatType.WHISPER, npc.getName(), reply));
-				LOGGER.info("CHAT-DEBUG: PARTY-FALLBACK WHISPER from '" + npc.getName() + "' -> " + o.getName() + " (bot is NOT in a party): " + reply);
-			}
-			else
-			{
-				LOGGER.info("CHAT-DEBUG: PARTY reply not sent - bot '" + npc.getName() + "' not in party and owner " + o.getName() + " offline: " + reply);
 			}
 		});
 	}

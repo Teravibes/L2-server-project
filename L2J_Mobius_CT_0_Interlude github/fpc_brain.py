@@ -678,6 +678,23 @@ def chat():
             reply = sanitize(call_llm(system, list(hist), 80, temperature))
             hist.append({"role": "assistant", "content": reply})
             remember_from_exchange(player, message, reply, "WHISPER")
+        elif mode == "FRIEND":
+            # A private message over the FRIENDS LIST. The Java side only routes friend PMs here for bots the
+            # player has actually befriended, so the bot KNOWS this person: same stable persona as a whisper,
+            # but a warm, familiar tone - and the friendship is written to memory so every other channel
+            # (whisper, party, shout) picks it up too.
+            player = request.headers.get("X-Player", "someone")
+            hist = conversations[(player, fpc)]
+            hist.append({"role": "user", "content": message})
+            remember_fact(player, "social", f"Player is in-game friends with {fpc}.")
+            system = (whisper_persona(fpc, voice) + loc_note
+                      + f" {player} is a FRIEND: you two added each other on the friends list and talk often. "
+                      "Speak like you know them well - warm, familiar, casual banter between friends, never "
+                      "like a stranger or a shopkeeper."
+                      + memory_note(player, ("social", "party", "trade"), k=8) + knowledge_note(message))
+            reply = sanitize(call_llm(system, list(hist), 80, temperature))
+            hist.append({"role": "assistant", "content": reply})
+            remember_from_exchange(player, message, reply, "FRIEND")
         elif mode == "SAY":
             speaker = request.headers.get("X-Speaker", "")
             overheard = f"{speaker}: {message}" if speaker else message
