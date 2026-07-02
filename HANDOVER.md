@@ -16,9 +16,12 @@ discovering the live config defines zero regulars). Its row flips to `phantom_re
 (durable: `storeMe()` never writes `account_name`), it's kept **online with you** by a
 self-healing 15s supervisor pass (respawns after death / zone despawn), shows online at
 login, despawns at your logout, and chats over the friend channel in its stable persona at
-a human 1-4s cadence. Buddies are politely declined (population-managed fixtures).
-Friend-deleting a regular prunes it live and its row is swept at next boot. Only the brain
-"we're friends" **memory flag** remains (a `fpc_brain.py` follow-up).
+a human 1-4s cadence. **Buddies can be befriended too** (second pass, after the user hit
+the original decline): the persisted support class maps back to its `BuddyRole` at
+friend-spawn (`buddyRoleForClass`), so a befriended buffer comes back as a proper idle
+buddy — whisperable for buffs/party — not a hunter. Friend-deleting a regular prunes it
+live and its row is swept at next boot. Only the brain "we're friends" **memory flag**
+remains (a `fpc_brain.py` follow-up).
 
 Earlier this session: Phase 3a+3b (friend tier), Phase 2 (persistence), timeout fix
 (brain 20s→45s — was why bots never replied), temporary CHAT-DEBUG logging (still in).
@@ -69,8 +72,9 @@ to confirm replies now arrive (a `CHAT-DEBUG` line per reply), then strip all `C
 - **Player-crafted phantoms — authoring front-end only:** the "adopt anyone you meet" half
   is DONE (promotion-on-befriend, §12f). Remaining: an in-game UI/command to create one
   from scratch (name/appearance/class), which then funnels into the same promotion path.
-- **Buddy befriending** (currently declined) and **promoted support-class recruits gear as
-  melee** — both flagged in §12f as follow-ups.
+- **Promoted support-class recruits whose class is NOT a buddy class** (e.g. Bishop) still
+  gear as melee on friend-spawn (`isMageClass` only knows the DD pool) — flagged in §12f.
+  Buddy classes (17/30/52) are handled properly now.
 - Other open candidates (§10b / §11): ACTIVE_DEALS orphan-on-ignore TTL, phantom tuning
   config, verifying the still-unverified relayed findings.
 - Standing rules in play: update HANDOVER.md every commit; end every change with a

@@ -1082,14 +1082,19 @@ Key mechanics / safeguards (all verified against source):
 - **Friend-deleted regulars are cleaned at boot**: second sweep pass removes `phantom_regular` rows with no
   `character_friends` reference. (Unbefriended XML/auto regular rows get swept too — harmless: their
   identity is deterministic from seed; only the unreferenced charId changes.)
-- **Buddies are declined** ("too busy working to add friends"): a befriended buddy would login-spawn as a
-  hunter next to its own replacement at the post. Proper buddy-befriending is a follow-up.
+- **Buddies can be befriended too (2026-07-01, second pass):** `spawnFriendRegular` maps the persisted
+  support class back to its `BuddyRole` (`buddyRoleForClass`; class ids 17/30/52 are exclusive to buddies),
+  so a befriended buffer friend-spawns as a proper **idle buddy** — buddy gear/reagents via `outfitBuddy`,
+  registered with `PhantomBuddyManager` (whisperable for buffs/party) — not a hunter. Release/`despawnBuddy`
+  routes through `despawn()` (row kept) and the ensure pass respawns it idle nearby within ~15s. The town
+  post population simply spawns a fresh random buddy — your friend is yours, the town gets a new buffer.
 - **Recruited party members are the prime use case** — `despawnRecruit` routes through `despawn()`, whose
   persistence check now uses `isRegular()`, so a promoted recruit's row survives party disband.
 - Spawn log now distinguishes `regular` / `friend-regular` / `phantom` / buddy, so testing is readable.
 
-Known rough edge: a promoted **support-class** recruit (Bishop/PP/etc.) re-spawns geared as a melee fighter
-(`isMageClass` only knows the DD-mage pool) — functional, looks off. Follow-up if it matters.
+Known rough edge: a promoted support-class recruit whose class is NOT a buddy class (e.g. Bishop 16)
+re-spawns geared as a melee fighter (`isMageClass` only knows the DD-mage pool). Buddy classes (Prophet 17,
+Elder 30, Warcryer 52) are mapped back to their role and handled properly. Follow-up if it matters.
 
 Code touchpoints: `PhantomManager` — `_promoted`, `_friendRegularsByOwner`, `_lastFriendEnsure`;
 `isPhantom()`, `befriendPhantom()` (replaces `befriendRegular`), `ensureFriendRegulars()`, supervise ensure

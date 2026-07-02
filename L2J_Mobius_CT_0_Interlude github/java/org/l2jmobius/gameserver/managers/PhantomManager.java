@@ -1009,8 +1009,9 @@ public class PhantomManager implements IXmlReader
 	 * class become permanent - "you liked this one, it's a character now"), persist the pair in
 	 * {@code character_friends} both directions (mirroring {@code RequestAnswerFriendInvite}) and update both
 	 * in-memory lists, so it shows in the player's friends window right away. No XML authoring is needed;
-	 * befriending IS what makes a phantom a regular. Buddies are declined: they are population-managed fixtures
-	 * (a befriended one would login-spawn as a hunter next to its own replacement at the post).
+	 * befriending IS what makes a phantom a regular. Buddies work too: their persisted support class maps back
+	 * to a {@link BuddyRole} at friend-spawn time, so a befriended buffer comes back as a proper idle buddy
+	 * (whisperable for buffs/party), not a hunter.
 	 * @param player the inviting real player
 	 * @param phantom the target phantom (assumed {@link #isPhantom(Player)})
 	 */
@@ -1018,12 +1019,6 @@ public class PhantomManager implements IXmlReader
 	{
 		if ((player == null) || (phantom == null))
 		{
-			return;
-		}
-		final PhantomData data = _phantoms.get(phantom.getObjectId());
-		if ((data != null) && data.role.isBuddy())
-		{
-			player.sendMessage(phantom.getName() + " is too busy working to add friends.");
 			return;
 		}
 		if (player.getFriendList().contains(phantom.getObjectId()))
@@ -1201,8 +1196,26 @@ public class PhantomManager implements IXmlReader
 		}
 		final int groundZ = GeoEngine.getInstance().getHeight(phantom.getX(), phantom.getY(), phantom.getZ());
 		final Location spawnLocation = new Location(phantom.getX(), phantom.getY(), groundZ);
-		final boolean mage = isMageClass(phantom.getPlayerClass().getId());
-		return finishSpawn(phantom, spawnLocation, phantom.getLevel(), mage, BuddyRole.NONE, null, true, ownerId);
+		// A befriended buddy's support class maps back to its BuddyRole, so it comes back as a proper idle
+		// buddy (buddy gear/reagents, registered with PhantomBuddyManager, whisperable for buffs/party)
+		// instead of a sword-swinging hunter. The buddy class ids (17/30/52) are never in the hunter pools,
+		// so an ordinary promoted hunter can't be misread as one.
+		final BuddyRole role = buddyRoleForClass(phantom.getPlayerClass().getId());
+		final boolean mage = role.isBuddy() || isMageClass(phantom.getPlayerClass().getId());
+		return finishSpawn(phantom, spawnLocation, phantom.getLevel(), mage, role, null, true, ownerId);
+	}
+
+	/** @return the {@link BuddyRole} whose support class the given classId is, or {@link BuddyRole#NONE}. */
+	private static BuddyRole buddyRoleForClass(int classId)
+	{
+		for (BuddyRole role : BuddyRole.values())
+		{
+			if (role.isBuddy() && (role.classId == classId))
+			{
+				return role;
+			}
+		}
+		return BuddyRole.NONE;
 	}
 
 	/** @return the charIds of the given player's befriended regulars (friends on the {@code phantom_regular} account). */
