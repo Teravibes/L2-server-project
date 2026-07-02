@@ -1115,3 +1115,31 @@ pass, `despawn()` persistence via `isRegular()`, boot-sweep second pass, spawn-l
 `RequestFriendInvite` — hook now fires for any phantom. No DB schema change.
 
 Deploy: Java only (rebuild jar and move it to the live server) — no XML changes needed anymore.
+
+## 12g. Crafted-friend hardening + full race/class picker (2026-07-02)
+
+Follow-up review pass on the fpc-editor crafted-friend flow (§ the 2026-07-02 "Move craft-a-friend into
+the fpc-editor" commit), plus the requested editor upgrade:
+
+- **Race/class picker in the editor**: the Friends panel's class dropdown now lists **every Interlude
+  class grouped by race** (Human/Elf/Dark Elf/Orc/Dwarf, fighters + mystics; ids match the server's
+  `PlayerClass` enum), on top of the two random options. Buddy classes (Prophet 17, Elven Elder 30,
+  Warcryer 52) are labeled "(buddy)" and still become idle support buddies via `buddyRoleForClass`.
+  Summoners (14/28/41) are omitted — phantom AI can't drive pets. The friend list now renders class
+  *names* (legacy keyword values like `elder` still display correctly). Server side needed **no change**:
+  `craftFriend` already accepted raw class ids.
+- **`_populations` made `CopyOnWriteArrayList`**: `//phantom reload` rewrites the list from the admin's
+  packet thread while the supervisor iterates it every 5s tick — a plain `ArrayList` risked a
+  `ConcurrentModificationException` (the supervisor task survives it — `ThreadPool.RunnableWrapper`
+  catches `Throwable` — but the tick would abort). Writes are boot/reload-only, so COW is free.
+- **Crafted-friend orders no longer consumed by the phantom cap**: `materializeCraftedFriends` now checks
+  `MAX_PHANTOMS` *before* removing the order and retries on a later pass; only permanent outcomes
+  (created, name-exists, invalid spec, spawn failure) consume it.
+- **Diagnosability**: each parsed `<friend>` order is logged at load ("order queued: 'X' for owner 'Y'"),
+  and the name-already-exists inert skip is now logged too (it was silent — a "nothing happened" with no
+  trace). So the gameserver log now answers: was the order parsed at all (jar/XML/reload missing?), did
+  the owner name match (typo/account-vs-character name?), was the name already taken (inert)?
+- `//phantom reload` feedback now warns that recruited parties/buddies do not respawn.
+
+Deploy: rebuild jar (PhantomManager) + copy `dist/game/data/PhantomPopulations.xml` (header docs) — the
+editor (`tools/fpc-editor/index.html`) is opened locally in a browser, not deployed.

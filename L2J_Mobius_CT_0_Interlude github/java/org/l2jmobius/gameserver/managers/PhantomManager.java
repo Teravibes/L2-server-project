@@ -36,6 +36,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Predicate;
 import java.util.logging.Logger;
 
@@ -599,7 +600,10 @@ public class PhantomManager implements IXmlReader
 	}
 
 	private final ConcurrentHashMap<Integer, PhantomData> _phantoms = new ConcurrentHashMap<>();
-	private final List<Population> _populations = new ArrayList<>();
+	// CopyOnWriteArrayList: //phantom reload rewrites this from the admin's packet thread while the
+	// supervisor iterates it every tick - a plain ArrayList would risk a ConcurrentModificationException.
+	// Writes are rare (boot + reload) and the list is tiny, so copy-on-write is the cheap safe choice.
+	private final List<Population> _populations = new CopyOnWriteArrayList<>();
 	private boolean _supervising = false;
 	// Live phantoms promoted to regular THIS session (befriended while spawned under the ephemeral 'phantom'
 	// account). Player._accountName is final, so the in-memory instance keeps the old account until it is next
@@ -683,7 +687,7 @@ public class PhantomManager implements IXmlReader
 			startSupervising();
 		}
 		LOGGER.info(getClass().getSimpleName() + ": Reloaded PhantomPopulations.xml: " + _populations.size() + " population(s), " + _craftedFriends.size() + " crafted-friend order(s); " + removed + " phantom(s) despawned.");
-		return "Reloaded: " + _populations.size() + " population(s), " + _craftedFriends.size() + " friend order(s). " + removed + " phantom(s) despawned; zones redeploy on approach, friends rejoin in ~15s.";
+		return "Reloaded: " + _populations.size() + " population(s), " + _craftedFriends.size() + " friend order(s). " + removed + " phantom(s) despawned; zones redeploy on approach, friends rejoin in ~15s. Note: recruited parties/buddies do NOT respawn - re-recruit/re-summon them.";
 	}
 
 	@Override
@@ -753,6 +757,8 @@ public class PhantomManager implements IXmlReader
 			{
 				_craftedFriends.add(friend);
 			}
+			// Logged per order so a typo'd owner (which would otherwise wait forever, silently) is visible.
+			LOGGER.info(getClass().getSimpleName() + ": <friend> order queued: '" + friend.name + "' for owner '" + friend.owner + "' (materializes when that character is online).");
 		}));
 	}
 
@@ -1424,6 +1430,7 @@ public class PhantomManager implements IXmlReader
 	 * duplicated, never re-befriended after a friend-delete), anything else is crafted via
 	 * {@link #craftFriend}. Each order is attempted at most once per load - success or failure it is removed,
 	 * so a bad entry (invalid name/class) logs once instead of spamming every pass; a reload re-arms it.
+	 * The one transient exception is the phantom cap: a cap-blocked order is kept and retried later.
 	 */
 	private void materializeCraftedFriends(Player owner)
 	{
@@ -1440,10 +1447,17 @@ public class PhantomManager implements IXmlReader
 				{
 					continue;
 				}
+				if (_phantoms.size() >= MAX_PHANTOMS)
+				{
+					return; // transient (phantom cap): keep the order and retry on a later pass
+				}
 				it.remove();
 				if (CharInfoTable.getInstance().doesCharNameExist(friend.name))
 				{
-					continue; // already created on an earlier boot - the order is permanently inert
+					// Already created on an earlier boot (or the name is simply taken) - the order is permanently
+					// inert. Logged so "nothing happened" is diagnosable from the gameserver log.
+					LOGGER.info(getClass().getSimpleName() + ": <friend> order '" + friend.name + "' for " + owner.getName() + ": name already exists - order is inert (created earlier, or the name is taken).");
+					continue;
 				}
 				final String result = craftFriend(owner, friend.name, friend.classSpec, friend.level, friend.sex, friend.face, friend.hairStyle, friend.hairColor);
 				LOGGER.info(getClass().getSimpleName() + ": <friend> order '" + friend.name + "' for " + owner.getName() + ": " + result);

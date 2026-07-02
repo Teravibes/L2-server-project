@@ -71,8 +71,10 @@
 	  <friend> attributes:
 	    owner     - your character's name (required).
 	    name      - the friend's name (required; 1-16 letters/digits, must be free).
-	    class     - fighter | mage | elder | prophet | warcryer | a class id (default: random fighter).
-	                elder/prophet/warcryer craft an idle BUDDY friend (buffs on whisper) instead of a hunter.
+	    class     - a specific class id (any race/class - pick it in the editor's grouped dropdown), or a
+	                keyword: fighter | mage | elder | prophet | warcryer (default: random fighter).
+	                Buddy classes (Prophet 17, Elven Elder 30, Warcryer 52 - or their keywords) craft an idle
+	                BUDDY friend (buffs on whisper) instead of a hunter. Summoner classes are not supported.
 	    level     - target level (default 0 = match the owner's level at creation).
 	    sex       - m | f (default random).
 	    face      - 0-2 (default random).  hairStyle - 0-2 (default random).  hairColor - 0-3 (default random).

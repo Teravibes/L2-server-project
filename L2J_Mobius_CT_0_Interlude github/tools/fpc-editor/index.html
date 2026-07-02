@@ -226,14 +226,13 @@
 		so this list is safe to leave in place. Apply live with <b>//phantom reload</b>.</div>
 		<label>owner (your character's name)</label><input id="fr_owner" placeholder="e.g. MyMain" />
 		<label>friend name</label><input id="fr_name" placeholder="e.g. Halvard (1-16 letters/digits)" />
-		<label>class</label>
+		<label>race / class</label>
 		<select id="fr_class">
-			<option value="">Fighter (random melee class)</option>
-			<option value="mage">Mage (random nuker class)</option>
-			<option value="elder">Buddy — Elven Elder (mage buffs, heals)</option>
-			<option value="prophet">Buddy — Prophet (fighter buffs)</option>
-			<option value="warcryer">Buddy — Warcryer (orc buffs)</option>
+			<option value="">Fighter — random race &amp; melee class</option>
+			<option value="mage">Mage — random race &amp; nuker class</option>
 		</select>
+		<div class="muted" style="margin:2px 0 4px;font-size:11px">Race is set by the class you pick (grouped below the random options). Classes marked (buddy)
+		become an idle support buddy — buffs on whisper — instead of a hunter. Summoner classes are omitted (phantoms can't drive pets).</div>
 		<div class="row">
 			<div><label>level (0 = match owner)</label><input id="fr_level" type="number" min="0" max="80" value="0" /></div>
 			<div><label>sex</label><select id="fr_sex"><option value="">random</option><option value="m">male</option><option value="f">female</option></select></div>
@@ -1504,6 +1503,36 @@ function parsePhantomText(text){
 }
 // Crafted-friend orders (<friend> entries): kept alongside the populations and re-emitted on save.
 let phantomFriends = [];
+// Interlude class catalog for the race/class picker (ids match the server's PlayerClass enum). Buddy-role
+// classes (Prophet 17, Elven Elder 30, Warcryer 52) become idle support buddies server-side. Summoners
+// (Warlock 14, Elemental Summoner 28, Phantom Summoner 41) are omitted - phantom AI can't drive pets.
+const FRIEND_CLASSES = [
+	['Human — fighters', [[0,'Human Fighter'],[1,'Warrior'],[2,'Gladiator'],[3,'Warlord'],[4,'Knight'],[5,'Paladin'],[6,'Dark Avenger'],[7,'Rogue'],[8,'Treasure Hunter'],[9,'Hawkeye']]],
+	['Human — mystics', [[10,'Human Mage'],[11,'Wizard'],[12,'Sorcerer'],[13,'Necromancer'],[15,'Cleric'],[16,'Bishop'],[17,'Prophet (buddy)']]],
+	['Elf — fighters', [[18,'Elven Fighter'],[19,'Elven Knight'],[20,'Temple Knight'],[21,'Swordsinger'],[22,'Elven Scout'],[23,'Plains Walker'],[24,'Silver Ranger']]],
+	['Elf — mystics', [[25,'Elven Mage'],[26,'Elven Wizard'],[27,'Spellsinger'],[29,'Elven Oracle'],[30,'Elven Elder (buddy)']]],
+	['Dark Elf — fighters', [[31,'Dark Fighter'],[32,'Palus Knight'],[33,'Shillien Knight'],[34,'Bladedancer'],[35,'Assassin'],[36,'Abyss Walker'],[37,'Phantom Ranger']]],
+	['Dark Elf — mystics', [[38,'Dark Mage'],[39,'Dark Wizard'],[40,'Spellhowler'],[42,'Shillien Oracle'],[43,'Shillien Elder']]],
+	['Orc — fighters', [[44,'Orc Fighter'],[45,'Orc Raider'],[46,'Destroyer'],[47,'Orc Monk'],[48,'Tyrant']]],
+	['Orc — mystics', [[49,'Orc Mage'],[50,'Orc Shaman'],[51,'Overlord'],[52,'Warcryer (buddy)']]],
+	['Dwarf', [[53,'Dwarven Fighter'],[54,'Scavenger'],[55,'Bounty Hunter'],[56,'Artisan'],[57,'Warsmith']]]
+];
+const FRIEND_CLASS_NAMES = {};
+FRIEND_CLASSES.forEach(([, items]) => items.forEach(([id, n]) => { FRIEND_CLASS_NAMES[id] = n; }));
+(function populateFriendClassSelect(){
+	const sel = document.getElementById('fr_class');
+	FRIEND_CLASSES.forEach(([race, items]) => {
+		const og = document.createElement('optgroup'); og.label = race;
+		items.forEach(([id, n]) => { const o = document.createElement('option'); o.value = id; o.textContent = n; og.appendChild(o); });
+		sel.appendChild(og);
+	});
+})();
+// Human-readable label for a stored class value: '' / 'mage', a legacy keyword, or a class id.
+function friendClassLabel(cls){
+	if (!cls) return 'random fighter';
+	const kw = { mage: 'random mage', elder: 'Elven Elder (buddy)', healer: 'Elven Elder (buddy)', prophet: 'Prophet (buddy)', buffer: 'Prophet (buddy)', warcryer: 'Warcryer (buddy)' };
+	return kw[cls] || FRIEND_CLASS_NAMES[cls] || ('class ' + cls);
+}
 function parsePhantomFriends(text){
 	const doc = new DOMParser().parseFromString(text, 'application/xml');
 	const list = doc.querySelector('list'); if (!list) return [];
@@ -1525,7 +1554,7 @@ function renderFriendList(){
 	const el = document.getElementById('friendList');
 	if (!phantomFriends.length){ el.innerHTML = '<div class="muted">No crafted friends yet.</div>'; return; }
 	el.innerHTML = phantomFriends.map((f, i) => {
-		const cls = f.cls || 'fighter';
+		const cls = friendClassLabel(f.cls);
 		const lvl = f.level > 0 ? ('lvl ' + f.level) : 'owner’s lvl';
 		return `<div class="row" style="align-items:center;margin-bottom:4px">
 			<div style="flex:1;font-size:12px"><b>${f.name}</b> → ${f.owner} <span class="muted">(${cls}, ${lvl}${f.sex ? ', ' + f.sex : ''})</span></div>
